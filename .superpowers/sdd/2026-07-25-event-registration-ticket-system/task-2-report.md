@@ -99,3 +99,29 @@ Command: `npm.cmd test`
 Result: exit code 0; 17 tests passed, 0 failed, 0 skipped.
 
 The added countdown view test proves that refresh changes the countdown text while retaining the exact registration-action object. `node --check public/js/index-page.js`, `node --check public/js/activity-countdown-view.js`, and `git diff --check` also passed.
+
+---
+
+## Round 4 review fix
+
+### Root cause and change
+
+- At the exact `opensAt` boundary, an activity whose authoritative status was still `upcoming` correctly stopped producing an opening countdown. The countdown view treated that `null` result as a generic closing condition and incorrectly displayed “报名已截止。”
+- The countdown view now handles the awaiting-opening-status window separately. From `opensAt` until `closesAt`, it hides the expired opening countdown while the activity remains authoritatively `upcoming`; it does not claim that registration is closed and does not enable registration without an `open` status.
+- Added an exact-boundary behavior test that catches the previous `null`-to-closed mapping.
+
+### TDD evidence
+
+Command: `node --test tests/activity-countdown-view.test.js`
+
+Red result: exit code 1; the boundary test expected an empty countdown but received `报名已截止。`
+
+Green result: exit code 0; 2 tests passed, 0 failed.
+
+### Verification
+
+Command: `npm.cmd test`
+
+Result: exit code 0; 18 tests passed, 0 failed, 0 skipped.
+
+Additional checks: `node --check public/js/activity-countdown-view.js`, `node --check public/js/index-page.js`, and `git diff --check` all passed.

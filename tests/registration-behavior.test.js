@@ -57,7 +57,10 @@ test("question control specifications cover all dynamically rendered field types
 });
 
 test("public markup retains the semantic participant regions and six ordered stages", async () => {
-  const html = await readFile(new URL("../public/register.html", import.meta.url), "utf8");
+  const [html, indexHtml] = await Promise.all([
+    readFile(new URL("../public/register.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/index.html", import.meta.url), "utf8")
+  ]);
   assert.ok(html.includes("<main class=\"registration-shell\">"));
   assert.ok(html.includes("<form id=\"registration-form\""));
   assert.ok(html.includes("id=\"error-summary\""));
@@ -65,6 +68,8 @@ test("public markup retains the semantic participant regions and six ordered sta
   const stageLabels = ["选择活动", "选择讲座", "选择座位", "填写资料", "核对资料", "提交报名"];
   let offset = 0;
   for (const label of stageLabels) { const found = html.indexOf(label, offset); assert.notEqual(found, -1); offset = found + label.length; }
+  assert.ok(indexHtml.includes('id="activity-status" class="sr-only" aria-live="polite"'));
+  assert.ok(!indexHtml.includes('id="activity-list" class="activity-list" aria-live='));
 });
 
 test("review validation delegates session and answer rules and fails closed after closing time", () => {

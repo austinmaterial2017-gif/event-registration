@@ -81,3 +81,21 @@ Command: `npm.cmd test`
 Result: exit code 0; 16 tests passed, 0 failed, 0 skipped.
 
 Additional checks: `node --check public/js/index-page.js`; `node --check public/js/register-page.js`; and `git diff --check` all passed.
+
+---
+
+## Round 3 review fixes
+
+### Changes made
+
+- The activity page creates its cards once. Timer refreshes now update only each card's dedicated countdown text node, so card and registration-link identity (including keyboard focus) is retained.
+- `serverNow` drives these incremental updates through the fixed server offset; no card-list rebuild occurs on a timer.
+- The activity list is no longer an `aria-live` region. The concise activity count remains the list-level announcement, while a card's countdown is the only periodically updated live text.
+
+### Verification
+
+Command: `npm.cmd test`
+
+Result: exit code 0; 17 tests passed, 0 failed, 0 skipped.
+
+The added countdown view test proves that refresh changes the countdown text while retaining the exact registration-action object. `node --check public/js/index-page.js`, `node --check public/js/activity-countdown-view.js`, and `git diff --check` also passed.

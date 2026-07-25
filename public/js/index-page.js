@@ -1,3 +1,4 @@
+import { refreshActivityCountdowns } from "./activity-countdown-view.js";
 import { getActivityCountdown, getVisibleActivities } from "./event-list-flow.js";
 
 const serverNow = "2026-07-26T10:00:00+08:00";
@@ -14,22 +15,20 @@ const activities = [
 
 const statusNames = { upcoming: "即将开放", open: "报名开放", closed: "报名截止", live: "正在进行", ended: "活动结束", cancelled: "活动取消" };
 const serverOffset = Date.parse(serverNow) - Date.now();
+const countdownEntries = [];
 
 function serverTimestamp() { return Date.now() + serverOffset; }
 
-function countdownText(countdown) {
-  if (!countdown || countdown.remainingMs <= 0) return "报名已截止。";
-  const hours = Math.floor(countdown.remainingMs / 3_600_000);
-  const minutes = Math.floor((countdown.remainingMs % 3_600_000) / 60_000);
-  return countdown.kind === "opens" ? `报名将在 ${hours} 小时 ${minutes} 分钟后开放（以服务器时间为准）。` : `报名将在 ${hours} 小时 ${minutes} 分钟后截止（以服务器时间为准）。`;
+function refreshCountdownText() {
+  const nextRefresh = refreshActivityCountdowns(countdownEntries, serverTimestamp());
+  if (nextRefresh !== null) window.setTimeout(refreshCountdownText, Math.min(30_000, Math.max(250, nextRefresh)));
 }
 
 function renderActivities() {
   const list = document.querySelector("#activity-list");
   const accessibleStatus = document.querySelector("#activity-status");
   const visibleActivities = getVisibleActivities(activities);
-  const now = serverTimestamp();
-  const activeCountdowns = [];
+  countdownEntries.length = 0;
   list.replaceChildren(...visibleActivities.map((activity) => {
     const article = document.createElement("article");
     article.className = "activity-card";
@@ -39,8 +38,9 @@ function renderActivities() {
     const status = document.createElement("span"); status.className = `status ${activity.status}`; status.textContent = statusNames[activity.status] || "状态未知";
     const title = document.createElement("h3"); title.textContent = activity.title;
     const description = document.createElement("p"); description.textContent = activity.description;
-    const countdown = getActivityCountdown(activity, now);
-    if (countdown) { const clock = document.createElement("p"); clock.className = "registration-countdown"; clock.textContent = countdownText(countdown); copy.append(top, title, description, clock); if (countdown.remainingMs > 0) activeCountdowns.push(countdown); }
+    const countdown = getActivityCountdown(activity, serverTimestamp());
+    const clock = countdown ? document.createElement("p") : null;
+    if (clock) { clock.className = "registration-countdown"; clock.setAttribute("aria-live", "polite"); copy.append(top, title, description, clock); }
     else copy.append(top, title, description);
     const actions = document.createElement("div"); actions.className = "activity-actions";
     const meta = document.createElement("div"); meta.className = "meta-list";
@@ -49,15 +49,13 @@ function renderActivities() {
     action.textContent = activity.canRegister ? "立即报名" : "暂不可报名";
     if (activity.canRegister) action.href = `register.html?event=${encodeURIComponent(activity.id)}`;
     else action.setAttribute("aria-label", `${statusNames[activity.status] || "当前状态"}，暂不可报名`);
+    if (clock) countdownEntries.push({ activity, countdownNode: clock, actionNode: action });
     actions.append(meta, action); article.append(copy, actions);
     return article;
   }));
   list.setAttribute("aria-busy", "false");
   accessibleStatus.textContent = `已显示 ${visibleActivities.length} 个活动。`;
-  if (activeCountdowns.length) {
-    const nextUpdate = Math.min(...activeCountdowns.map((countdown) => countdown.remainingMs));
-    window.setTimeout(renderActivities, Math.min(30_000, Math.max(250, nextUpdate + 1)));
-  }
+  refreshCountdownText();
 }
 
 // API 接通后由服务端返回活动及 serverNow；展示层以固定服务器偏移持续计算倒计时。

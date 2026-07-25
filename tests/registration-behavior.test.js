@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { getVisibleActivities } from "../public/js/event-list-flow.js";
-import { getRegistrationAvailability, getSeatModeState, validateRegistrationDraft } from "../public/js/registration-flow.js";
+import { readFile } from "node:fs/promises";
+import { getActivityCountdown, getVisibleActivities } from "../public/js/event-list-flow.js";
+import { applyRegistrationGate, getFieldControlSpec, getRegistrationAvailability, getSeatModeState, validateRegistrationDraft } from "../public/js/registration-flow.js";
 
 const serverNow = Date.parse("2026-07-26T10:00:00+08:00");
 
@@ -29,6 +30,41 @@ test("seat modes expose whether a participant must make a choice", () => {
   assert.deepEqual(getSeatModeState("auto"), { mode: "auto", requiresSelection: false, label: "系统分配" });
   assert.equal(getSeatModeState("self").requiresSelection, true);
   assert.equal(getSeatModeState("zone").requiresSelection, true);
+});
+
+test("activity cards derive opening and closing countdowns from the supplied server time", () => {
+  const upcoming = getActivityCountdown({ status: "upcoming", opensAt: "2026-07-26T10:05:00+08:00", closesAt: "2026-07-26T12:00:00+08:00" }, serverNow);
+  const open = getActivityCountdown({ status: "open", opensAt: "2026-07-26T09:00:00+08:00", closesAt: "2026-07-26T10:05:00+08:00" }, serverNow);
+  assert.deepEqual(upcoming, { kind: "opens", target: Date.parse("2026-07-26T10:05:00+08:00"), remainingMs: 300_000 });
+  assert.deepEqual(open, { kind: "closes", target: Date.parse("2026-07-26T10:05:00+08:00"), remainingMs: 300_000 });
+});
+
+test("time gating restores only controls that were not intrinsically disabled", () => {
+  const event = { status: "open", opensAt: "2026-07-26T09:00:00+08:00", closesAt: "2026-07-26T12:00:00+08:00" };
+  const requiredSession = { disabled: true, dataset: { intrinsicDisabled: "true" } };
+  const optionalSession = { disabled: false, dataset: {} };
+  applyRegistrationGate(event, serverNow, [requiredSession, optionalSession]);
+  assert.equal(requiredSession.disabled, true);
+  assert.equal(optionalSession.disabled, false);
+  applyRegistrationGate(event, Date.parse("2026-07-26T12:00:00+08:00"), [requiredSession, optionalSession]);
+  assert.equal(requiredSession.disabled, true);
+  assert.equal(optionalSession.disabled, true);
+});
+
+test("question control specifications cover all dynamically rendered field types", () => {
+  const expected = { text: ["input", "text"], textarea: ["textarea", null], number: ["input", "number"], tel: ["input", "tel"], email: ["input", "email"], date: ["input", "date"], radio: ["input", "radio"], checkbox: ["input", "checkbox"], select: ["select", null], boolean: ["input", "checkbox"] };
+  for (const [type, [tag, inputType]] of Object.entries(expected)) assert.deepEqual(getFieldControlSpec(type), { tag, inputType });
+});
+
+test("public markup retains the semantic participant regions and six ordered stages", async () => {
+  const html = await readFile(new URL("../public/register.html", import.meta.url), "utf8");
+  assert.ok(html.includes("<main class=\"registration-shell\">"));
+  assert.ok(html.includes("<form id=\"registration-form\""));
+  assert.ok(html.includes("id=\"error-summary\""));
+  assert.ok(html.includes("id=\"review-card\""));
+  const stageLabels = ["选择活动", "选择讲座", "选择座位", "填写资料", "核对资料", "提交报名"];
+  let offset = 0;
+  for (const label of stageLabels) { const found = html.indexOf(label, offset); assert.notEqual(found, -1); offset = found + label.length; }
 });
 
 test("review validation delegates session and answer rules and fails closed after closing time", () => {

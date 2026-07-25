@@ -1,4 +1,4 @@
-import { getRegistrationAvailability, getSeatModeState, validateRegistrationDraft } from "./registration-flow.js";
+import { applyRegistrationGate, getFieldControlSpec, getRegistrationAvailability, getSeatModeState, validateRegistrationDraft } from "./registration-flow.js";
 
 const serverNow = "2026-07-26T10:00:00+08:00";
 const demoEvents = {
@@ -47,7 +47,7 @@ function renderSessionChoices(event) {
   document.querySelector("#selection-note").textContent = event.selectionMode === "all" ? "以下场次均为必选。" : event.selectionMode === "free" ? `自由选择，最多可选 ${event.maxChoices} 场。` : `含必选与选修场次，请选择 ${event.minChoices} 至 ${event.maxChoices} 场。`;
   for (const session of event.sessions) {
     const mandatory = event.selectionMode === "all" || session.required;
-    const label = node("label", "choice"); const input = document.createElement("input"); input.type = "checkbox"; input.name = "sessions"; input.value = session.id; input.checked = mandatory; input.disabled = mandatory;
+    const label = node("label", "choice"); const input = document.createElement("input"); input.type = "checkbox"; input.name = "sessions"; input.value = session.id; input.checked = mandatory; input.disabled = mandatory; if (mandatory) input.dataset.intrinsicDisabled = "true";
     const copy = node("span"); const heading = node("strong", "", `${session.title}${mandatory ? " · 必选" : ""}`); const time = node("small", "", `${session.speaker} · ${new Date(session.startsAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}–${new Date(session.endsAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`);
     copy.append(heading, time); label.append(input, copy); fieldset.append(label);
     if (mandatory) state.selectedSessions.add(session.id);
@@ -73,6 +73,7 @@ function renderSeatOptions(event) {
 function renderQuestions(event) {
   const holder = document.querySelector("#dynamic-questions"); holder.replaceChildren();
   for (const field of event.fields) {
+    const controlSpec = getFieldControlSpec(field.type);
     const wrapper = field.type === "radio" || field.type === "checkbox" ? document.createElement("fieldset") : node("div"); wrapper.className = "question"; wrapper.dataset.fieldType = field.type;
     const controlId = `field-${field.id}`;
     if (field.type === "radio" || field.type === "checkbox") {
@@ -81,8 +82,8 @@ function renderQuestions(event) {
     } else if (field.type === "boolean") {
       const label = node("label", "inline-options"); const input = document.createElement("input"); input.id = controlId; input.name = field.id; input.type = "checkbox"; input.value = "true"; input.required = field.required; label.append(input, document.createTextNode(field.label)); const marker = node("span", field.required ? "required-mark" : "optional-mark", field.required ? " *" : "（选填）"); label.append(marker); wrapper.append(label);
     } else {
-      let control = field.type === "textarea" ? document.createElement("textarea") : field.type === "select" ? document.createElement("select") : document.createElement("input"); control.id = controlId; control.name = field.id; control.required = field.required;
-      if (control.tagName === "INPUT") { control.type = field.type; control.autocomplete = field.autocomplete || ""; if (field.min !== undefined) control.min = String(field.min); }
+      const control = document.createElement(controlSpec.tag); control.id = controlId; control.name = field.id; control.required = field.required;
+      if (controlSpec.inputType) { control.type = controlSpec.inputType; control.autocomplete = field.autocomplete || ""; if (field.min !== undefined) control.min = String(field.min); }
       appendFieldLabel(wrapper, field, controlId);
       if (field.type === "select") { const placeholder = node("option", "", "请选择"); placeholder.value = ""; control.append(placeholder); for (const value of field.options || []) { const option = node("option", "", value); option.value = value; control.append(option); } }
       wrapper.append(control);
@@ -124,13 +125,12 @@ function renderSuccess(result) {
 }
 
 function setRegistrationEnabled(event) {
-  const availability = getRegistrationAvailability(event, serverTimestamp()); const countdown = document.querySelector("#countdown");
+  const now = serverTimestamp(); const availability = applyRegistrationGate(event, now, form.querySelectorAll("input, textarea, select, button")); const countdown = document.querySelector("#countdown");
   if (availability.countdownTarget) {
     const milliseconds = Math.max(0, availability.countdownTarget - serverTimestamp()); const hours = Math.floor(milliseconds / 3_600_000); const minutes = Math.floor((milliseconds % 3_600_000) / 60_000);
     countdown.textContent = availability.phase === "upcoming" ? `报名将在 ${hours} 小时 ${minutes} 分钟后开放（以服务器时间为准）。` : availability.phase === "open" ? `报名将在 ${hours} 小时 ${minutes} 分钟后截止（以服务器时间为准）。` : "报名已截止。";
   } else countdown.textContent = availability.phase === "closed" ? "此活动目前未开放报名。" : "报名时间以服务器时间为准。";
-  const locked = !availability.canRegister; for (const control of form.querySelectorAll("input, textarea, select, button")) control.disabled = locked;
-  const reviewButton = document.querySelector("#final-submit"); if (reviewButton) reviewButton.disabled = locked;
+  const reviewButton = document.querySelector("#final-submit"); if (reviewButton) reviewButton.disabled = !availability.canRegister;
   if (availability.countdownTarget && availability.phase !== "closed") window.setTimeout(() => setRegistrationEnabled(event), Math.min(30_000, Math.max(250, availability.countdownTarget - serverTimestamp() + 1)));
   return availability;
 }

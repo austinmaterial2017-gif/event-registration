@@ -23,6 +23,22 @@ export function getSeatModeState(seatMode) {
   return options[seatMode] || options.none;
 }
 
+export function getFieldControlSpec(type) {
+  if (["text", "number", "tel", "email", "date", "radio", "checkbox"].includes(type)) return { tag: "input", inputType: type };
+  if (type === "boolean") return { tag: "input", inputType: "checkbox" };
+  if (type === "textarea" || type === "select") return { tag: type, inputType: null };
+  return { tag: "input", inputType: "text" };
+}
+
+export function applyRegistrationGate(event, serverTimestamp, controls) {
+  const availability = getRegistrationAvailability(event, serverTimestamp);
+  for (const control of controls || []) {
+    const intrinsicallyDisabled = control?.dataset?.intrinsicDisabled === "true";
+    control.disabled = !availability.canRegister || intrinsicallyDisabled;
+  }
+  return availability;
+}
+
 export function validateRegistrationDraft(event, sessionIds, seat, answers, serverTimestamp) {
   const availability = getRegistrationAvailability(event, serverTimestamp);
   const selection = validateSelection(event, event?.sessions, sessionIds);

@@ -63,3 +63,21 @@ Additional checks: `node --check public/js/index-page.js`; `node --check public/
 ### Remaining concern
 
 The demo's server timestamp is an explicit stand-in for Task 3's API response. The production API must supply and enforce the authoritative time and repeat all availability checks server-side.
+
+---
+
+## Round 2 review fixes
+
+### Changes made
+
+1. Activity cards now calculate opening and closing countdowns from the API-supplied `serverNow` offset. The cards refresh against that fixed offset and never restart a fabricated duration.
+2. Replaced the old token-only participant-flow test with behavior and contract tests. They verify the public semantic regions and ordered six stages, every dynamic field-control specification used by the renderer, opening/closing card countdown calculations, and the same gate helper used by the registration page.
+3. Required and all-mode session inputs now declare an intrinsic disabled state. Time gating locks every control while registration is unavailable, but restores only controls that were originally editable when it reopens; mandatory sessions stay selected and disabled.
+
+### Verification
+
+Command: `npm.cmd test`
+
+Result: exit code 0; 16 tests passed, 0 failed, 0 skipped.
+
+Additional checks: `node --check public/js/index-page.js`; `node --check public/js/register-page.js`; and `git diff --check` all passed.

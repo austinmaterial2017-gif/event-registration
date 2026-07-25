@@ -69,11 +69,35 @@ test("malformed JSON and non-success HTTP statuses are safe normalized failures"
 test("a server error and successful response use the public result contract without internals", async () => {
   const rejected = clientWithResponse({ ok: false, code: "REGISTRATION_CLOSED", message: "报名已截止" }).client;
   const unsafeMessage = clientWithResponse({ ok: false, code: "INTERNAL", message: "Error: stack trace / private implementation" }).client;
+  const databaseMessage = clientWithResponse({ ok: false, code: "INTERNAL", message: "SQLSTATE[42S02]: private database details" }).client;
   const successful = clientWithResponse({ ok: true, data: { serverNow: "2026-07-26T10:00:00+08:00", events: [] } }).client;
 
-  assert.deepEqual(await rejected.createRegistration({}), { ok: false, code: "REGISTRATION_CLOSED", message: "报名已截止" });
+  assert.deepEqual(await rejected.createRegistration({}), { ok: false, code: "REGISTRATION_CLOSED", message: "报名已截止。" });
   assert.deepEqual(await unsafeMessage.listEvents(), { ok: false, code: "INTERNAL", message: "请求未能完成，请稍后重试。" });
+  assert.deepEqual(await databaseMessage.listEvents(), { ok: false, code: "INTERNAL", message: "请求未能完成，请稍后重试。" });
   assert.deepEqual(await successful.listEvents(), { ok: true, data: { serverNow: "2026-07-26T10:00:00+08:00", events: [] } });
+});
+
+test("only allowlisted public error codes receive fixed Chinese messages", async () => {
+  const closed = clientWithResponse({ ok: false, code: "REGISTRATION_CLOSED", message: "a different short message" }).client;
+  const unknown = clientWithResponse({ ok: false, code: "UNEXPECTED_FAILURE", message: "也不能公开这段服务端信息" }).client;
+
+  assert.deepEqual(await closed.listEvents(), { ok: false, code: "REGISTRATION_CLOSED", message: "报名已截止。" });
+  assert.deepEqual(await unknown.listEvents(), { ok: false, code: "UNEXPECTED_FAILURE", message: "请求未能完成，请稍后重试。" });
+});
+
+test("an abort while parsing JSON is normalized as a timeout", async () => {
+  const client = createApiClient({
+    endpoint,
+    timeoutMs: 1,
+    fetchImpl: async (_url, { signal }) => ({
+      ok: true,
+      status: 200,
+      json: () => new Promise((_, reject) => signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))))
+    })
+  });
+
+  assert.deepEqual(await client.listEvents(), { ok: false, code: "TIMEOUT", message: "请求超时，请检查网络后重试。" });
 });
 
 test("unsafe endpoints are rejected before a network request", async () => {

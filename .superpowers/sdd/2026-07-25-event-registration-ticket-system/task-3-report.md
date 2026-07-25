@@ -31,3 +31,10 @@ Result: exit code 0; 26 tests passed, 0 failed, 0 skipped. The API contract test
 ## Concerns
 
 None.
+
+## Review follow-up
+
+- Replaced server-message forwarding with a fixed Chinese-message allowlist keyed by public error code. Unknown codes, including SQL/database-style messages, now always use the generic public message.
+- An `AbortError` while parsing the response body is now normalized to the same `TIMEOUT` result as an aborted fetch.
+- Added contract tests for SQLSTATE-style redaction, fixed messages for allowlisted and unknown error codes, and abort during JSON parsing.
+- Re-ran `npm.cmd test`: 28 tests passed, 0 failed.

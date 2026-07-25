@@ -3,10 +3,16 @@ import { APPS_SCRIPT_WEB_APP_URL } from "./config.js";
 export const DEMO_ENDPOINT_PLACEHOLDER = "PASTE_APPS_SCRIPT_WEB_APP_URL_HERE";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
-const safeServerMessage = (message) => {
-  if (typeof message !== "string" || message.trim() === "" || message.length > 180) return null;
-  if (/(error|exception|stack|trace|\bat\s+\w+\s*\(|https?:\/\/|\u5806\u6808|\u5185\u90e8)/i.test(message)) return null;
-  return message.trim();
+const PUBLIC_ERROR_MESSAGES = {
+  EVENT_NOT_FOUND: "未找到该活动。",
+  INVALID_REQUEST: "提交信息无效，请检查后重试。",
+  REGISTRATION_CLOSED: "报名已截止。",
+  REGISTRATION_FULL: "报名名额已满。",
+  REGISTRATION_NOT_OPEN: "报名尚未开放。",
+  TICKET_ALREADY_VERIFIED: "该凭证已完成验票。",
+  TICKET_NOT_FOUND: "未找到对应凭证。",
+  TICKET_VERIFICATION_FAILED: "验证信息不匹配。",
+  TOKEN_INVALID: "凭证无效或已过期。"
 };
 
 function failure(code, message) {
@@ -68,7 +74,7 @@ function normalizeServerResult(body) {
   if (body.ok === true) return { ok: true, data: body.data };
 
   const code = typeof body.code === "string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(body.code) ? body.code : "REQUEST_REJECTED";
-  return failure(code, safeServerMessage(body.message) || "请求未能完成，请稍后重试。");
+  return failure(code, PUBLIC_ERROR_MESSAGES[code] || "请求未能完成，请稍后重试。");
 }
 
 export function createApiClient({ endpoint = APPS_SCRIPT_WEB_APP_URL, fetchImpl = globalThis.fetch, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
@@ -91,7 +97,8 @@ export function createApiClient({ endpoint = APPS_SCRIPT_WEB_APP_URL, fetchImpl 
       let body;
       try {
         body = await response.json();
-      } catch {
+      } catch (error) {
+        if (error?.name === "AbortError" || controller.signal.aborted) return failure("TIMEOUT", "请求超时，请检查网络后重试。");
         return failure("INVALID_RESPONSE", "服务返回的数据无效，请稍后重试。");
       }
       return normalizeServerResult(body);

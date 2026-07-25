@@ -76,3 +76,76 @@ test("routing shells return safe public envelopes and the manifest has V8 scopes
   assert.deepEqual(parsed.oauthScopes, ["https://www.googleapis.com/auth/spreadsheets"]);
   assert.equal(parsed.webapp.access, "ANYONE_ANONYMOUS");
 });
+
+test("registration service validates every server-authoritative rule inside one script lock", async () => {
+  const registration = await source("RegistrationService.gs");
+  assert.match(registration, /function\s+createRegistration\s*\(\s*payload\s*\)/);
+  const createBody = registration.match(/function\s+createRegistration\s*\([^)]*\)\s*\{([\s\S]*?)\n\}/)?.[1] || "";
+  assert.match(createBody, /withScriptLock\s*\(\s*function\s*\(\s*\)/);
+  for (const helper of [
+    "requireOpenEvent_",
+    "validateDynamicAnswers_",
+    "validateSessionSelection_",
+    "validateSessionCapacity_",
+    "validateDuplicateIdentity_",
+    "validateSessionConflicts_",
+    "selectRegistrationSeats_"
+  ]) {
+    assert.match(registration, new RegExp(`function\\s+${helper}\\s*\\(`));
+    assert.match(createBody, new RegExp(`${helper}\\s*\\(`));
+  }
+  assert.match(registration, /event\.status\s*!==\s*['"]open['"]/);
+  assert.match(registration, /opensAt|closesAt/);
+  assert.match(registration, /selectionMode|minChoices|maxChoices|required/);
+  assert.match(registration, /capacity/);
+  assert.match(registration, /identityFields/);
+  assert.match(registration, /startsAt|endsAt/);
+  assert.match(registration, /seatMode|held|holdOwner|holdExpiresAt/);
+});
+
+test("registration writes are atomic, append one item per selected session, and compensate on failure", async () => {
+  const registration = await source("RegistrationService.gs");
+  assert.match(registration, /selectedSessions\.map\s*\(/);
+  assert.match(registration, /appendParticipantRow_/);
+  assert.match(registration, /appendRegistrationRow_/);
+  assert.match(registration, /catch\s*\([^)]*\)\s*\{[\s\S]*rollbackRegistrationWrites_/);
+  assert.match(registration, /function\s+rollbackRegistrationWrites_\s*\(/);
+  assert.match(registration, /deleteRow\s*\(/);
+  assert.match(registration, /restoreSeatSnapshots_/);
+  assert.match(registration, /EVT-\s*['"]?\s*\+\s*Utilities\.getUuid\(\)\.replace\(\/-\/g,\s*['"]{2}\)\.slice\(0,\s*10\)\.toUpperCase\(\)/);
+  assert.match(registration, /Utilities\.getUuid\(\)\.replace\(\/-\/g,\s*['"]{2}\)\s*\+\s*Utilities\.getUuid\(\)\.replace\(\/-\/g,\s*['"]{2}\)/);
+});
+
+test("ticket lookup, cancellation, and exchange preserve privacy and historical records", async () => {
+  const ticket = await source("TicketService.gs");
+  for (const name of ["lookupTicket", "cancelRegistration", "exchangeSeat"]) {
+    assert.match(ticket, new RegExp(`function\\s+${name}\\s*\\(\\s*payload\\s*\\)`));
+  }
+  assert.match(ticket, /verificationValue/);
+  assert.match(ticket, /maskPrivateValue_/);
+  assert.match(ticket, /seatExchangeEnabled/);
+  assert.match(ticket, /rotateTicketToken_/);
+  assert.match(ticket, /restoreExchangeSnapshots_/);
+  assert.match(ticket, /appendTicketAudit_/);
+  assert.match(ticket, /status\s*=\s*['"]cancelled['"]/);
+  const cancelBody = ticket.match(/function\s+cancelRegistration\s*\([^)]*\)\s*\{([\s\S]*?)\n\}/)?.[1] || "";
+  assert.match(cancelBody, /withScriptLock\s*\(\s*function\s*\(\s*\)/);
+  assert.match(cancelBody, /match\.status\s*=\s*['"]cancelled['"]/);
+  assert.doesNotMatch(cancelBody, /deleteRow|deleteRows/);
+  const exchangeBody = ticket.match(/function\s+exchangeSeat\s*\([^)]*\)\s*\{([\s\S]*?)\n\}/)?.[1] || "";
+  assert.match(exchangeBody, /withScriptLock\s*\(\s*function\s*\(\s*\)/);
+  assert.match(exchangeBody, /catch\s*\([^)]*\)\s*\{[\s\S]*restoreExchangeSnapshots_/);
+  assert.doesNotMatch(ticket, /sheetId|spreadsheetId|stack|rowNumber\s*:/i);
+});
+
+test("doPost uses a fixed Task 3 route allowlist and never reflects private errors", async () => {
+  const code = await source("Code.gs");
+  for (const action of ["listEvents", "getEvent", "createRegistration", "lookupTicket", "verifyTicket"]) {
+    assert.match(code, new RegExp(`['"]${action}['"]\\s*:`));
+  }
+  assert.match(code, /JSON\.parse\s*\(/);
+  assert.match(code, /PUBLIC_ERROR_MESSAGES/);
+  assert.match(code, /Object\.prototype\.hasOwnProperty\.call\s*\(\s*PUBLIC_ROUTES/);
+  assert.match(code, /ContentService\.MimeType\.JSON/);
+  assert.doesNotMatch(code, /\.stack|error\.message|exception\.message|spreadsheetId/i);
+});

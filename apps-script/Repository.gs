@@ -1,0 +1,161 @@
+var ACTIVE_SPREADSHEET_ID = 'ACTIVE_SPREADSHEET_ID';
+var ADMIN_SETTINGS = 'ADMIN_SETTINGS';
+
+var SHEET_DEFINITIONS = {
+  '系统设置': ['key', 'value', 'updatedAt'],
+  '活动': ['eventId', 'title', 'description', 'status', 'opensAt', 'closesAt', 'location', 'selectionMode', 'minChoices', 'maxChoices', 'seatMode', 'seatZones', 'createdAt', 'updatedAt'],
+  '场次': ['sessionId', 'eventId', 'title', 'speaker', 'startsAt', 'endsAt', 'required', 'capacity', 'status', 'createdAt', 'updatedAt'],
+  '座位': ['seatId', 'eventId', 'sessionId', 'label', 'zone', 'status', 'holderRegistrationId', 'createdAt', 'updatedAt'],
+  '报名问题': ['questionId', 'eventId', 'label', 'type', 'required', 'options', 'sortOrder', 'status', 'createdAt', 'updatedAt'],
+  '参加者': ['participantId', 'name', 'phone', 'email', 'createdAt', 'updatedAt'],
+  '报名项目': ['registrationId', 'eventId', 'participantId', 'ticketNumber', 'status', 'sessionIds', 'seatChoices', 'answers', 'createdAt', 'updatedAt'],
+  '签到记录': ['checkInId', 'registrationId', 'eventId', 'checkedInAt', 'checkedInBy', 'status'],
+  '操作记录': ['auditId', 'action', 'entityType', 'entityId', 'actor', 'details', 'createdAt']
+};
+
+/** Initializes all private sheets without replacing any populated cells. */
+function setupSystem() {
+  return withScriptLock(function() {
+    var spreadsheet = getConfiguredSpreadsheet();
+    initializeSpreadsheet_(spreadsheet);
+    return spreadsheet.getId();
+  });
+}
+
+/** Returns the spreadsheet selected for this deployment. */
+function getConfiguredSpreadsheet() {
+  var spreadsheetId = PropertiesService.getScriptProperties().getProperty(ACTIVE_SPREADSHEET_ID);
+  if (!spreadsheetId) throw new Error('Spreadsheet is not configured.');
+  return SpreadsheetApp.openById(spreadsheetId);
+}
+
+/** Returns administrator-controlled options kept outside public files. */
+function getAdminSettings() {
+  var serialized = PropertiesService.getScriptProperties().getProperty(ADMIN_SETTINGS);
+  if (!serialized) return {};
+  try {
+    return JSON.parse(serialized);
+  } catch (_ignored) {
+    return {};
+  }
+}
+
+/** Selects and non-destructively initializes a spreadsheet for this deployment. */
+function setActiveSpreadsheet(spreadsheetId) {
+  if (typeof spreadsheetId !== 'string' || !spreadsheetId.trim()) {
+    throw new Error('A spreadsheet must be selected.');
+  }
+
+  return withScriptLock(function() {
+    var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+    initializeSpreadsheet_(spreadsheet);
+    PropertiesService.getScriptProperties().setProperty(ACTIVE_SPREADSHEET_ID, spreadsheet.getId());
+    appendAuditRow_(spreadsheet, 'SET_ACTIVE_SPREADSHEET', 'spreadsheet', 'active', 'Configured active spreadsheet.');
+    return spreadsheet.getId();
+  });
+}
+
+/** Executes a mutation while holding the script-wide lock. */
+function withScriptLock(callback) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    return callback();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Reads data rows as objects, including their one-based row number. */
+function readRows(sheetName) {
+  var sheet = getRequiredSheet_(getConfiguredSpreadsheet(), sheetName);
+  if (sheet.getLastRow() <= 1) return [];
+
+  var headers = SHEET_DEFINITIONS[sheetName];
+  return sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues().map(function(values, index) {
+    var row = { rowNumber: index + 2 };
+    headers.forEach(function(header, column) { row[header] = values[column]; });
+    return row;
+  });
+}
+
+/** Appends an array or header-keyed object to a private sheet. */
+function appendRow(sheetName, row) {
+  return withScriptLock(function() {
+    var spreadsheet = getConfiguredSpreadsheet();
+    initializeSpreadsheet_(spreadsheet);
+    var sheet = getRequiredSheet_(spreadsheet, sheetName);
+    var values = normalizeRow_(sheetName, row);
+    sheet.getRange(sheet.getLastRow() + 1, 1, 1, values.length).setValues([values]);
+    return sheet.getLastRow();
+  });
+}
+
+/** Updates only the supplied row, preserving all other rows. */
+function updateRow(sheetName, rowNumber, values) {
+  if (!Number.isInteger(rowNumber) || rowNumber < 2) throw new Error('Invalid row number.');
+  return withScriptLock(function() {
+    var spreadsheet = getConfiguredSpreadsheet();
+    initializeSpreadsheet_(spreadsheet);
+    var sheet = getRequiredSheet_(spreadsheet, sheetName);
+    if (rowNumber > sheet.getLastRow()) throw new Error('Row does not exist.');
+    var rowValues = normalizeRow_(sheetName, values);
+    sheet.getRange(rowNumber, 1, 1, rowValues.length).setValues([rowValues]);
+    return rowNumber;
+  });
+}
+
+function initializeSpreadsheet_(spreadsheet) {
+  Object.keys(SHEET_DEFINITIONS).forEach(function(sheetName) {
+    var sheet = spreadsheet.getSheetByName(sheetName) || spreadsheet.insertSheet(sheetName);
+    ensureHeaders_(sheet, SHEET_DEFINITIONS[sheetName]);
+  });
+  addSampleDraftEventIfEmpty_(spreadsheet.getSheetByName('活动'));
+}
+
+function ensureHeaders_(sheet, headers) {
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    return;
+  }
+
+  var existing = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
+  headers.forEach(function(header, index) {
+    if (existing[index] === '' || existing[index] === null) {
+      sheet.getRange(1, index + 1).setValue(header);
+    }
+  });
+}
+
+function addSampleDraftEventIfEmpty_(eventSheet) {
+  if (eventSheet.getLastRow() <= 1) {
+    eventSheet.appendRow([
+      'sample-draft-event', '示例草稿活动', '初始化后可安全编辑或删除的示例。', 'draft',
+      '', '', '', 'free', 0, 1, 'none', '[]', new Date(), new Date()
+    ]);
+  }
+}
+
+function getRequiredSheet_(spreadsheet, sheetName) {
+  if (!Object.prototype.hasOwnProperty.call(SHEET_DEFINITIONS, sheetName)) {
+    throw new Error('Unknown sheet.');
+  }
+  var sheet = spreadsheet.getSheetByName(sheetName);
+  if (!sheet) throw new Error('System has not been initialized.');
+  return sheet;
+}
+
+function normalizeRow_(sheetName, row) {
+  var headers = SHEET_DEFINITIONS[sheetName];
+  if (Array.isArray(row)) {
+    if (row.length !== headers.length) throw new Error('Row has an invalid column count.');
+    return row;
+  }
+  if (!row || typeof row !== 'object') throw new Error('Row must be an array or object.');
+  return headers.map(function(header) { return row[header] === undefined ? '' : row[header]; });
+}
+
+function appendAuditRow_(spreadsheet, action, entityType, entityId, details) {
+  var sheet = getRequiredSheet_(spreadsheet, '操作记录');
+  sheet.appendRow([Utilities.getUuid(), action, entityType, entityId, 'system', details, new Date()]);
+}

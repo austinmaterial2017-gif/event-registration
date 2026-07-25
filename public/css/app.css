@@ -1,0 +1,41 @@
+:root { color-scheme: dark; --ink:#15131a; --card:#24202b; --line:#42394d; --ivory:#f8f0df; --muted:#bdb2c6; --pink:#ff4fa3; --purple:#8755ff; --green:#5de1a1; --danger:#ff8b9d; font-family: Inter, "Noto Sans SC", "Microsoft YaHei", sans-serif; }
+* { box-sizing:border-box; }
+body { margin:0; min-width:320px; background:radial-gradient(circle at 85% 0%, #442350 0, transparent 29rem), var(--ink); color:var(--ivory); line-height:1.55; }
+a { color:inherit; }
+.site-header, main, footer { width:min(1120px, calc(100% - 32px)); margin-inline:auto; }
+.site-header { min-height:92px; display:flex; align-items:center; justify-content:space-between; gap:20px; }
+.site-header > p { margin:0; color:var(--muted); font-size:.9rem; text-align:right; }
+.site-header.compact { min-height:72px; }
+.brand { font-weight:800; letter-spacing:-.07em; text-decoration:none; font-size:1.5rem; }
+.brand span { color:var(--pink); }
+.back-link { color:var(--muted); font-size:.9rem; }
+.hero { padding:52px 0 48px; max-width:760px; }
+.eyebrow { margin:0 0 8px; color:#fd79bb; font-size:.73rem; font-weight:800; letter-spacing:.16em; }
+h1, h2, p { overflow-wrap:anywhere; }
+h1 { font-size:clamp(2.5rem, 7vw, 5.5rem); line-height:.98; letter-spacing:-.065em; margin:0; }
+h2 { margin:.1rem 0 0; font-size:1.35rem; letter-spacing:-.04em; }
+.hero > p:last-child { max-width:500px; color:var(--muted); font-size:1.06rem; margin-top:22px; }
+.section-heading { display:flex; align-items:end; justify-content:space-between; margin-bottom:18px; }
+.activity-list { display:grid; gap:14px; padding-bottom:64px; }
+.activity-card, .form-card, .notice { border:1px solid var(--line); border-radius:24px; background:linear-gradient(145deg, rgba(47,40,55,.98), rgba(31,28,37,.98)); box-shadow:0 18px 45px rgba(0,0,0,.18); }
+.activity-card { padding:23px; display:grid; gap:14px; }
+.activity-card h3 { font-size:1.45rem; margin:0; letter-spacing:-.04em; }
+.activity-card p { margin:0; color:var(--muted); }
+.card-top, .activity-actions { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
+.status { display:inline-flex; border-radius:999px; padding:4px 9px; white-space:nowrap; font-size:.76rem; font-weight:750; background:#3d3547; color:var(--ivory); }
+.status.open { background:rgba(93,225,161,.16); color:var(--green); }.status.cancelled { color:#ffabb8; }.status.live { color:#bca4ff; }
+.meta-list { display:flex; flex-wrap:wrap; gap:8px 15px; font-size:.86rem; }.meta-list span { color:var(--muted); }
+button, input, textarea, select { font:inherit; } button { cursor:pointer; }
+.primary-button, .secondary-button { min-height:46px; border:0; border-radius:14px; padding:10px 16px; font-weight:800; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; }
+.primary-button { background:linear-gradient(110deg, var(--pink), var(--purple)); color:white; box-shadow:0 8px 24px rgba(212,62,180,.27); }.primary-button:disabled { background:#5b5262; cursor:not-allowed; box-shadow:none; }
+.secondary-button { background:#393241; color:var(--muted); }
+.registration-shell { padding:25px 0 72px; max-width:860px; }.registration-shell > section > h1 { font-size:clamp(2.4rem, 6vw, 4.3rem); }
+.event-meta { margin:14px 0 0; color:var(--muted); }.steps { list-style:none; display:grid; grid-template-columns:repeat(5, 1fr); gap:8px; padding:0; margin:28px 0; color:var(--muted); font-size:.72rem; }.steps li { display:grid; gap:2px; }.steps span, .step-number { color:#f477b9; font-weight:800; margin:0; }
+.countdown, .notice { margin:0 0 18px; padding:13px 16px; color:var(--green); background:rgba(93,225,161,.08); border-radius:14px; }.notice { color:var(--ivory); }
+.form-card { padding:22px; margin:16px 0; }.card-title { display:flex; align-items:baseline; gap:12px; margin-bottom:9px; }.helper { margin:0 0 16px; color:var(--muted); font-size:.9rem; }.choice-grid { display:grid; gap:10px; border:0; padding:0; margin:0; }
+.choice, .seat-choice { border:1px solid var(--line); border-radius:15px; padding:13px; display:flex; align-items:flex-start; gap:10px; background:rgba(255,255,255,.025); }.choice:focus-within, .seat-choice:focus-within { outline:2px solid #c167ff; outline-offset:2px; }.choice input, .seat-choice input { margin-top:4px; accent-color:var(--pink); }.choice strong { display:block; }.choice small { display:block; color:var(--muted); margin-top:3px; }
+.question-stack { display:grid; gap:18px; }.question label, .question legend { display:block; font-weight:750; margin-bottom:7px; }.required-mark { color:#ff82b9; }.optional-mark { color:var(--muted); font-weight:400; font-size:.82rem; }.question input:not([type="radio"]):not([type="checkbox"]), .question textarea, .question select { width:100%; min-height:45px; padding:10px 12px; border:1px solid #554b60; border-radius:12px; background:#18151d; color:var(--ivory); }.question textarea { min-height:100px; resize:vertical; }.inline-options { display:grid; gap:8px; }.inline-options label { font-weight:400; margin:0; display:flex; gap:9px; align-items:center; }.inline-options input { accent-color:var(--pink); }
+.error-summary { border:1px solid rgba(255,139,157,.8); border-radius:14px; background:rgba(255,139,157,.09); color:#ffd9df; padding:14px 17px; margin:0 0 16px; }.error-summary ul { margin:6px 0 0; padding-left:21px; }.confirmation { background:linear-gradient(130deg, rgba(255,79,163,.14), rgba(135,85,255,.18)); }.confirmation p { color:var(--muted); }.confirmation .primary-button { width:100%; }
+.success-card { text-align:center; padding:45px 22px; }.success-card h2 { font-size:2rem; }.success-card p { color:var(--muted); } footer { padding:26px 0 36px; color:#8d8495; font-size:.8rem; }
+.sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+@media (min-width:700px) { .activity-list { grid-template-columns:repeat(2, 1fr); }.activity-card:first-child { grid-column:span 2; grid-template-columns:1fr auto; }.activity-card:first-child .activity-actions { align-self:end; }.choice-grid { grid-template-columns:repeat(2, 1fr); }.form-card { padding:30px; } }

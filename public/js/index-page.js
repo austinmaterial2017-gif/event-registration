@@ -1,4 +1,4 @@
-import { getEventCapability } from "./domain.js";
+import { getVisibleActivities } from "./event-list-flow.js";
 
 const serverNow = "2026-07-26T10:00:00+08:00";
 const activities = [
@@ -17,12 +17,25 @@ const statusNames = { upcoming: "即将开放", open: "报名开放", closed: "�
 function renderActivities() {
   const list = document.querySelector("#activity-list");
   const accessibleStatus = document.querySelector("#activity-status");
-  const visibleActivities = activities.filter((activity) => getEventCapability(activity.status).visible);
+  const visibleActivities = getVisibleActivities(activities);
   list.replaceChildren(...visibleActivities.map((activity) => {
-    const capability = getEventCapability(activity.status);
     const article = document.createElement("article");
     article.className = "activity-card";
-    article.innerHTML = `<div><div class="card-top"><p class="eyebrow">${activity.date}</p><span class="status ${activity.status}">${statusNames[activity.status]}</span></div><h3>${activity.title}</h3><p>${activity.description}</p></div><div class="activity-actions"><div class="meta-list"><span>⌖ ${activity.place}</span></div>${capability.canRegister ? `<a class="primary-button" href="register.html?event=${encodeURIComponent(activity.id)}">立即报名</a>` : `<span class="secondary-button" aria-label="${statusNames[activity.status]}，暂不可报名">暂不可报名</span>`}</div>`;
+    const copy = document.createElement("div");
+    const top = document.createElement("div"); top.className = "card-top";
+    const date = document.createElement("p"); date.className = "eyebrow"; date.textContent = activity.date;
+    const status = document.createElement("span"); status.className = `status ${activity.status}`; status.textContent = statusNames[activity.status] || "状态未知";
+    const title = document.createElement("h3"); title.textContent = activity.title;
+    const description = document.createElement("p"); description.textContent = activity.description;
+    top.append(date, status); copy.append(top, title, description);
+    const actions = document.createElement("div"); actions.className = "activity-actions";
+    const meta = document.createElement("div"); meta.className = "meta-list";
+    const place = document.createElement("span"); place.textContent = `⌖ ${activity.place}`; meta.append(place);
+    const action = document.createElement(activity.canRegister ? "a" : "span"); action.className = activity.canRegister ? "primary-button" : "secondary-button";
+    action.textContent = activity.canRegister ? "立即报名" : "暂不可报名";
+    if (activity.canRegister) action.href = `register.html?event=${encodeURIComponent(activity.id)}`;
+    else action.setAttribute("aria-label", `${statusNames[activity.status] || "当前状态"}，暂不可报名`);
+    actions.append(meta, action); article.append(copy, actions);
     return article;
   }));
   list.setAttribute("aria-busy", "false");

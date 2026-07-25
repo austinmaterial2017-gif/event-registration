@@ -22,7 +22,8 @@
           <li><span>02</span>选择讲座</li>
           <li><span>03</span>选择座位</li>
           <li><span>04</span>填写资料</li>
-          <li><span>05</span>确认提交</li>
+          <li><span>05</span>核对资料</li>
+          <li><span>06</span>提交报名</li>
         </ol>
         <div id="countdown" class="countdown" aria-live="polite"></div>
         <div id="error-summary" class="error-summary" role="alert" tabindex="-1" hidden></div>
@@ -42,11 +43,19 @@
             <div id="dynamic-questions" class="question-stack"></div>
           </section>
           <section id="confirmation" class="confirmation form-card" aria-labelledby="confirmation-title">
-            <div class="card-title"><p class="step-number">05</p><h2 id="confirmation-title">确认提交</h2></div>
-            <p>提交即代表你确认以上选择。我们会将电子入场凭证发送至你的邮箱。</p>
-            <button id="submit-registration" class="primary-button" type="submit">确认并提交报名</button>
+            <div class="card-title"><p class="step-number">05</p><h2 id="confirmation-title">核对资料</h2></div>
+            <p>先核对你的场次、座位和填写资料，再进入最后提交。</p>
+            <button id="review-registration" class="primary-button" type="submit">查看并核对资料</button>
           </section>
         </form>
+        <section id="review-card" class="confirmation form-card" aria-labelledby="review-title" hidden tabindex="-1">
+          <div class="card-title"><p class="step-number">05</p><h2 id="review-title">请核对报名资料</h2></div>
+          <div id="review-details" class="review-details"></div>
+          <div class="review-actions">
+            <button id="edit-registration" class="secondary-button" type="button">返回修改</button>
+            <button id="final-submit" class="primary-button" type="button">06 · 确认提交报名</button>
+          </div>
+        </section>
       </section>
     </main>
     <template id="field-control-contract">

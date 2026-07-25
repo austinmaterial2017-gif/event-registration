@@ -17,7 +17,7 @@ var SHEET_DEFINITIONS = {
 function setupSystem() {
   return withScriptLock(function() {
     var spreadsheet = getConfiguredSpreadsheet();
-    initializeSpreadsheet_(spreadsheet);
+    initializeSpreadsheet_(spreadsheet, true);
     return spreadsheet.getId();
   });
 }
@@ -48,7 +48,7 @@ function setActiveSpreadsheet(spreadsheetId) {
 
   return withScriptLock(function() {
     var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
-    initializeSpreadsheet_(spreadsheet);
+    initializeSpreadsheet_(spreadsheet, true);
     PropertiesService.getScriptProperties().setProperty(ACTIVE_SPREADSHEET_ID, spreadsheet.getId());
     appendAuditRow_(spreadsheet, 'SET_ACTIVE_SPREADSHEET', 'spreadsheet', 'active', 'Configured active spreadsheet.');
     return spreadsheet.getId();
@@ -83,7 +83,6 @@ function readRows(sheetName) {
 function appendRow(sheetName, row) {
   return withScriptLock(function() {
     var spreadsheet = getConfiguredSpreadsheet();
-    initializeSpreadsheet_(spreadsheet);
     var sheet = getRequiredSheet_(spreadsheet, sheetName);
     var values = normalizeRow_(sheetName, row);
     sheet.getRange(sheet.getLastRow() + 1, 1, 1, values.length).setValues([values]);
@@ -96,7 +95,6 @@ function updateRow(sheetName, rowNumber, values) {
   if (!Number.isInteger(rowNumber) || rowNumber < 2) throw new Error('Invalid row number.');
   return withScriptLock(function() {
     var spreadsheet = getConfiguredSpreadsheet();
-    initializeSpreadsheet_(spreadsheet);
     var sheet = getRequiredSheet_(spreadsheet, sheetName);
     if (rowNumber > sheet.getLastRow()) throw new Error('Row does not exist.');
     var rowValues = normalizeRow_(sheetName, values);
@@ -105,26 +103,29 @@ function updateRow(sheetName, rowNumber, values) {
   });
 }
 
-function initializeSpreadsheet_(spreadsheet) {
+function initializeSpreadsheet_(spreadsheet, seedDraftEvent) {
   Object.keys(SHEET_DEFINITIONS).forEach(function(sheetName) {
     var sheet = spreadsheet.getSheetByName(sheetName) || spreadsheet.insertSheet(sheetName);
     ensureHeaders_(sheet, SHEET_DEFINITIONS[sheetName]);
   });
-  addSampleDraftEventIfEmpty_(spreadsheet.getSheetByName('活动'));
+  if (seedDraftEvent) addSampleDraftEventIfEmpty_(spreadsheet.getSheetByName('活动'));
 }
 
 function ensureHeaders_(sheet, headers) {
+  if (hasExactHeaderRow_(sheet, headers)) return;
   if (sheet.getLastRow() === 0) {
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
     return;
   }
 
+  sheet.insertRowsBefore(1, 1);
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+}
+
+function hasExactHeaderRow_(sheet, headers) {
+  if (sheet.getLastRow() === 0) return false;
   var existing = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
-  headers.forEach(function(header, index) {
-    if (existing[index] === '' || existing[index] === null) {
-      sheet.getRange(1, index + 1).setValue(header);
-    }
-  });
+  return headers.every(function(header, index) { return existing[index] === header; });
 }
 
 function addSampleDraftEventIfEmpty_(eventSheet) {

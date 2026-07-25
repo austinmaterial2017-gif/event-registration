@@ -16,3 +16,10 @@
 
 - `setActiveSpreadsheet` validates by opening the supplied spreadsheet before saving its identifier, initializes only the selected spreadsheet, and writes an audit entry without touching the prior one.
 - The example `draft` event is inserted only when the `活动` sheet has no data rows.
+
+## Follow-up corrections
+
+- Header detection now requires an exact ordered match. If a populated sheet has no exact header row, initialization inserts a new first row for the required headers, preserving every existing row as data.
+- Sample-event seeding is limited to explicit initialization (`setupSystem` or active spreadsheet setup); `appendRow` and `updateRow` never initialize or seed sheets.
+- The manifest now requests only the spreadsheet scope.
+- Contract tests now assert every ordered header array and these two initialization boundaries.

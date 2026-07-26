@@ -111,8 +111,8 @@ been removed and superseded by the following controls:
   action; it never reaches authentication code.
 - `apps-script/StaffCheckIn.html` is the Apps Script-only staff surface. It
   calls the internal server functions through `google.script.run` and is
-  returned only by `getStaffCheckInPage()`, which is not connected to the
-  anonymous public routes.
+  returned by `getStaffCheckInPage()` only after server-side session
+  authorization.
 - The server derives the staff identity exclusively from
   `Session.getActiveUser().getEmail()`, trims it, lowercases it, rejects blank
   identities, and matches it against `ATTENDANCE_STAFF_ALLOWLIST`.
@@ -124,11 +124,44 @@ been removed and superseded by the following controls:
 - The manifest now includes the `userinfo.email` scope needed for the
   protected staff surface to read the active Google identity.
 
-The Apps Script staff page must be hosted only in a Google-authenticated,
-restricted staff/admin context. It must not be added to the anonymous
-`doGet`/`doPost` deployment.
+The Apps Script staff page must be opened through the separately deployed,
+Google-authenticated staff URL. The same `?view=staff` query on the anonymous
+deployment receives the generic denial page because the active Google session
+identity is unavailable there.
 
 Security regression tests explicitly prove that the public route rejects
 `checkIn`, the public page has no mutation UI, a submitted allowlisted email
 cannot authenticate a blank or non-allowlisted session, and an allowlisted
 Google session succeeds while ignoring a forged submitted email.
+
+## Staff Web App deployment addendum
+
+The staff UI is reachable without publishing a privileged URL in the GitHub
+site:
+
+1. Deploy the Apps Script version as the public API, executing as the deployer
+   and allowing anonymous access. Only this URL belongs in
+   `public/js/config.js`.
+2. From the same Apps Script version, create a second Web App deployment that
+   executes as the user accessing the app and is restricted to signed-in
+   Google accounts or the organization domain.
+3. Staff open the second deployment at `/exec?view=staff`.
+
+`doGet(e)` keeps the default public health response unchanged. For
+`view=staff`, it derives the active Google email and checks the protected
+allowlist before loading `StaffCheckIn.html`. Blank and unauthorized sessions
+receive the same generic `Staff access unavailable` page with no identity or
+allowlist detail.
+
+The staff deployment URL must not appear in GitHub public configuration,
+public HTML, QR payloads, or participant-facing messages. Full operational
+steps are recorded in `apps-script/DEPLOYMENT.md`.
+
+Regression coverage now also proves:
+
+- default `doGet` stays public and performs no staff-property lookup;
+- blank and unauthorized staff sessions receive identical denial content and
+  never load the staff template;
+- an allowlisted active session receives the `StaffCheckIn` template; and
+- the deployment guide requires two deployments from the same script version
+  with distinct execution/access settings.

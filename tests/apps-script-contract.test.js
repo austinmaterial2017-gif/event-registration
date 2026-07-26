@@ -65,6 +65,8 @@ test("repository uses script properties and script locks while preserving existi
 test("routing shells return safe public envelopes and the manifest has V8 scopes", async () => {
   const [code, manifest] = await Promise.all([source("Code.gs"), source("appsscript.json")]);
   assert.match(code, /function\s+doGet\s*\(/);
+  assert.match(code, /parameter\.view\s*===\s*['"]staff['"]/);
+  assert.match(code, /getStaffCheckInPage\s*\(/);
   assert.match(code, /function\s+doPost\s*\(/);
   assert.match(code, /ContentService\.MimeType\.JSON/);
   assert.match(code, /NOT_IMPLEMENTED/);

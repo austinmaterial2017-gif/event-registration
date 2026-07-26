@@ -109,10 +109,10 @@ been removed and superseded by the following controls:
   the public browser API client. An anonymous `doPost` request with action
   `checkIn` receives the same fixed `NOT_IMPLEMENTED` response as any unknown
   action; it never reaches authentication code.
-- `apps-script/StaffCheckIn.html` is the Apps Script-only staff surface. It
-  calls the internal server functions through `google.script.run` and is
-  returned by `getStaffCheckInPage()` only after server-side session
-  authorization.
+- `staff-apps-script/StaffCheckIn.html` is the Apps Script-only staff surface.
+  It calls the staff project's internal server functions through
+  `google.script.run` and is returned by that project's gated `doGet()` only
+  after server-side session authorization.
 - The server derives the staff identity exclusively from
   `Session.getActiveUser().getEmail()`, trims it, lowercases it, rejects blank
   identities, and matches it against `ATTENDANCE_STAFF_ALLOWLIST`.
@@ -125,16 +125,20 @@ been removed and superseded by the following controls:
   protected staff surface to read the active Google identity.
 
 The Apps Script staff page must be opened through the separately deployed,
-Google-authenticated staff URL. The same `?view=staff` query on the anonymous
-deployment receives the generic denial page because the active Google session
-identity is unavailable there.
+Google-authenticated staff-project URL. The anonymous project has no staff
+route or staff template.
 
 Security regression tests explicitly prove that the public route rejects
 `checkIn`, the public page has no mutation UI, a submitted allowlisted email
 cannot authenticate a blank or non-allowlisted session, and an allowlisted
 Google session succeeds while ignoring a forged submitted email.
 
-## Staff Web App deployment addendum
+## Superseded: same-project staff deployment
+
+The same-project/two-deployment approach described in this section was
+superseded after reviewing the manifest-level execution policy. The final
+architecture uses two separate Apps Script projects; see the Round 3 addendum
+below.
 
 The staff UI is reachable without publishing a privileged URL in the GitHub
 site:
@@ -165,3 +169,44 @@ Regression coverage now also proves:
 - an allowlisted active session receives the `StaffCheckIn` template; and
 - the deployment guide requires two deployments from the same script version
   with distinct execution/access settings.
+
+## Round 3: separate staff Apps Script project
+
+The final security architecture separates the anonymous and staff surfaces at
+the Apps Script **project and manifest** boundary:
+
+- `apps-script/` is the anonymous public project. Its manifest remains
+  `USER_DEPLOYING` / `ANYONE_ANONYMOUS`, and its only scope is spreadsheet
+  access. It contains the public registration API and read-only ticket
+  verification, but no staff HTML, Session identity lookup, allowlist code, or
+  attendance mutation function.
+- `staff-apps-script/` is the signed-in staff project. Its independent
+  manifest is `USER_ACCESSING` / `ANYONE`, with spreadsheet and
+  `userinfo.email` scopes. Its `doGet()` validates the active Google email
+  against its own Script Property allowlist before returning
+  `StaffCheckIn.html`.
+- The staff project has a minimal repository that opens the configured private
+  spreadsheet from its own `ACTIVE_SPREADSHEET_ID` Script Property. It does
+  not include public setup, registration, ticket-management, or routing code.
+- Both staff ticket lookup and attendance mutation re-check the active Session
+  identity server-side. Submitted identities are ignored, and
+  `checkedInBy` always records the normalized Session email.
+
+Because the staff Web App executes as the accessing user, every staff account
+must satisfy both conditions:
+
+1. its normalized Google email is present in the staff project's
+   `ATTENDANCE_STAFF_ALLOWLIST`; and
+2. it has the required access to the private Google Sheet.
+
+The staff project also needs `ACTIVE_SPREADSHEET_ID` and, when customized,
+`ADMIN_SETTINGS` Script Properties. Its deployment URL must never appear in
+GitHub public configuration, participant pages, QR payloads, or public
+messages.
+
+The canonical deployment procedure is now
+`apps-script/DEPLOYMENT.md`. Regression tests enforce the distinct manifest
+settings, absence of staff code from the anonymous project, generic
+unauthorized denial, Session-only identity, forged submitted identity
+rejection, allowlisted check-in behavior, and the minimal staff repository
+boundary.

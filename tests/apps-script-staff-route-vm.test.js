@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import vm from "node:vm";
 import { readFile } from "node:fs/promises";
 
-const appsScriptRoot = new URL("../apps-script/", import.meta.url);
+const staffScriptRoot = new URL("../staff-apps-script/", import.meta.url);
 
 async function createHarness({ sessionEmail = "", allowlist = ["staff@example.com"] } = {}) {
   let templateLoads = 0;
@@ -36,7 +36,7 @@ async function createHarness({ sessionEmail = "", allowlist = ["staff@example.co
     }
   });
   for (const file of ["AttendanceService.gs", "Code.gs"]) {
-    vm.runInContext(await readFile(new URL(file, appsScriptRoot), "utf8"), context, { filename: file });
+    vm.runInContext(await readFile(new URL(file, staffScriptRoot), "utf8"), context, { filename: file });
   }
   return {
     context,
@@ -45,20 +45,11 @@ async function createHarness({ sessionEmail = "", allowlist = ["staff@example.co
   };
 }
 
-test("default doGet remains a public health page and does not inspect staff authentication", async () => {
-  const harness = await createHarness();
-  const result = harness.context.doGet({});
-  assert.equal(result.kind, "text");
-  assert.match(result.content, /Event registration service is running/);
-  assert.equal(harness.propertyReads, 0);
-  assert.equal(harness.templateLoads, 0);
-});
-
-test("blank and unauthorized staff sessions receive the same generic page without loading the template", async () => {
+test("blank and unauthorized staff-project sessions receive the same generic page without loading the template", async () => {
   const blank = await createHarness();
   const unauthorized = await createHarness({ sessionEmail: "stranger@example.com" });
-  const blankResult = blank.context.doGet({ parameter: { view: "staff" } });
-  const unauthorizedResult = unauthorized.context.doGet({ parameter: { view: "staff" } });
+  const blankResult = blank.context.doGet({});
+  const unauthorizedResult = unauthorized.context.doGet({});
 
   assert.equal(blankResult.kind, "text");
   assert.equal(blankResult.content, unauthorizedResult.content);
@@ -69,7 +60,7 @@ test("blank and unauthorized staff sessions receive the same generic page withou
 
 test("an allowlisted active Google session receives the StaffCheckIn template", async () => {
   const harness = await createHarness({ sessionEmail: " STAFF@example.com " });
-  const result = harness.context.doGet({ parameter: { view: "staff" } });
+  const result = harness.context.doGet({});
 
   assert.equal(result.kind, "file");
   assert.equal(result.content, "StaffCheckIn");
@@ -77,13 +68,50 @@ test("an allowlisted active Google session receives the StaffCheckIn template", 
   assert.equal(harness.templateLoads, 1);
 });
 
-test("deployment guide requires separate public and authenticated staff deployments from one version", async () => {
+test("deployment guide requires separate public and staff Apps Script projects", async () => {
   const guide = await readFile(new URL("../apps-script/DEPLOYMENT.md", import.meta.url), "utf8");
-  assert.match(guide, /same Apps Script version/i);
-  assert.match(guide, /execute as.*deployer/i);
+  assert.match(guide, /two separate Apps Script projects/i);
+  assert.match(guide, /apps-script\//i);
+  assert.match(guide, /staff-apps-script\//i);
+  assert.match(guide, /USER_DEPLOYING|execute as.*deployer/i);
   assert.match(guide, /anonymous/i);
-  assert.match(guide, /execute as.*user accessing/i);
-  assert.match(guide, /Google accounts|domain/i);
-  assert.match(guide, /\?view=staff/);
+  assert.match(guide, /USER_ACCESSING|execute as.*user accessing/i);
+  assert.match(guide, /ANYONE.*not anonymous|sign-in required/i);
+  assert.match(guide, /Sheet access/i);
+  assert.match(guide, /staff accounts.*allowlist/i);
   assert.match(guide, /must not.*GitHub public config/i);
+});
+
+test("public and staff projects have distinct web-app manifests and security surfaces", async () => {
+  const [publicManifestText, staffManifestText, publicCode, publicAttendance, staffCode, staffAttendance, staffRepository] = await Promise.all([
+    readFile(new URL("../apps-script/appsscript.json", import.meta.url), "utf8"),
+    readFile(new URL("../staff-apps-script/appsscript.json", import.meta.url), "utf8"),
+    readFile(new URL("../apps-script/Code.gs", import.meta.url), "utf8"),
+    readFile(new URL("../apps-script/AttendanceService.gs", import.meta.url), "utf8"),
+    readFile(new URL("../staff-apps-script/Code.gs", import.meta.url), "utf8"),
+    readFile(new URL("../staff-apps-script/AttendanceService.gs", import.meta.url), "utf8"),
+    readFile(new URL("../staff-apps-script/Repository.gs", import.meta.url), "utf8")
+  ]);
+  const publicManifest = JSON.parse(publicManifestText);
+  const staffManifest = JSON.parse(staffManifestText);
+
+  assert.equal(publicManifest.webapp.executeAs, "USER_DEPLOYING");
+  assert.equal(publicManifest.webapp.access, "ANYONE_ANONYMOUS");
+  assert.equal(staffManifest.webapp.executeAs, "USER_ACCESSING");
+  assert.equal(staffManifest.webapp.access, "ANYONE");
+  assert.doesNotMatch(`${publicCode}\n${publicAttendance}`, /StaffCheckIn|function\s+checkIn|ATTENDANCE_STAFF_ALLOWLIST|Session\.getActiveUser/);
+  await assert.rejects(
+    readFile(new URL("../apps-script/StaffCheckIn.html", import.meta.url), "utf8"),
+    { code: "ENOENT" }
+  );
+  assert.match(staffCode, /StaffCheckIn/);
+  assert.match(staffAttendance, /function\s+checkIn/);
+  assert.match(staffAttendance, /Session\.getActiveUser\(\)\.getEmail\(\)/);
+  assert.doesNotMatch(staffAttendance, /payload\.staffIdentity/);
+  assert.match(staffRepository, /ACTIVE_SPREADSHEET_ID/);
+  assert.match(staffRepository, /PropertiesService\.getScriptProperties\(\)/);
+  assert.match(staffRepository, /SpreadsheetApp\.openById\(/);
+  assert.match(staffRepository, /LockService\.getScriptLock\(\)/);
+  assert.doesNotMatch(staffRepository, /setupSystem|initializeSpreadsheet_|setActiveSpreadsheet/);
+  assert.doesNotMatch(staffRepository, /["'][A-Za-z0-9_-]{30,}["']/);
 });

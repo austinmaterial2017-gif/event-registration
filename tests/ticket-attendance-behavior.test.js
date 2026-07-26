@@ -89,7 +89,7 @@ test("public ticket and verification pages are read-only while staff mutation st
     readFile(new URL("../public/ticket.html", import.meta.url), "utf8"),
     readFile(new URL("../public/verify.html", import.meta.url), "utf8"),
     readFile(new URL("../public/js/verify-page.js", import.meta.url), "utf8"),
-    readFile(new URL("../apps-script/StaffCheckIn.html", import.meta.url), "utf8")
+    readFile(new URL("../staff-apps-script/StaffCheckIn.html", import.meta.url), "utf8")
   ]);
   assert.match(ticketHtml, /ticket-lookup-form/);
   assert.match(ticketHtml, /ticketNumber/);

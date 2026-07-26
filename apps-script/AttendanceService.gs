@@ -1,5 +1,3 @@
-var ATTENDANCE_STAFF_ALLOWLIST = 'ATTENDANCE_STAFF_ALLOWLIST';
-
 /**
  * Returns a privacy-safe, consistent ticket snapshot. This operation never writes.
  * @param {Object} payload
@@ -12,83 +10,6 @@ function verifyTicket(payload) {
       return attendancePublicProjection_(match);
     });
   });
-}
-
-/**
- * Records one staff-authorized attendance row for one registered session.
- * @param {Object} payload
- * @return {Object}
- */
-function checkIn(payload) {
-  return runAttendanceService_(function() {
-    var staffIdentity = requireAuthorizedStaffSession_();
-    return withScriptLock(function() {
-      if (!payload || typeof payload !== 'object' ||
-          typeof payload.sessionId !== 'string' || !payload.sessionId.trim()) {
-        attendanceError_('INVALID_REQUEST');
-      }
-
-      var match = findAttendanceTicket_(payload.token);
-      if (match.status !== 'active') attendanceError_('TICKET_INACTIVE');
-      if (String(match.event.status || '').toLowerCase() !== 'live') attendanceError_('CHECK_IN_CLOSED');
-
-      var sessionId = payload.sessionId.trim();
-      var session = match.sessions.filter(function(candidate) {
-        return candidate.sessionId === sessionId;
-      })[0];
-      if (!session) attendanceError_('SESSION_NOT_REGISTERED');
-      var sessionStatus = String(session.status || '').toLowerCase();
-      if (sessionStatus !== 'live' && sessionStatus !== 'open') attendanceError_('CHECK_IN_CLOSED');
-
-      var serverNow = new Date();
-      if (!isWithinAttendanceWindow_(session, serverNow)) attendanceError_('CHECK_IN_CLOSED');
-      var duplicate = readRows('签到记录').some(function(record) {
-        return record.registrationId === match.registrationId &&
-          record.sessionId === sessionId &&
-          String(record.status || '').toLowerCase() === 'checked_in';
-      });
-      if (duplicate) attendanceError_('ALREADY_CHECKED_IN');
-
-      var row = {
-        checkInId: Utilities.getUuid(),
-        registrationId: match.registrationId,
-        eventId: match.event.eventId,
-        sessionId: sessionId,
-        checkedInAt: serverNow.toISOString(),
-        checkedInBy: staffIdentity,
-        status: 'checked_in'
-      };
-      var spreadsheet = getConfiguredSpreadsheet();
-      var sheet = getRequiredSheet_(spreadsheet, '签到记录');
-      var values = normalizeRow_('签到记录', row);
-      sheet.getRange(sheet.getLastRow() + 1, 1, 1, values.length).setValues([values]);
-      return {
-        status: 'checked_in',
-        sessionId: sessionId,
-        checkedInAt: row.checkedInAt
-      };
-    });
-  });
-}
-
-/**
- * Returns the staff-only HtmlService page. It is intentionally not routed by
- * the anonymous doGet/doPost public API.
- */
-function getStaffCheckInPage() {
-  requireAuthorizedStaffSession_();
-  return HtmlService.createHtmlOutputFromFile('StaffCheckIn')
-    .setTitle('员工讲座签到');
-}
-
-/** Supplies the protected staff page with the same read-only ticket snapshot. */
-function getStaffTicketForCheckIn(payload) {
-  try {
-    requireAuthorizedStaffSession_();
-  } catch (_ignored) {
-    return attendanceFailure_('STAFF_ACTION_DENIED');
-  }
-  return verifyTicket(payload);
 }
 
 function runAttendanceService_(callback) {
@@ -104,11 +25,6 @@ function attendanceFailure_(code) {
   var messages = {
     INVALID_REQUEST: '提交信息无效，请检查后重试。',
     TOKEN_INVALID: '凭证无效或已过期。',
-    STAFF_ACTION_DENIED: '员工签到不可用。',
-    TICKET_INACTIVE: '该凭证当前不可签到。',
-    SESSION_NOT_REGISTERED: '该凭证未报名此场讲座。',
-    CHECK_IN_CLOSED: '当前不在此场讲座的签到时间内。',
-    ALREADY_CHECKED_IN: '此场讲座已完成签到。',
     INTERNAL: '请求未能完成，请稍后重试。'
   };
   var safeCode = Object.prototype.hasOwnProperty.call(messages, code) ? code : 'INTERNAL';
@@ -223,48 +139,4 @@ function attendancePublicProjection_(match) {
     }),
     status: match.status
   };
-}
-
-function isAuthorizedAttendanceStaff_(identity) {
-  var serialized = PropertiesService.getScriptProperties().getProperty(ATTENDANCE_STAFF_ALLOWLIST);
-  if (!serialized) return false;
-  var values;
-  try {
-    values = JSON.parse(serialized);
-  } catch (_ignored) {
-    values = String(serialized).split(',');
-  }
-  if (!Array.isArray(values)) return false;
-  return values.some(function(candidate) {
-    return typeof candidate === 'string' && candidate.trim().toLowerCase() === identity;
-  });
-}
-
-function requireAuthorizedStaffSession_() {
-  var identity = '';
-  try {
-    identity = String(Session.getActiveUser().getEmail() || '').trim().toLowerCase();
-  } catch (_ignored) {
-    identity = '';
-  }
-  if (!identity || !isAuthorizedAttendanceStaff_(identity)) {
-    attendanceError_('STAFF_ACTION_DENIED');
-  }
-  return identity;
-}
-
-function isWithinAttendanceWindow_(session, now) {
-  var startsAt = Date.parse(session.startsAt);
-  var endsAt = Date.parse(session.endsAt);
-  if (!isFinite(startsAt) || !isFinite(endsAt) || endsAt <= startsAt) return false;
-  var settings = typeof getAdminSettings === 'function' ? getAdminSettings() : {};
-  var attendance = settings && settings.attendance && typeof settings.attendance === 'object'
-    ? settings.attendance : {};
-  var earlyMinutes = Number(attendance.earlyMinutes);
-  var lateMinutes = Number(attendance.lateMinutes);
-  if (!isFinite(earlyMinutes) || earlyMinutes < 0) earlyMinutes = 60;
-  if (!isFinite(lateMinutes) || lateMinutes < 0) lateMinutes = 60;
-  var timestamp = now.getTime();
-  return timestamp >= startsAt - earlyMinutes * 60000 &&
-    timestamp <= endsAt + lateMinutes * 60000;
 }

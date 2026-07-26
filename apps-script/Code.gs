@@ -27,17 +27,8 @@ var PUBLIC_ROUTES = {
   'exchangeSeat': function(payload) { return exchangeSeat(payload); }
 };
 
-/** Public health page, plus an authenticated entry to the separate staff deployment. */
-function doGet(event) {
-  if (event && event.parameter && event.parameter.view === 'staff') {
-    try {
-      return getStaffCheckInPage();
-    } catch (_ignored) {
-      return HtmlService
-        .createHtmlOutput('<!doctype html><html><body><main><h1>Staff access unavailable.</h1></main></body></html>')
-        .setTitle('Staff access unavailable');
-    }
-  }
+/** Public health page. */
+function doGet() {
   return HtmlService.createHtmlOutput('Event registration service is running.');
 }
 

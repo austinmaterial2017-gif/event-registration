@@ -1,56 +1,63 @@
 # Apps Script deployment guide
 
-Create **two Web App deployments from the same Apps Script version**. The
-deployments have different access settings and URLs, but run identical server
-code.
+Deploy **two separate Apps Script projects**. Do not create two deployments
+from one project or one manifest: the public and staff projects intentionally
+have different execution identities and access policies.
 
-## 1. Public API deployment
+## Public project: `apps-script/`
 
-Use this deployment for the GitHub Pages browser client.
+Create an Apps Script project from the files under `apps-script/`.
 
-- Execute as: **Me (the deployer)**
-- Who has access: **Anyone, even anonymous**
-- URL usage: the normal `/exec` URL without `?view=staff`
-- GitHub public configuration: place only this public `/exec` URL in
+- Manifest: `USER_DEPLOYING` and `ANYONE_ANONYMOUS`
+- Execute as: the deployer
+- Access: anyone, including anonymous visitors
+- Purpose: public registration API, owner ticket lookup, and read-only ticket
+  verification
+- GitHub config: place only this project's `/exec` URL in
   `public/js/config.js`
 
-The default `GET` response is the public health page. Public JSON actions use
-`POST` and the fixed `PUBLIC_ROUTES` allowlist. `checkIn` is not a public
-action.
+This project contains no staff page, staff allowlist, Session identity lookup,
+or attendance mutation function.
 
-## 2. Authenticated staff deployment
+## Staff project: `staff-apps-script/`
 
-Create a second Web App deployment from the **same Apps Script version**.
+Create a different Apps Script project from the files under
+`staff-apps-script/`.
 
-- Execute as: **User accessing the web app**
-- Who has access: restrict to signed-in **Google accounts** or, preferably,
-  the organization **domain**
-- Staff URL: append `?view=staff` to this deployment's `/exec` URL
+- Manifest: `USER_ACCESSING` and `ANYONE` (**not anonymous**)
+- Execute as: the user accessing the Web App
+- Access: sign-in required; restrict to the organization domain when the
+  deployment controls permit it
+- Purpose: authenticated staff ticket lookup and per-session attendance
 
-Example:
+The staff project requires these Script Properties:
 
-```text
-https://script.google.com/macros/s/STAFF_DEPLOYMENT_ID/exec?view=staff
-```
+- `ACTIVE_SPREADSHEET_ID`: the same private spreadsheet configured for the
+  public project
+- `ATTENDANCE_STAFF_ALLOWLIST`: JSON array of normalized staff Google-account
+  emails
+- `ADMIN_SETTINGS`: optional attendance window configuration matching the
+  public project
 
-Before returning `StaffCheckIn.html`, the server derives the active email from
-`Session.getActiveUser().getEmail()` and requires a nonblank normalized match
-in the `ATTENDANCE_STAFF_ALLOWLIST` Script Property. Blank and unauthorized
-sessions receive the same generic access-denied page.
-
-The staff deployment URL **must not be placed in GitHub public config**, public
-HTML, QR payloads, or participant communications. Distribute it only through
-the organization's protected staff/admin channel.
-
-## Script Property
-
-Configure `ATTENDANCE_STAFF_ALLOWLIST` as a JSON array of normalized staff
-Google-account emails:
+Example allowlist:
 
 ```json
 ["staff@example.com", "door-team-02@example.com"]
 ```
 
-After changing code, update both deployments to the same new Apps Script
-version so public verification and staff check-in evaluate the same ticket
-data contract.
+Staff accounts must be in the allowlist **and** must be granted the necessary
+Sheet access to the private spreadsheet. This is required because the staff
+Web App executes as the user accessing it, not as the deployer.
+
+Blank and unauthorized sessions receive the same generic access-denied page.
+The server ignores any submitted identity and derives `checkedInBy` only from
+`Session.getActiveUser().getEmail()`.
+
+## URL handling
+
+The staff deployment URL must not be placed in GitHub public config, public
+HTML, QR payloads, or participant messages. Distribute it only through a
+protected staff/admin channel.
+
+The public and staff projects should be updated together whenever the shared
+ticket or attendance sheet contract changes.

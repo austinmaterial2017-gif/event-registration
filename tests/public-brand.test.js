@@ -20,6 +20,9 @@ test("public pages use the 现代X好未来 brand and approved palette", async (
     assert.match(page, /现代X好未来/);
     assert.doesNotMatch(page, /微光现场/);
   });
+  pages.slice(0, 4).forEach((page) => {
+    assert.match(page, /href="css\/app\.css\?v=20260726-1"/);
+  });
   assert.match(pages[0], />请选择你参加的活动</);
   assert.doesNotMatch(pages[0], /SUMMER PROGRAMME|为好奇心|把想见的人/);
 

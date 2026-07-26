@@ -9,7 +9,7 @@ var SHEET_DEFINITIONS = {
   '报名问题': ['questionId', 'eventId', 'label', 'type', 'required', 'options', 'sortOrder', 'status', 'createdAt', 'updatedAt'],
   '参加者': ['participantId', 'name', 'phone', 'email', 'createdAt', 'updatedAt'],
   '报名项目': ['registrationId', 'eventId', 'participantId', 'ticketNumber', 'status', 'sessionIds', 'seatChoices', 'answers', 'createdAt', 'updatedAt'],
-  '签到记录': ['checkInId', 'registrationId', 'eventId', 'checkedInAt', 'checkedInBy', 'status'],
+  '签到记录': ['checkInId', 'registrationId', 'eventId', 'sessionId', 'checkedInAt', 'checkedInBy', 'status'],
   '操作记录': ['auditId', 'action', 'entityType', 'entityId', 'actor', 'details', 'createdAt']
 };
 
@@ -113,6 +113,7 @@ function initializeSpreadsheet_(spreadsheet, seedDraftEvent) {
 
 function ensureHeaders_(sheet, headers) {
   if (hasExactHeaderRow_(sheet, headers)) return;
+  if (migrateLegacyAttendanceHeader_(sheet, headers)) return;
   if (sheet.getLastRow() === 0) {
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
     return;
@@ -120,6 +121,18 @@ function ensureHeaders_(sheet, headers) {
 
   sheet.insertRowsBefore(1, 1);
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+}
+
+function migrateLegacyAttendanceHeader_(sheet, headers) {
+  var legacy = ['checkInId', 'registrationId', 'eventId', 'checkedInAt', 'checkedInBy', 'status'];
+  if (sheet.getName() !== '签到记录' ||
+      headers.length !== legacy.length + 1 ||
+      sheet.getLastRow() === 0) return false;
+  var existing = sheet.getRange(1, 1, 1, legacy.length).getValues()[0];
+  if (!legacy.every(function(header, index) { return existing[index] === header; })) return false;
+  sheet.insertColumnAfter(3);
+  sheet.getRange(1, 4, 1, 1).setValues([['sessionId']]);
+  return true;
 }
 
 function hasExactHeaderRow_(sheet, headers) {

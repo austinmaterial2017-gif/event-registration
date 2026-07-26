@@ -212,7 +212,7 @@ function requireVerifiedTicket_(payload, registrations) {
     registrationId: registrationId,
     ticketNumber: records[0].ticketNumber,
     token: stored.ticketToken || '',
-    status: combinedTicketStatus_(records),
+    status: combinedTicketStatus_(records, event),
     event: event,
     participant: participant,
     sessions: sessions,
@@ -283,8 +283,11 @@ function collectTicketSessions_(records, eventId) {
   });
 }
 
-function combinedTicketStatus_(records) {
-  return records.every(function(record) { return record.status === 'cancelled'; }) ? 'cancelled' : 'active';
+function combinedTicketStatus_(records, event) {
+  if (records.every(function(record) { return record.status === 'cancelled'; }) ||
+      String(event && event.status || '').toLowerCase() === 'cancelled') return 'cancelled';
+  var eventStatus = String(event && event.status || '').toLowerCase();
+  return eventStatus === 'ended' || eventStatus === 'archived' ? 'ended' : 'active';
 }
 
 function ticketProjectionFromRecords_(match) {
@@ -298,6 +301,7 @@ function ticketProjectionFromRecords_(match) {
     token: match.token,
     eventId: match.event.eventId,
     eventTitle: match.event.title,
+    location: match.event.location,
     status: match.status,
     participant: {
       name: maskName_(match.participant.name),
@@ -308,8 +312,10 @@ function ticketProjectionFromRecords_(match) {
       return {
         sessionId: session.sessionId,
         title: session.title,
+        speaker: session.speaker,
         startsAt: session.startsAt,
-        endsAt: session.endsAt
+        endsAt: session.endsAt,
+        location: session.location || match.event.location
       };
     }),
     seats: match.seats.map(function(seat) {

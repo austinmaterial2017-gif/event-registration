@@ -712,6 +712,7 @@ function registrationTicketProjection_(event, registrationId, ticketNumber, toke
     token: token,
     eventId: event.eventId,
     eventTitle: event.title,
+    location: event.location,
     status: status,
     participant: {
       name: maskRegistrationName_(participantValues[1] || ''),
@@ -719,7 +720,14 @@ function registrationTicketProjection_(event, registrationId, ticketNumber, toke
       email: maskRegistrationPrivateValue_(participantValues[3] || '')
     },
     sessions: sessions.map(function(session) {
-      return { sessionId: session.sessionId, title: session.title, startsAt: session.startsAt, endsAt: session.endsAt };
+      return {
+        sessionId: session.sessionId,
+        title: session.title,
+        speaker: session.speaker,
+        startsAt: session.startsAt,
+        endsAt: session.endsAt,
+        location: session.location || event.location
+      };
     }),
     seats: seats.map(function(seat) {
       return { seatId: seat.seatId, label: seat.label, zone: seat.zone, sessionId: seat.sessionId };

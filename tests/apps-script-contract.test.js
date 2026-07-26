@@ -11,7 +11,7 @@ const sheetDefinitions = {
   "报名问题": ["questionId", "eventId", "label", "type", "required", "options", "sortOrder", "status", "createdAt", "updatedAt"],
   "参加者": ["participantId", "name", "phone", "email", "createdAt", "updatedAt"],
   "报名项目": ["registrationId", "eventId", "participantId", "ticketNumber", "status", "sessionIds", "seatChoices", "answers", "createdAt", "updatedAt"],
-  "签到记录": ["checkInId", "registrationId", "eventId", "checkedInAt", "checkedInBy", "status"],
+  "签到记录": ["checkInId", "registrationId", "eventId", "sessionId", "checkedInAt", "checkedInBy", "status"],
   "操作记录": ["auditId", "action", "entityType", "entityId", "actor", "details", "createdAt"]
 };
 
@@ -161,4 +161,17 @@ test("doPost uses a fixed Task 3 route allowlist and never reflects private erro
   assert.match(code, /Object\.prototype\.hasOwnProperty\.call\s*\(\s*PUBLIC_ROUTES/);
   assert.match(code, /ContentService\.MimeType\.JSON/);
   assert.doesNotMatch(code, /\.stack|error\.message|exception\.message|spreadsheetId/i);
+});
+
+test("attendance service keeps verification read-only and serializes staff check-in", async () => {
+  const [attendance, code] = await Promise.all([source("AttendanceService.gs"), source("Code.gs")]);
+  assert.match(attendance, /function\s+verifyTicket\s*\(\s*payload\s*\)/);
+  assert.match(attendance, /function\s+checkIn\s*\(\s*payload\s*\)/);
+  assert.match(attendance, /ATTENDANCE_STAFF_ALLOWLIST/);
+  assert.match(attendance, /withScriptLock\s*\(\s*function\s*\(\s*\)/);
+  assert.match(attendance, /ALREADY_CHECKED_IN/);
+  assert.match(attendance, /sessionId/);
+  assert.doesNotMatch(attendance, /Session\.getActiveUser|payload\.checkedInAt/);
+  assert.match(code, /['"]checkIn['"]\s*:/);
+  assert.match(code, /STAFF_NOT_AUTHORIZED|ALREADY_CHECKED_IN|CHECK_IN_CLOSED/);
 });

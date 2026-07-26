@@ -33,7 +33,8 @@ test("every public method sends its documented JSON POST envelope", async () => 
     ["getEvent", { eventId: "event-1" }, () => client.getEvent("event-1")],
     ["createRegistration", { eventId: "event-1", sessionIds: ["s1"], seatChoices: ["A-01"], answers: { name: "陈晓明" } }, () => client.createRegistration({ eventId: "event-1", sessionIds: ["s1"], seatChoices: ["A-01"], answers: { name: "陈晓明" } })],
     ["lookupTicket", { ticketNumber: "T-01", verificationValue: "13800000000" }, () => client.lookupTicket("T-01", "13800000000")],
-    ["verifyTicket", { token: "signed-token" }, () => client.verifyTicket("signed-token")]
+    ["verifyTicket", { token: "signed-token" }, () => client.verifyTicket("signed-token")],
+    ["checkIn", { token: "signed-token", sessionId: "s1", staffIdentity: "staff@example.com" }, () => client.checkIn("signed-token", "s1", "staff@example.com")]
   ];
 
   for (const [action, payload, invoke] of expected) {

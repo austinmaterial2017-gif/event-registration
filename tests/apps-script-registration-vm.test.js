@@ -166,6 +166,37 @@ test("owner ticket projections mask names and contacts and never return dynamic 
   assert.equal(JSON.stringify(lookedUp.data).includes("do not expose"), false);
 });
 
+test("owner ticket lookup includes session display details and derives ended status from the event", async () => {
+  const { context } = await createHarness({
+    rows: baseRows({
+      event: { status: "ended", location: "Main Hall" },
+      sessions: [{
+        sessionId: "s1", eventId: "event-1", title: "One", speaker: "Lin",
+        startsAt: "2030-01-01T09:00:00Z", endsAt: "2030-01-01T10:00:00Z",
+        required: false, capacity: 5, status: "ended"
+      }],
+      participants: [{ participantId: "p1", name: "Alice", email: "alice@example.com" }],
+      registrations: [{
+        registrationId: "r1", eventId: "event-1", participantId: "p1", ticketNumber: "EVT-1",
+        status: "active", sessionIds: JSON.stringify(["s1"]),
+        answers: JSON.stringify({ ticketToken: "token-1", verificationField: "email", values: { email: "alice@example.com" } })
+      }]
+    })
+  });
+  const result = context.lookupTicket({ ticketNumber: "EVT-1", verificationValue: "alice@example.com" });
+  assert.equal(result.ok, true);
+  assert.equal(result.data.status, "ended");
+  assert.equal(result.data.location, "Main Hall");
+  assert.deepEqual({ ...result.data.sessions[0] }, {
+    sessionId: "s1",
+    title: "One",
+    speaker: "Lin",
+    startsAt: "2030-01-01T09:00:00Z",
+    endsAt: "2030-01-01T10:00:00Z",
+    location: "Main Hall"
+  });
+});
+
 test("one blank-session seat is shared by all selected sessions while session seats allocate one per session", async () => {
   const shared = await createHarness({
     rows: baseRows({

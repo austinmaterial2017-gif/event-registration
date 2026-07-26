@@ -1,5 +1,6 @@
 var ACTIVE_SPREADSHEET_ID = 'ACTIVE_SPREADSHEET_ID';
 var ADMIN_SETTINGS = 'ADMIN_SETTINGS';
+var PUBLIC_BASE_URL = 'PUBLIC_BASE_URL';
 var INITIAL_ADMIN_SETTINGS = {
   attendance: {},
   registration: { events: {}, identityFields: [] }
@@ -99,8 +100,14 @@ function setSharedSettingValue_(spreadsheet, key, value) {
   });
   var row = [key, value, new Date().toISOString()];
   if (rowNumber) {
+    if (typeof journalAdminWrite_ === 'function') {
+      journalAdminWrite_(sheet, rowNumber, row.length, false);
+    }
     sheet.getRange(rowNumber, 1, 1, row.length).setValues([row]);
   } else {
+    if (typeof journalAdminWrite_ === 'function') {
+      journalAdminWrite_(sheet, sheet.getLastRow() + 1, row.length, true);
+    }
     sheet.appendRow(row);
   }
 }
@@ -263,4 +270,14 @@ function normalizeRow_(sheetName, row) {
 function appendAuditRow_(spreadsheet, action, entityType, entityId, details) {
   var sheet = getRequiredSheet_(spreadsheet, '操作记录');
   sheet.appendRow([Utilities.getUuid(), action, entityType, entityId, 'system', details, new Date()]);
+}
+
+function buildPublicVerificationUrl_(token) {
+  if (typeof token !== 'string' || !token) return '';
+  if (typeof PropertiesService === 'undefined') return '';
+  var configured = PropertiesService.getScriptProperties().getProperty(PUBLIC_BASE_URL);
+  if (typeof configured !== 'string') return '';
+  var base = configured.trim().replace(/\/+$/, '');
+  if (!/^https:\/\/[^?#\s]+$/i.test(base)) return '';
+  return base + '/verify.html?token=' + encodeURIComponent(token);
 }

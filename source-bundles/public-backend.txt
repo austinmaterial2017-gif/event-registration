@@ -16,6 +16,7 @@
 ===== apps-script/Repository.gs =====
 var ACTIVE_SPREADSHEET_ID = 'ACTIVE_SPREADSHEET_ID';
 var ADMIN_SETTINGS = 'ADMIN_SETTINGS';
+var PUBLIC_BASE_URL = 'PUBLIC_BASE_URL';
 var INITIAL_ADMIN_SETTINGS = {
   attendance: {},
   registration: { events: {}, identityFields: [] }
@@ -115,8 +116,14 @@ function setSharedSettingValue_(spreadsheet, key, value) {
   });
   var row = [key, value, new Date().toISOString()];
   if (rowNumber) {
+    if (typeof journalAdminWrite_ === 'function') {
+      journalAdminWrite_(sheet, rowNumber, row.length, false);
+    }
     sheet.getRange(rowNumber, 1, 1, row.length).setValues([row]);
   } else {
+    if (typeof journalAdminWrite_ === 'function') {
+      journalAdminWrite_(sheet, sheet.getLastRow() + 1, row.length, true);
+    }
     sheet.appendRow(row);
   }
 }
@@ -281,6 +288,16 @@ function appendAuditRow_(spreadsheet, action, entityType, entityId, details) {
   sheet.appendRow([Utilities.getUuid(), action, entityType, entityId, 'system', details, new Date()]);
 }
 
+function buildPublicVerificationUrl_(token) {
+  if (typeof token !== 'string' || !token) return '';
+  if (typeof PropertiesService === 'undefined') return '';
+  var configured = PropertiesService.getScriptProperties().getProperty(PUBLIC_BASE_URL);
+  if (typeof configured !== 'string') return '';
+  var base = configured.trim().replace(/\/+$/, '');
+  if (!/^https:\/\/[^?#\s]+$/i.test(base)) return '';
+  return base + '/verify.html?token=' + encodeURIComponent(token);
+}
+
 ===== apps-script/RegistrationService.gs =====
 var REGISTRATION_ACTIVE_STATUSES = { active: true, confirmed: true };
 
@@ -307,11 +324,12 @@ function createRegistration(payload) {
         return question.eventId === event.eventId && question.status !== 'inactive';
       });
       var sessions = readRows(spreadsheet, '场次').filter(function(session) {
-        return session.eventId === event.eventId && session.status !== 'cancelled' && session.status !== 'inactive';
+        var status = String(session.status || '').toLowerCase();
+        return session.eventId === event.eventId && (status === 'active' || status === 'open');
       });
       var registrations = readRows(spreadsheet, '报名项目');
       var answers = validateDynamicAnswers_(questions, request.answers);
-      var selectedSessions = validateSessionSelection_(event, sessions, request.sessionIds);
+      var selectedSessions = validateSessionSelection_(event, sessions, request.sessionIds, policy);
 
       validateSessionCapacity_(selectedSessions, registrations);
       validateDuplicateIdentity_(policy.identityFields, answers, registrations, event.eventId);
@@ -341,7 +359,7 @@ function createRegistration(payload) {
       var registrationBatch = null;
 
       try {
-        participant = appendParticipantRow_(spreadsheet, participantId, answers, createdAt);
+        participant = appendParticipantRow_(spreadsheet, participantId, answers, policy, createdAt);
         var rowsToWrite = selectedSessions.length ? selectedSessions : [null];
         registrationBatch = appendRegistrationRows_(
           spreadsheet,
@@ -354,6 +372,7 @@ function createRegistration(payload) {
           answers,
           token,
           policy,
+          questions,
           createdAt
         );
         clearExpiredSeatHolds_(spreadsheet, expiredSeats, createdAt);
@@ -389,8 +408,99 @@ function createRegistration(payload) {
         participant.values,
         selectedSessions,
         selectedSeats,
+        seats,
+        policy,
+        buildStoredTicketFields_(questions, answers, policy),
         createdAt
       );
+    });
+  });
+}
+
+/**
+ * Temporarily reserves one selectable seat for a browser-scoped opaque owner.
+ * The hold and registration claim use the same public-project script lock.
+ */
+function createSeatHold(payload) {
+  return runRegistrationService_(function() {
+    return withScriptLock(function() {
+      var request = requireSeatHoldPayload_(payload);
+      var registry = getRegistrySpreadsheet_();
+      requireNoSwitchMaintenance_(registry);
+      var spreadsheet = getConfiguredSpreadsheet(registry);
+      var now = new Date();
+      var event = requireOpenEvent_(spreadsheet, request.eventId, now);
+      var policy = getRegistrationPolicy_(getAdminSettings(registry), event.eventId);
+      if (!policy.seatHoldsEnabled) registrationError_('SEAT_HOLD_DISABLED');
+      if (String(event.seatMode || '').toLowerCase() !== 'self') {
+        registrationError_('SEAT_HOLD_DISABLED');
+      }
+      var sheetName = registrationSheetNameByHeader_('seatId');
+      var seat = readRows(spreadsheet, sheetName).filter(function(candidate) {
+        return candidate.eventId === event.eventId &&
+          (candidate.seatId === request.seatId || candidate.label === request.seatId);
+      })[0];
+      if (!seat) registrationError_('SEAT_UNAVAILABLE');
+      expireSeatHold_(seat, policy, now);
+      var existingHold = parseSeatHold_(seat);
+      var available = (String(seat.status || 'available').toLowerCase() === 'available' ||
+        String(seat.status || '').toLowerCase() === 'open') &&
+        !seat.holderRegistrationId;
+      if (!available && (!existingHold || existingHold.holdOwner !== request.holdOwner ||
+          existingHold.holdExpiresAt <= now.getTime())) {
+        registrationError_('SEAT_UNAVAILABLE');
+      }
+      var expiresAtMs = now.getTime() + policy.seatHoldMinutes * 60000;
+      writeSeatHoldState_(
+        spreadsheet,
+        sheetName,
+        seat,
+        'held',
+        'HOLD|' + request.holdOwner + '|' + expiresAtMs,
+        now.toISOString()
+      );
+      appendRegistrationAuditSafely_(spreadsheet, 'CREATE_SEAT_HOLD', seat.seatId, {
+        eventId: event.eventId,
+        expiresAt: new Date(expiresAtMs).toISOString()
+      });
+      return {
+        seatId: String(seat.seatId || ''),
+        holdOwner: request.holdOwner,
+        expiresAt: new Date(expiresAtMs).toISOString(),
+        serverNow: now.toISOString()
+      };
+    });
+  });
+}
+
+/** Releases only a hold owned by the submitted browser-scoped owner. */
+function releaseSeatHold(payload) {
+  return runRegistrationService_(function() {
+    return withScriptLock(function() {
+      var request = requireSeatHoldPayload_(payload);
+      var registry = getRegistrySpreadsheet_();
+      requireNoSwitchMaintenance_(registry);
+      var spreadsheet = getConfiguredSpreadsheet(registry);
+      var policy = getRegistrationPolicy_(getAdminSettings(registry), request.eventId);
+      var sheetName = registrationSheetNameByHeader_('seatId');
+      var seat = readRows(spreadsheet, sheetName).filter(function(candidate) {
+        return candidate.eventId === request.eventId &&
+          (candidate.seatId === request.seatId || candidate.label === request.seatId);
+      })[0];
+      if (!seat) registrationError_('SEAT_UNAVAILABLE');
+      var hold = parseSeatHold_(seat);
+      if (!hold) return { seatId: String(seat.seatId || ''), released: false };
+      var now = new Date();
+      if (hold.holdOwner !== request.holdOwner && hold.holdExpiresAt > now.getTime()) {
+        registrationError_('SEAT_HOLD_OWNERSHIP');
+      }
+      writeSeatHoldState_(
+        spreadsheet, sheetName, seat, 'available', '', now.toISOString()
+      );
+      appendRegistrationAuditSafely_(spreadsheet, 'RELEASE_SEAT_HOLD', seat.seatId, {
+        eventId: request.eventId
+      });
+      return { seatId: String(seat.seatId || ''), released: true };
     });
   });
 }
@@ -406,6 +516,8 @@ function runRegistrationService_(callback) {
 
 function registrationFailure_(code) {
   var allowed = {
+    SEAT_HOLD_DISABLED: 'Seat holds are not enabled for this event.',
+    SEAT_HOLD_OWNERSHIP: 'This seat hold belongs to another browser session.',
     EVENT_NOT_FOUND: '未找到该活动。',
     INVALID_REQUEST: '提交信息无效，请检查后重试。',
     REGISTRATION_CLOSED: '报名已截止。',
@@ -497,7 +609,18 @@ function validateDynamicAnswers_(questions, submittedAnswers) {
       if (!Array.isArray(value) || value.some(function(item) { return typeof item !== 'string'; })) {
         registrationError_('INVALID_REQUEST');
       }
+      var uniqueValues = {};
+      value.forEach(function(item) {
+        if (uniqueValues[item]) registrationError_('INVALID_REQUEST');
+        uniqueValues[item] = true;
+      });
       validateChoiceValues_(value, constraints);
+      var minimumSelections = registrationConstraintInteger_(constraints.minSelections);
+      var maximumSelections = registrationConstraintInteger_(constraints.maxSelections);
+      if (minimumSelections !== null && value.length < minimumSelections) registrationError_('INVALID_REQUEST');
+      if (maximumSelections !== null && value.length > maximumSelections) registrationError_('INVALID_REQUEST');
+      if (minimumSelections !== null && maximumSelections !== null &&
+          minimumSelections > maximumSelections) registrationError_('INVALID_REQUEST');
     } else if (type === 'boolean') {
       if (typeof value !== 'boolean') registrationError_('INVALID_REQUEST');
     } else {
@@ -523,7 +646,7 @@ function validateDynamicAnswers_(questions, submittedAnswers) {
   return normalized;
 }
 
-function validateSessionSelection_(event, sessions, submittedSessionIds) {
+function validateSessionSelection_(event, sessions, submittedSessionIds, policy) {
   if (!Array.isArray(submittedSessionIds)) registrationError_('INVALID_REQUEST');
   var seen = {};
   var selected = submittedSessionIds.map(function(sessionId) {
@@ -546,7 +669,50 @@ function validateSessionSelection_(event, sessions, submittedSessionIds) {
   sessions.forEach(function(session) {
     if (registrationTruthy_(session.required) && !seen[session.sessionId]) registrationError_('INVALID_REQUEST');
   });
+  validateSessionGroups_(sessions, seen, policy);
   return selected;
+}
+
+function validateSessionGroups_(sessions, selectedById, policy) {
+  var sessionPolicies = policy && policy.sessions && typeof policy.sessions === 'object'
+    ? policy.sessions : {};
+  var groups = {};
+  sessions.forEach(function(session) {
+    var sessionPolicy = sessionPolicies[session.sessionId] &&
+      typeof sessionPolicies[session.sessionId] === 'object'
+      ? sessionPolicies[session.sessionId] : {};
+    var rule = registrationGroupRule_(sessionPolicy.groupRule);
+    if (!rule) return;
+    if (!groups[rule.id]) {
+      groups[rule.id] = { min: rule.min, max: rule.max, selected: 0 };
+    } else if (groups[rule.id].min !== rule.min || groups[rule.id].max !== rule.max) {
+      registrationError_('INVALID_REQUEST');
+    }
+    if (selectedById[session.sessionId]) groups[rule.id].selected += 1;
+  });
+  Object.keys(groups).forEach(function(groupId) {
+    var group = groups[groupId];
+    if (group.selected < group.min || group.selected > group.max) {
+      registrationError_('INVALID_REQUEST');
+    }
+  });
+}
+
+function registrationGroupRule_(value) {
+  if (!value) return null;
+  if (typeof value === 'string') {
+    var text = value.trim();
+    return text ? { id: text, min: 0, max: 1 } : null;
+  }
+  if (typeof value !== 'object' || Array.isArray(value)) registrationError_('INVALID_REQUEST');
+  var id = String(value.id || value.groupId || '').trim();
+  var min = registrationConstraintInteger_(value.min);
+  var max = registrationConstraintInteger_(value.max);
+  if (!id) registrationError_('INVALID_REQUEST');
+  if (min === null) min = 0;
+  if (max === null) max = 1;
+  if (min > max) registrationError_('INVALID_REQUEST');
+  return { id: id, min: min, max: max };
 }
 
 function validateSessionCapacity_(selectedSessions, registrations) {
@@ -692,11 +858,24 @@ function getRegistrationPolicy_(settings, eventId) {
       (Array.isArray(registration.identityFields) ? registration.identityFields : []),
     verificationField: eventSettings.verificationField || registration.verificationField || '',
     seatHoldsEnabled: eventSettings.seatHoldsEnabled === true || registration.seatHoldsEnabled === true,
-    seatExchangeEnabled: eventSettings.seatExchangeEnabled === true
+    seatExchangeEnabled: eventSettings.seatExchangeEnabled === true,
+    cancellationEnabled: eventSettings.cancellationEnabled === true,
+    seatHoldMinutes: registrationPositiveNumber_(
+      eventSettings.seatHoldMinutes !== undefined
+        ? eventSettings.seatHoldMinutes : registration.seatHoldMinutes,
+      5
+    ),
+    fieldRoles: eventSettings.fieldRoles && typeof eventSettings.fieldRoles === 'object' &&
+      !Array.isArray(eventSettings.fieldRoles) ? eventSettings.fieldRoles : {},
+    showOnTicketFields: Array.isArray(eventSettings.showOnTicketFields)
+      ? eventSettings.showOnTicketFields : [],
+    sessions: eventSettings.sessions && typeof eventSettings.sessions === 'object' &&
+      !Array.isArray(eventSettings.sessions) ? eventSettings.sessions : {}
   };
 }
 
-function appendParticipantRow_(spreadsheet, participantId, answers, createdAt) {
+function appendParticipantRow_(spreadsheet, participantId, answers, policy, createdAt) {
+  answers = registrationAnswersWithRoles_(answers, policy);
   var sheet = getRequiredSheet_(spreadsheet, '参加者');
   var values = normalizeRow_('参加者', {
     participantId: participantId,
@@ -712,12 +891,13 @@ function appendParticipantRow_(spreadsheet, participantId, answers, createdAt) {
 }
 
 function appendRegistrationRows_(spreadsheet, registrationId, participantId, eventId, ticketNumber,
-  sessions, selectedSeats, answers, token, policy, createdAt) {
+  sessions, selectedSeats, answers, token, policy, questions, createdAt) {
   var sheet = getRequiredSheet_(spreadsheet, '报名项目');
   var storedAnswers = JSON.stringify({
     values: answers,
     ticketToken: token,
     verificationField: policy.verificationField || (policy.identityFields[0] || ''),
+    ticketFields: buildStoredTicketFields_(questions, answers, policy),
     transactionId: registrationId
   });
   var pendingRows = sessions.map(function(session) {
@@ -994,11 +1174,15 @@ function appendRegistrationAuditSafely_(spreadsheet, action, registrationId, det
 }
 
 function registrationTicketProjection_(event, registrationId, ticketNumber, token, status,
-  participantValues, sessions, seats, createdAt) {
+  participantValues, sessions, seats, allSeats, policy, ticketFields, createdAt) {
+  var capabilities = ticketCapabilities_(status, policy);
   return {
     registrationId: registrationId,
     ticketNumber: ticketNumber,
     token: token,
+    verifyUrl: typeof buildPublicVerificationUrl_ === 'function'
+      ? buildPublicVerificationUrl_(token)
+      : '',
     eventId: event.eventId,
     eventTitle: event.title,
     location: event.location,
@@ -1008,6 +1192,11 @@ function registrationTicketProjection_(event, registrationId, ticketNumber, toke
       phone: maskRegistrationPrivateValue_(participantValues[2] || ''),
       email: maskRegistrationPrivateValue_(participantValues[3] || '')
     },
+    displayFields: projectTicketDisplayFields_(ticketFields),
+    capabilities: capabilities,
+    exchangeOptions: buildTicketExchangeOptions_(
+      allSeats || [], seats || [], policy, status, new Date()
+    ),
     sessions: sessions.map(function(session) {
       return {
         sessionId: session.sessionId,
@@ -1056,7 +1245,18 @@ function parseQuestionOptions_(serialized) {
   if (!serialized) return {};
   try {
     var parsed = typeof serialized === 'string' ? JSON.parse(serialized) : serialized;
-    return Array.isArray(parsed) ? { choices: parsed } : (parsed && typeof parsed === 'object' ? parsed : {});
+    if (Array.isArray(parsed)) return { choices: parsed };
+    if (!parsed || typeof parsed !== 'object') return {};
+    var validation = parsed.validation && typeof parsed.validation === 'object' &&
+      !Array.isArray(parsed.validation) ? parsed.validation : {};
+    var normalized = {};
+    Object.keys(parsed).forEach(function(key) {
+      if (key !== 'validation') normalized[key] = parsed[key];
+    });
+    Object.keys(validation).forEach(function(key) {
+      if (normalized[key] === undefined) normalized[key] = validation[key];
+    });
+    return normalized;
   } catch (_ignored) {
     registrationError_('INVALID_REQUEST');
   }
@@ -1111,9 +1311,145 @@ function registrationNumber_(value, fallback) {
 
 function firstAnswer_(answers, keys) {
   for (var index = 0; index < keys.length; index += 1) {
-    if (answers[keys[index]] !== undefined && answers[keys[index]] !== null) return answers[keys[index]];
+    if (typeof keys[index] === 'string' && keys[index] &&
+        answers[keys[index]] !== undefined && answers[keys[index]] !== null) {
+      return answers[keys[index]];
+    }
   }
   return '';
+}
+
+function registrationConstraintInteger_(value) {
+  if (value === undefined || value === null || value === '') return null;
+  var number = Number(value);
+  if (!isFinite(number) || number < 0 || Math.floor(number) !== number) {
+    registrationError_('INVALID_REQUEST');
+  }
+  return number;
+}
+
+function registrationPositiveNumber_(value, fallback) {
+  var number = Number(value);
+  return isFinite(number) && number > 0 ? number : fallback;
+}
+
+function registrationAnswersWithRoles_(answers, policy) {
+  var normalized = {};
+  Object.keys(answers || {}).forEach(function(key) { normalized[key] = answers[key]; });
+  var roles = policy && policy.fieldRoles && typeof policy.fieldRoles === 'object'
+    ? policy.fieldRoles : {};
+  ['name', 'phone', 'email'].forEach(function(role) {
+    var questionId = roles[role];
+    if (typeof questionId === 'string' && questionId &&
+        normalized[questionId] !== undefined) {
+      normalized[role] = normalized[questionId];
+    }
+  });
+  return normalized;
+}
+
+function buildStoredTicketFields_(questions, answers, policy) {
+  var allowed = {};
+  (policy && Array.isArray(policy.showOnTicketFields)
+    ? policy.showOnTicketFields : []).forEach(function(questionId) {
+    if (typeof questionId === 'string' && questionId) allowed[questionId] = true;
+  });
+  return (questions || []).filter(function(question) {
+    return allowed[question.questionId] === true;
+  }).map(function(question) {
+    return {
+      id: String(question.questionId || ''),
+      label: String(question.label || ''),
+      value: answers[question.questionId]
+    };
+  });
+}
+
+function projectTicketDisplayFields_(fields) {
+  return (Array.isArray(fields) ? fields : []).map(function(field) {
+    var raw = field && field.value;
+    var value = Array.isArray(raw)
+      ? raw.join(', ')
+      : raw === true ? 'Yes' : raw === false ? 'No' : String(raw || '');
+    return {
+      id: String(field && field.id || ''),
+      label: String(field && field.label || ''),
+      value: maskRegistrationPrivateValue_(value)
+    };
+  });
+}
+
+function ticketCapabilities_(status, policy) {
+  var active = String(status || '').toLowerCase() === 'active';
+  return {
+    canCancel: active && !!(policy && policy.cancellationEnabled),
+    canExchangeSeat: active && !!(policy && policy.seatExchangeEnabled)
+  };
+}
+
+function buildTicketExchangeOptions_(allSeats, currentSeats, policy, status, _now) {
+  if (!ticketCapabilities_(status, policy).canExchangeSeat) return [];
+  var currentIds = {};
+  (currentSeats || []).forEach(function(seat) { currentIds[seat.seatId] = true; });
+  var result = [];
+  (currentSeats || []).forEach(function(oldSeat) {
+    (allSeats || []).forEach(function(candidate) {
+      if (currentIds[candidate.seatId]) return;
+      if (String(candidate.sessionId || '') !== String(oldSeat.sessionId || '')) return;
+      var candidateStatus = String(candidate.status || 'available').toLowerCase();
+      if ((candidateStatus !== 'available' && candidateStatus !== 'open') ||
+          candidate.holderRegistrationId) return;
+      result.push({
+        seatId: String(candidate.seatId || ''),
+        label: String(candidate.label || ''),
+        zone: String(candidate.zone || ''),
+        sessionId: String(candidate.sessionId || ''),
+        replacesSeatId: String(oldSeat.seatId || '')
+      });
+    });
+  });
+  return result;
+}
+
+function requireSeatHoldPayload_(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) ||
+      typeof payload.eventId !== 'string' || !payload.eventId.trim() ||
+      typeof payload.seatId !== 'string' || !payload.seatId.trim() ||
+      typeof payload.holdOwner !== 'string' ||
+      !/^[A-Za-z0-9._~-]{16,128}$/.test(payload.holdOwner)) {
+    registrationError_('INVALID_REQUEST');
+  }
+  return {
+    eventId: payload.eventId.trim(),
+    seatId: payload.seatId.trim(),
+    holdOwner: payload.holdOwner
+  };
+}
+
+function registrationSheetNameByHeader_(header) {
+  var names = Object.keys(SHEET_DEFINITIONS || {}).filter(function(name) {
+    return Array.isArray(SHEET_DEFINITIONS[name]) &&
+      SHEET_DEFINITIONS[name].indexOf(header) !== -1;
+  });
+  if (names.length !== 1) registrationError_('INTERNAL');
+  return names[0];
+}
+
+function writeSeatHoldState_(spreadsheet, sheetName, seat, status, holder, updatedAt) {
+  var sheet = getRequiredSheet_(spreadsheet, sheetName);
+  var row = {
+    seatId: seat.seatId,
+    eventId: seat.eventId,
+    sessionId: seat.sessionId,
+    label: seat.label,
+    zone: seat.zone,
+    status: status,
+    holderRegistrationId: holder,
+    createdAt: seat.createdAt,
+    updatedAt: updatedAt
+  };
+  var values = normalizeRow_(sheetName, row);
+  sheet.getRange(seat.rowNumber, 1, 1, values.length).setValues([values]);
 }
 
 ===== apps-script/TicketService.gs =====
@@ -1157,6 +1493,7 @@ function cancelRegistration(payload) {
       if (match.records.every(function(record) { return record.status === 'cancelled'; })) {
         return ticketProjectionFromRecords_(match);
       }
+      if (!match.policy.cancellationEnabled) ticketError_('CANCELLATION_DISABLED');
       var registrationSnapshots = snapshotTicketRows_(spreadsheet, '报名项目', match.records);
       var occupiedSeats = readRows(spreadsheet, '座位').filter(function(seat) {
         return seatBelongsToRegistration_(seat, match.registrationId);
@@ -1224,7 +1561,7 @@ function exchangeSeat(payload) {
       if (!oldSeat) ticketError_('SEAT_UNAVAILABLE');
       var newSeat = allSeats.filter(function(seat) {
         return (seat.seatId === payload.newSeatId || seat.label === payload.newSeatId) &&
-          (!oldSeat.sessionId || !seat.sessionId || seat.sessionId === oldSeat.sessionId);
+          String(seat.sessionId || '') === String(oldSeat.sessionId || '');
       })[0];
       var exchangeNow = new Date();
       if (newSeat) expireSeatHold_(newSeat, policy, exchangeNow);
@@ -1290,6 +1627,7 @@ function runTicketService_(callback) {
 
 function ticketFailure_(code) {
   var messages = {
+    CANCELLATION_DISABLED: 'Cancellation is not enabled for this event.',
     INVALID_REQUEST: '提交信息无效，请检查后重试。',
     TICKET_NOT_FOUND: '未找到对应凭证。',
     TICKET_VERIFICATION_FAILED: '验证信息不匹配。',
@@ -1338,6 +1676,17 @@ function requireVerifiedTicket_(spreadsheet, registry, payload, registrations) {
   })[0] || {};
   var sessions = collectTicketSessions_(spreadsheet, records, event.eventId);
   var registrationId = records[0].registrationId;
+  var allSeats = readRows(spreadsheet, ticketSheetNameByHeader_('seatId')).filter(function(seat) {
+    return seat.eventId === event.eventId;
+  });
+  var questions = readRows(
+    spreadsheet, ticketSheetNameByHeader_('questionId')
+  ).filter(function(question) {
+    return question.eventId === event.eventId;
+  });
+  var ticketFields = Array.isArray(stored.ticketFields)
+    ? stored.ticketFields
+    : buildStoredTicketFields_(questions, stored.values, policy);
   var seats = readRows(spreadsheet, '座位').filter(function(seat) {
     return seatBelongsToRegistration_(seat, registrationId);
   });
@@ -1350,6 +1699,9 @@ function requireVerifiedTicket_(spreadsheet, registry, payload, registrations) {
     participant: participant,
     sessions: sessions,
     seats: seats,
+    allSeats: allSeats,
+    policy: policy,
+    ticketFields: ticketFields,
     records: records
   };
 }
@@ -1432,6 +1784,9 @@ function ticketProjectionFromRecords_(match) {
     registrationId: match.registrationId,
     ticketNumber: match.ticketNumber,
     token: match.token,
+    verifyUrl: typeof buildPublicVerificationUrl_ === 'function'
+      ? buildPublicVerificationUrl_(match.token)
+      : '',
     eventId: match.event.eventId,
     eventTitle: match.event.title,
     location: match.event.location,
@@ -1441,6 +1796,11 @@ function ticketProjectionFromRecords_(match) {
       phone: maskPrivateValue_(match.participant.phone),
       email: maskPrivateValue_(match.participant.email)
     },
+    displayFields: projectTicketDisplayFields_(match.ticketFields),
+    capabilities: ticketCapabilities_(match.status, match.policy),
+    exchangeOptions: buildTicketExchangeOptions_(
+      match.allSeats || [], match.seats || [], match.policy, match.status, new Date()
+    ),
     sessions: match.sessions.map(function(session) {
       return {
         sessionId: session.sessionId,
@@ -1626,6 +1986,15 @@ function raiseTicketIntegrityError_(spreadsheet, registrationId, stage, restoreF
   integrityError.restoreFailures = restoreFailures;
   integrityError.auditFailure = auditFailure;
   throw integrityError;
+}
+
+function ticketSheetNameByHeader_(header) {
+  var names = Object.keys(SHEET_DEFINITIONS || {}).filter(function(name) {
+    return Array.isArray(SHEET_DEFINITIONS[name]) &&
+      SHEET_DEFINITIONS[name].indexOf(header) !== -1;
+  });
+  if (names.length !== 1) ticketError_('INTERNAL');
+  return names[0];
 }
 
 ===== apps-script/AttendanceService.gs =====
@@ -1905,6 +2274,9 @@ function setPublicRegistryValue_(registry, key, value) {
 
 ===== apps-script/Code.gs =====
 var PUBLIC_ERROR_MESSAGES = {
+  CANCELLATION_DISABLED: 'Cancellation is not enabled for this event.',
+  SEAT_HOLD_DISABLED: 'Seat holds are not enabled for this event.',
+  SEAT_HOLD_OWNERSHIP: 'This seat hold belongs to another browser session.',
   EVENT_NOT_FOUND: '未找到该活动。',
   INVALID_REQUEST: '提交信息无效，请检查后重试。',
   REGISTRATION_CLOSED: '报名已截止。',
@@ -1919,6 +2291,17 @@ var PUBLIC_ERROR_MESSAGES = {
   TICKET_NOT_FOUND: '未找到对应凭证。',
   TICKET_VERIFICATION_FAILED: '验证信息不匹配。',
   TOKEN_INVALID: '凭证无效或已过期。',
+  INTERNAL_REQUEST_DENIED: '受保护操作不可用。',
+  ADMIN_ACTION_DENIED: '管理员功能不可用。',
+  STAFF_ACTION_DENIED: '员工签到不可用。',
+  NOT_FOUND: '未找到对应记录。',
+  CONFLICT: '当前数据状态不允许此操作。',
+  CONFIRMATION_REQUIRED: '此操作需要明确确认。',
+  SHEET_CONNECTION_FAILED: '无法连接到指定的数据表。',
+  TICKET_INACTIVE: '该凭证当前不可签到。',
+  SESSION_NOT_REGISTERED: '该凭证未报名此场讲座。',
+  CHECK_IN_CLOSED: '当前不在此场讲座的签到时间内。',
+  ALREADY_CHECKED_IN: '此场讲座已完成签到。',
   MAINTENANCE: '系统正在切换数据连接，请稍后重试。',
   NOT_IMPLEMENTED: '请求暂不可用。',
   INTERNAL: '请求未能完成，请稍后重试。'
@@ -1927,13 +2310,260 @@ var PUBLIC_ERROR_MESSAGES = {
 var PUBLIC_ROUTES = {
   'listEvents': function(payload) { return listEvents(payload); },
   'getEvent': function(payload) { return getEvent(payload); },
+  'createSeatHold': function(payload) { return createSeatHold(payload); },
+  'releaseSeatHold': function(payload) { return releaseSeatHold(payload); },
   'createRegistration': function(payload) { return createRegistration(payload); },
   'lookupTicket': function(payload) { return lookupTicket(payload); },
   'verifyTicket': function(payload) { return verifyTicket(payload); },
   'cancelRegistration': function(payload) { return cancelRegistration(payload); },
   'exchangeSeat': function(payload) { return exchangeSeat(payload); },
-  'probeSheetSwitch': function(payload) { return probeSheetSwitch(payload); }
+  'probeSheetSwitch': function(payload) { return probeSheetSwitch(payload); },
+  'internalRequest': function(payload) { return handleInternalRequest_(payload); }
 };
+
+var PUBLIC_EVENT_STATUSES_ = {
+  upcoming: true,
+  open: true,
+  closed: true,
+  live: true,
+  ended: true,
+  cancelled: true
+};
+
+var PUBLIC_SESSION_STATUSES_ = { active: true, open: true };
+
+/** Returns safe summaries for every participant-visible event. */
+function listEvents(_payload) {
+  return runPublicEventRead_(function() {
+    return withScriptLock(function() {
+      var registry = getRegistrySpreadsheet_();
+      var spreadsheet = getConfiguredSpreadsheet(registry);
+      var settings = getAdminSettings(registry);
+      var events = readRows(spreadsheet, '活动')
+        .filter(function(event) {
+          return PUBLIC_EVENT_STATUSES_[String(event.status || '').toLowerCase()] === true;
+        })
+        .map(function(event) {
+          return publicEventSummary_(event, publicEventPolicy_(settings, event.eventId));
+        });
+      return { events: events, serverNow: new Date().toISOString() };
+    });
+  });
+}
+
+/** Returns one safe participant registration definition. */
+function getEvent(payload) {
+  return runPublicEventRead_(function() {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload) ||
+        typeof payload.eventId !== 'string' || !payload.eventId.trim()) {
+      publicEventReadError_('INVALID_REQUEST');
+    }
+    return withScriptLock(function() {
+      var registry = getRegistrySpreadsheet_();
+      var spreadsheet = getConfiguredSpreadsheet(registry);
+      var eventId = payload.eventId.trim();
+      var event = readRows(spreadsheet, '活动').filter(function(candidate) {
+        return candidate.eventId === eventId &&
+          PUBLIC_EVENT_STATUSES_[String(candidate.status || '').toLowerCase()] === true;
+      })[0];
+      if (!event) publicEventReadError_('EVENT_NOT_FOUND');
+      var settings = getAdminSettings(registry);
+      var policy = publicEventPolicy_(settings, eventId);
+      var sessions = readRows(spreadsheet, '场次')
+        .filter(function(session) {
+          return session.eventId === eventId &&
+            PUBLIC_SESSION_STATUSES_[String(session.status || '').toLowerCase()] === true;
+        })
+        .map(function(session) {
+          var sessionPolicy = policy.sessions && policy.sessions[session.sessionId] &&
+            typeof policy.sessions[session.sessionId] === 'object'
+            ? policy.sessions[session.sessionId] : {};
+          return {
+            id: String(session.sessionId || ''),
+            title: String(session.title || ''),
+            speaker: String(session.speaker || ''),
+            startsAt: publicText_(session.startsAt),
+            endsAt: publicText_(session.endsAt),
+            location: String(sessionPolicy.location || event.location || ''),
+            required: publicTruthy_(session.required),
+            capacity: publicNonNegativeNumber_(session.capacity, 0),
+            groupRule: publicGroupRule_(sessionPolicy.groupRule)
+          };
+        });
+      var fields = readRows(spreadsheet, '报名问题')
+        .filter(function(question) {
+          return question.eventId === eventId &&
+            String(question.status || '').toLowerCase() === 'active';
+        })
+        .sort(function(left, right) {
+          return publicNonNegativeNumber_(left.sortOrder, 0) -
+            publicNonNegativeNumber_(right.sortOrder, 0);
+        })
+        .map(function(question) {
+          return publicQuestionProjection_(question, policy);
+        });
+      var nowMs = Date.now();
+      var seats = readRows(spreadsheet, '座位')
+        .filter(function(seat) {
+          if (seat.eventId !== eventId) return false;
+          var status = String(seat.status || '').toLowerCase();
+          if ((status === 'available' || status === 'open') && !seat.holderRegistrationId) {
+            return true;
+          }
+          if (status !== 'held') return false;
+          var hold = /^HOLD\|[^|]+\|(\d+)$/.exec(String(seat.holderRegistrationId || ''));
+          return !!hold && Number(hold[1]) <= nowMs;
+        })
+        .map(function(seat) {
+          return {
+            id: String(seat.seatId || ''),
+            label: String(seat.label || ''),
+            zone: String(seat.zone || ''),
+            sessionId: String(seat.sessionId || '')
+          };
+        });
+      var detail = publicEventSummary_(event, policy);
+      detail.sessions = sessions;
+      detail.seats = seats;
+      detail.fields = fields;
+      return { event: detail, serverNow: new Date().toISOString() };
+    });
+  });
+}
+
+function runPublicEventRead_(callback) {
+  try {
+    return { ok: true, data: callback() };
+  } catch (error) {
+    var code = error && error.publicCode ? error.publicCode : 'INTERNAL';
+    return publicFailure_(code);
+  }
+}
+
+function publicEventReadError_(code) {
+  var error = new Error(code);
+  error.publicCode = code;
+  throw error;
+}
+
+function publicEventSummary_(event, policy) {
+  return {
+    id: String(event.eventId || ''),
+    title: String(event.title || ''),
+    description: String(event.description || ''),
+    status: String(event.status || '').toLowerCase(),
+    opensAt: publicText_(event.opensAt),
+    closesAt: publicText_(event.closesAt),
+    location: String(event.location || ''),
+    selectionMode: String(event.selectionMode || 'free').toLowerCase(),
+    minChoices: publicNonNegativeNumber_(event.minChoices, 0),
+    maxChoices: publicNonNegativeNumber_(event.maxChoices, 0),
+    seatMode: String(event.seatMode || 'none').toLowerCase(),
+    seatZones: publicStringArray_(event.seatZones),
+    showOpeningCountdown: policy.showOpeningCountdown === true,
+    showClosingCountdown: policy.showClosingCountdown === true,
+    cancellationEnabled: policy.cancellationEnabled === true,
+    exchangeEnabled: policy.seatExchangeEnabled === true,
+    seatHoldsEnabled: policy.seatHoldsEnabled === true
+  };
+}
+
+function publicEventPolicy_(settings, eventId) {
+  var registration = settings && settings.registration &&
+    typeof settings.registration === 'object' && !Array.isArray(settings.registration)
+    ? settings.registration : {};
+  var eventPolicy = registration.events && registration.events[eventId] &&
+    typeof registration.events[eventId] === 'object' && !Array.isArray(registration.events[eventId])
+    ? registration.events[eventId] : {};
+  return eventPolicy;
+}
+
+function publicQuestionProjection_(question, policy) {
+  var parsed = publicQuestionConfiguration_(question.options);
+  var semanticRole = '';
+  var roles = policy.fieldRoles && typeof policy.fieldRoles === 'object' &&
+    !Array.isArray(policy.fieldRoles) ? policy.fieldRoles : {};
+  Object.keys(roles).some(function(role) {
+    if (roles[role] !== question.questionId) return false;
+    semanticRole = role;
+    return true;
+  });
+  return {
+    id: String(question.questionId || ''),
+    label: String(question.label || ''),
+    type: String(question.type || '').toLowerCase(),
+    required: publicTruthy_(question.required),
+    options: parsed.choices,
+    constraints: parsed.constraints,
+    sortOrder: publicNonNegativeNumber_(question.sortOrder, 0),
+    semanticRole: semanticRole
+  };
+}
+
+function publicQuestionConfiguration_(serialized) {
+  var parsed = {};
+  try {
+    parsed = typeof serialized === 'string' && serialized
+      ? JSON.parse(serialized) : (serialized || {});
+  } catch (_ignored) {
+    parsed = {};
+  }
+  if (Array.isArray(parsed)) parsed = { choices: parsed };
+  if (!parsed || typeof parsed !== 'object') parsed = {};
+  var legacy = parsed.validation && typeof parsed.validation === 'object' &&
+    !Array.isArray(parsed.validation) ? parsed.validation : {};
+  var constraints = {};
+  ['minLength', 'maxLength', 'min', 'max', 'pattern', 'minSelections', 'maxSelections']
+    .forEach(function(key) {
+      if (parsed[key] !== undefined) constraints[key] = parsed[key];
+      else if (legacy[key] !== undefined) constraints[key] = legacy[key];
+    });
+  return {
+    choices: Array.isArray(parsed.choices) ? parsed.choices.filter(function(value) {
+      return typeof value === 'string';
+    }) : [],
+    constraints: constraints
+  };
+}
+
+function publicGroupRule_(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return {
+      id: String(value.id || value.groupId || ''),
+      min: publicNonNegativeNumber_(value.min, 0),
+      max: publicNonNegativeNumber_(value.max, 1)
+    };
+  }
+  var text = String(value || '').trim();
+  return text ? { id: text, min: 0, max: 1 } : null;
+}
+
+function publicText_(value) {
+  if (value instanceof Date) return isFinite(value.getTime()) ? value.toISOString() : '';
+  return value === undefined || value === null ? '' : String(value);
+}
+
+function publicStringArray_(value) {
+  if (Array.isArray(value)) return value.filter(function(item) { return typeof item === 'string'; });
+  try {
+    var parsed = JSON.parse(value || '[]');
+    return Array.isArray(parsed) ? parsed.filter(function(item) {
+      return typeof item === 'string';
+    }) : [];
+  } catch (_ignored) {
+    return [];
+  }
+}
+
+function publicTruthy_(value) {
+  return value === true || value === 1 ||
+    String(value).toLowerCase() === 'true' || String(value) === '1';
+}
+
+function publicNonNegativeNumber_(value, fallback) {
+  var parsed = Number(value);
+  return isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
 
 /** Public health page. */
 function doGet() {

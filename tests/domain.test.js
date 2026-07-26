@@ -101,3 +101,30 @@ test("required checkbox answers need a selection and required text ignores white
   assert.deepEqual(Object.keys(missing.errors).sort(), ["agreement", "name"]);
   assert.equal(complete.valid, true);
 });
+
+test("question constraints and session topic groups match the server contract", () => {
+  const fields = [
+    {
+      id: "name", label: "Name", type: "text", required: true,
+      constraints: { minLength: 3, maxLength: 8, pattern: "^[A-Za-z]+$" }
+    },
+    {
+      id: "topics", label: "Topics", type: "checkbox", required: true,
+      options: ["A", "B", "C"],
+      constraints: { minSelections: 2, maxSelections: 2 }
+    }
+  ];
+  assert.equal(validateAnswers(fields, { name: "Al", topics: ["A", "B"] }).valid, false);
+  assert.equal(validateAnswers(fields, { name: "Alice1", topics: ["A", "B"] }).valid, false);
+  assert.equal(validateAnswers(fields, { name: "Alice", topics: ["A"] }).valid, false);
+  assert.equal(validateAnswers(fields, { name: "Alice", topics: ["A", "X"] }).valid, false);
+  assert.equal(validateAnswers(fields, { name: "Alice", topics: ["A", "B"] }).valid, true);
+
+  const sessions = [
+    { id: "a1", groupRule: { id: "topic-a", min: 1, max: 1 } },
+    { id: "a2", groupRule: { id: "topic-a", min: 1, max: 1 } }
+  ];
+  assert.equal(validateSelection({ minChoices: 1, maxChoices: 2 }, sessions, []).valid, false);
+  assert.equal(validateSelection({ minChoices: 1, maxChoices: 2 }, sessions, ["a1", "a2"]).valid, false);
+  assert.equal(validateSelection({ minChoices: 1, maxChoices: 2 }, sessions, ["a2"]).valid, true);
+});

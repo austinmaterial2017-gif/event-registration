@@ -33,7 +33,11 @@ test("every public method sends its documented JSON POST envelope", async () => 
     ["getEvent", { eventId: "event-1" }, () => client.getEvent("event-1")],
     ["createRegistration", { eventId: "event-1", sessionIds: ["s1"], seatChoices: ["A-01"], answers: { name: "陈晓明" } }, () => client.createRegistration({ eventId: "event-1", sessionIds: ["s1"], seatChoices: ["A-01"], answers: { name: "陈晓明" } })],
     ["lookupTicket", { ticketNumber: "T-01", verificationValue: "13800000000" }, () => client.lookupTicket("T-01", "13800000000")],
-    ["verifyTicket", { token: "signed-token" }, () => client.verifyTicket("signed-token")]
+    ["verifyTicket", { token: "signed-token" }, () => client.verifyTicket("signed-token")],
+    ["createSeatHold", { eventId: "event-1", seatId: "seat-1", holdOwner: "browser-owner-0001" }, () => client.createSeatHold({ eventId: "event-1", seatId: "seat-1", holdOwner: "browser-owner-0001" })],
+    ["releaseSeatHold", { eventId: "event-1", seatId: "seat-1", holdOwner: "browser-owner-0001" }, () => client.releaseSeatHold({ eventId: "event-1", seatId: "seat-1", holdOwner: "browser-owner-0001" })],
+    ["cancelRegistration", { ticketNumber: "T-01", verificationValue: "13800000000" }, () => client.cancelRegistration("T-01", "13800000000")],
+    ["exchangeSeat", { ticketNumber: "T-01", verificationValue: "13800000000", oldSeatId: "seat-1", newSeatId: "seat-2", seatHoldOwner: "browser-owner-0001" }, () => client.exchangeSeat({ ticketNumber: "T-01", verificationValue: "13800000000", oldSeatId: "seat-1", newSeatId: "seat-2", seatHoldOwner: "browser-owner-0001" })]
   ];
 
   for (const [action, payload, invoke] of expected) {
@@ -121,7 +125,7 @@ test("the exact placeholder enables an explicit non-persistent demonstration ada
 test("public client files contain no forbidden configuration strings", async () => {
   const root = new URL("../public/js/", import.meta.url);
   const [config, api] = await Promise.all([readFile(new URL("config.js", root), "utf8"), readFile(new URL("api.js", root), "utf8")]);
-  assert.match(config, /^export const APPS_SCRIPT_WEB_APP_URL = "PASTE_APPS_SCRIPT_WEB_APP_URL_HERE";\s*$/);
+  assert.match(config, /^export const APPS_SCRIPT_WEB_APP_URL = "PASTE_APPS_SCRIPT_WEB_APP_URL_HERE";\s*export const PUBLIC_BASE_URL = "PASTE_PUBLIC_BASE_URL_HERE";\s*$/);
   for (const forbidden of [/spreadsheet/i, /sheetId/i, /password/i, /allowlist/i, /administrator/i, /doGet/i, /doPost/i, /innerHTML/]) {
     assert.doesNotMatch(`${config}\n${api}`, forbidden);
   }

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { getActivityCountdown, getVisibleActivities } from "../public/js/event-list-flow.js";
 import { applyRegistrationGate, getFieldControlSpec, getRegistrationAvailability, getSeatModeState, validateRegistrationDraft } from "../public/js/registration-flow.js";
+import { createSeatHoldOwner } from "../public/js/register-page.js";
 
 const serverNow = Date.parse("2026-07-26T10:00:00+08:00");
 
@@ -54,6 +55,31 @@ test("time gating restores only controls that were not intrinsically disabled", 
 test("question control specifications cover all dynamically rendered field types", () => {
   const expected = { text: ["input", "text"], textarea: ["textarea", null], number: ["input", "number"], tel: ["input", "tel"], email: ["input", "email"], date: ["input", "date"], radio: ["input", "radio"], checkbox: ["input", "checkbox"], select: ["select", null], boolean: ["input", "checkbox"] };
   for (const [type, [tag, inputType]] of Object.entries(expected)) assert.deepEqual(getFieldControlSpec(type), { tag, inputType });
+});
+
+test("per-session seats require one choice each and hold owners use secure browser randomness", () => {
+  const event = {
+    status: "open",
+    seatMode: "self",
+    minChoices: 2,
+    maxChoices: 2,
+    sessions: [{ id: "a" }, { id: "b" }],
+    seats: [
+      { id: "a-1", sessionId: "a" },
+      { id: "b-1", sessionId: "b" }
+    ],
+    fields: []
+  };
+  assert.equal(validateRegistrationDraft(
+    event, ["a", "b"], ["a-1"], {}, serverNow
+  ).valid, false);
+  assert.equal(validateRegistrationDraft(
+    event, ["a", "b"], ["a-1", "b-1"], {}, serverNow
+  ).valid, true);
+  assert.equal(
+    createSeatHoldOwner({ randomUUID: () => "00000000-0000-4000-8000-000000000001" }),
+    "hold-00000000-0000-4000-8000-000000000001"
+  );
 });
 
 test("public markup retains the semantic participant regions and six ordered stages", async () => {

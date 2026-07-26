@@ -24,6 +24,10 @@ The public project requires these Script Properties:
 - `ACTIVE_SPREADSHEET_ID`: the permanent registry Sheet ID
 - `SWITCH_PROBE_SHARED_SECRET`: a randomly generated secret of at least 32
   characters, identical to the value in the staff project
+- `INTERNAL_API_SHARED_SECRET`: a different randomly generated secret of at
+  least 32 characters, identical to the value in the staff project
+- `PUBLIC_BASE_URL`: the participant GitHub Pages root URL, without a trailing
+  slash; this is used to create absolute QR verification links
 
 ## Staff project: `staff-apps-script/`
 
@@ -49,6 +53,8 @@ The staff project requires these Script Properties:
   `https://script.google.com/macros/s/.../exec` URL
 - `SWITCH_PROBE_SHARED_SECRET`: the same randomly generated secret of at least
   32 characters configured in the public project
+- `INTERNAL_API_SHARED_SECRET`: the same second secret of at least 32
+  characters configured in the public project; do not reuse the switch secret
 
 Example allowlist:
 
@@ -141,10 +147,11 @@ source bundles:
    initially point `ACTIVE_SPREADSHEET_ID` at the same initialized private
    Sheet and retain it as their stable root. Later confirmed administrator
    switches are propagated through the shared pointer. Configure the same
-   `SWITCH_PROBE_SHARED_SECRET` in both projects and set `PUBLIC_BACKEND_URL`
-   in the staff project. The generated source contains property names only; it
-   does not contain current property values, Sheet IDs, allowlist members,
-   credentials, participant rows, or answers.
+   `SWITCH_PROBE_SHARED_SECRET` and `INTERNAL_API_SHARED_SECRET` in both
+   projects, set `PUBLIC_BASE_URL` in the public project, and set
+   `PUBLIC_BACKEND_URL` in the staff project. The generated source contains
+   property names only; it does not contain current property values, Sheet
+   IDs, allowlist members, credentials, participant rows, or answers.
 4. Verify the public project's `setupSystem()` seeded the registry's
    authoritative `ADMIN_SETTINGS` row, then use the protected administrator
    project to configure the required policies.

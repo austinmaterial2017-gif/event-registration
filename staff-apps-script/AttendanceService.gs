@@ -3,12 +3,10 @@ var ATTENDANCE_STAFF_ALLOWLIST = 'ATTENDANCE_STAFF_ALLOWLIST';
 /** Read-only ticket lookup for the authenticated staff page. */
 function getStaffTicketForCheckIn(payload) {
   return runStaffAttendanceService_(function() {
-    requireAuthorizedStaffSession_();
-    return withScriptLock_(function() {
-      var registry = getRootConfiguredSpreadsheet_();
-      var spreadsheet = getConfiguredSpreadsheet_(registry);
-      return staffTicketProjection_(findStaffTicket_(spreadsheet, payload && payload.token));
-    });
+    var staffIdentity = requireAuthorizedStaffSession_();
+    var result = invokeInternalBackend_('staff.getTicket', payload || {}, staffIdentity);
+    if (!result.ok) staffAttendanceError_(result.code);
+    return result.data;
   });
 }
 
@@ -16,59 +14,9 @@ function getStaffTicketForCheckIn(payload) {
 function checkIn(payload) {
   return runStaffAttendanceService_(function() {
     var staffIdentity = requireAuthorizedStaffSession_();
-    return withScriptLock_(function() {
-      var registry = getRootConfiguredSpreadsheet_();
-      requireNoSwitchMaintenance_(registry);
-      var spreadsheet = getConfiguredSpreadsheet_(registry);
-      if (!payload || typeof payload !== 'object' ||
-          typeof payload.sessionId !== 'string' || !payload.sessionId.trim()) {
-        staffAttendanceError_('INVALID_REQUEST');
-      }
-      var match = findStaffTicket_(spreadsheet, payload.token);
-      if (match.status !== 'active') staffAttendanceError_('TICKET_INACTIVE');
-      if (String(match.event.status || '').toLowerCase() !== 'live') {
-        staffAttendanceError_('CHECK_IN_CLOSED');
-      }
-
-      var sessionId = payload.sessionId.trim();
-      var session = match.sessions.filter(function(candidate) {
-        return candidate.sessionId === sessionId;
-      })[0];
-      if (!session) staffAttendanceError_('SESSION_NOT_REGISTERED');
-      var sessionStatus = String(session.status || '').toLowerCase();
-      if (sessionStatus !== 'live' && sessionStatus !== 'open') {
-        staffAttendanceError_('CHECK_IN_CLOSED');
-      }
-
-      var serverNow = new Date();
-      if (!isWithinStaffAttendanceWindow_(registry, session, serverNow)) {
-        staffAttendanceError_('CHECK_IN_CLOSED');
-      }
-      var duplicate = readRows_(spreadsheet, '签到记录').some(function(record) {
-        return record.registrationId === match.registrationId &&
-          record.sessionId === sessionId &&
-          String(record.status || '').toLowerCase() === 'checked_in';
-      });
-      if (duplicate) staffAttendanceError_('ALREADY_CHECKED_IN');
-
-      var row = {
-        checkInId: Utilities.getUuid(),
-        registrationId: match.registrationId,
-        eventId: match.event.eventId,
-        sessionId: sessionId,
-        checkedInAt: serverNow.toISOString(),
-        checkedInBy: staffIdentity,
-        status: 'checked_in'
-      };
-      var sheet = getRequiredSheet_(spreadsheet, '签到记录');
-      var values = normalizeRow_('签到记录', row);
-      sheet.getRange(sheet.getLastRow() + 1, 1, 1, values.length).setValues([values]);
-      return {
-        status: 'checked_in',
-        sessionId: sessionId,
-        checkedInAt: row.checkedInAt
-      };
-    });
+    var result = invokeInternalBackend_('staff.checkIn', payload || {}, staffIdentity);
+    if (!result.ok) staffAttendanceError_(result.code);
+    return result.data;
   });
 }
 

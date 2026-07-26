@@ -63,3 +63,36 @@ button, input, textarea, select { font:inherit; } button { cursor:pointer; }
   .ticket-card { color:white; print-color-adjust:exact; -webkit-print-color-adjust:exact; box-shadow:none; break-inside:avoid; }
   .ticket-qr { width:130px; height:130px; }
 }
+
+.ticket-display-fields,
+.ticket-actions {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+
+.ticket-display-fields {
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+}
+
+.ticket-display-fields div,
+.ticket-actions {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 0.9rem;
+  padding: 0.9rem;
+}
+
+.ticket-display-fields dt {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.ticket-display-fields dd {
+  margin: 0.25rem 0 0;
+  font-weight: 700;
+}
+
+.ticket-actions {
+  align-items: end;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+}

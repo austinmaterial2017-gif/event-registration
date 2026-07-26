@@ -164,6 +164,10 @@ function records(sheet) {
     Object.fromEntries(headers[sheet.name].map((key, index) => [key, values[index]])));
 }
 
+function sheetByHeader(sheets, header) {
+  return Object.values(sheets).find((sheet) => headers[sheet.name].includes(header));
+}
+
 function registryValue(harness, key) {
   const row = records(harness.sourceSheets["系统设置"]).find((candidate) => candidate.key === key);
   return row ? row.value : null;
@@ -301,6 +305,68 @@ async function createHarness(options = {}) {
   for (const file of ["Repository.gs", "AttendanceService.gs", "AdminService.gs"]) {
     vm.runInContext(await readFile(new URL(file, staffScriptRoot), "utf8"), context, { filename: file });
   }
+  const gatewayLock = context.withScriptLock_;
+  const attendanceSheetName = Object.keys(context.STAFF_SHEET_DEFINITIONS)
+    .find((name) => context.STAFF_SHEET_DEFINITIONS[name].includes("checkInId"));
+  const handlers = {
+    "admin.getDashboard": (payload, actor) => context.getAdminDashboard_(payload, actor),
+    "admin.saveEvent": (payload, actor) => context.saveAdminEvent_(payload, actor),
+    "admin.saveSession": (payload, actor) => context.saveAdminSession_(payload, actor),
+    "admin.saveSeatPlan": (payload, actor) => context.saveAdminSeatPlan_(payload, actor),
+    "admin.saveQuestion": (payload, actor) => context.saveAdminQuestion_(payload, actor),
+    "admin.recordAction": (payload, actor) => context.adminRecordAction_(payload, actor),
+    "admin.testSheet": (payload, actor) => context.testAdminSheetConnection_(payload, actor),
+    "admin.switchSheet": (payload, actor) => context.switchAdminSheet_(payload, actor),
+    "staff.getTicket": (payload) => {
+      const registry = context.getRootConfiguredSpreadsheet_();
+      const spreadsheet = context.getConfiguredSpreadsheet_(registry);
+      return context.staffTicketProjection_(context.findStaffTicket_(spreadsheet, payload?.token));
+    },
+    "staff.checkIn": (payload, actor) => {
+      const registry = context.getRootConfiguredSpreadsheet_();
+      context.requireNoSwitchMaintenance_(registry);
+      const spreadsheet = context.getConfiguredSpreadsheet_(registry);
+      const match = context.findStaffTicket_(spreadsheet, payload?.token);
+      if (match.status !== "active") context.staffAttendanceError_("TICKET_INACTIVE");
+      if (String(match.event.status || "").toLowerCase() !== "live") {
+        context.staffAttendanceError_("CHECK_IN_CLOSED");
+      }
+      const sessionId = String(payload?.sessionId || "").trim();
+      const session = match.sessions.find((candidate) => candidate.sessionId === sessionId);
+      if (!session) context.staffAttendanceError_("SESSION_NOT_REGISTERED");
+      if (!["live", "open"].includes(String(session.status || "").toLowerCase()) ||
+          !context.isWithinStaffAttendanceWindow_(registry, session, new ServerDate())) {
+        context.staffAttendanceError_("CHECK_IN_CLOSED");
+      }
+      const duplicate = context.readRows_(spreadsheet, attendanceSheetName).some((record) =>
+        record.registrationId === match.registrationId &&
+        record.sessionId === sessionId &&
+        String(record.status || "").toLowerCase() === "checked_in");
+      if (duplicate) context.staffAttendanceError_("ALREADY_CHECKED_IN");
+      const row = {
+        checkInId: context.Utilities.getUuid(),
+        registrationId: match.registrationId,
+        eventId: match.event.eventId,
+        sessionId,
+        checkedInAt: new ServerDate().toISOString(),
+        checkedInBy: actor,
+        status: "checked_in"
+      };
+      const sheet = context.getRequiredSheet_(spreadsheet, attendanceSheetName);
+      const values = context.normalizeRow_(attendanceSheetName, row);
+      sheet.getRange(sheet.getLastRow() + 1, 1, 1, values.length).setValues([values]);
+      return { status: "checked_in", sessionId, checkedInAt: row.checkedInAt };
+    }
+  };
+  context.withScriptLock_ = (callback) => callback();
+  context.invokeInternalBackend_ = (action, payload, actor) => gatewayLock(() => {
+    try {
+      if (!Object.hasOwn(handlers, action)) return { ok: false, code: "INTERNAL_REQUEST_DENIED" };
+      return { ok: true, data: handlers[action](payload, actor) };
+    } catch (error) {
+      return { ok: false, code: error?.publicCode || "INTERNAL" };
+    }
+  });
   return {
     context,
     properties,
@@ -533,6 +599,55 @@ test("event, session, and question CRUD validate supported values and retain ext
   const invalidType = harness.context.saveAdminQuestion({ eventId, label: "Bad", type: "password" });
   assert.equal(invalidStatus.code, "INVALID_REQUEST");
   assert.equal(invalidType.code, "INVALID_REQUEST");
+});
+
+test("administrator policy persists seat holds, semantic field roles, and normalized constraints", async () => {
+  const harness = await createHarness();
+  const event = harness.context.saveAdminEvent({
+    eventId: "event-1",
+    title: "Policy event",
+    seatHoldsEnabled: true,
+    seatHoldMinutes: 3
+  });
+  assert.equal(event.ok, true, JSON.stringify(event));
+  assert.equal(event.data.seatHoldsEnabled, true);
+  assert.equal(event.data.seatHoldMinutes, 3);
+
+  const question = harness.context.saveAdminQuestion({
+    eventId: "event-1",
+    label: "Contact email",
+    type: "email",
+    required: true,
+    semanticRole: "email",
+    showOnTicket: true,
+    options: [],
+    validation: { minLength: 6, maxLength: 120 }
+  });
+  assert.equal(question.ok, true, JSON.stringify(question));
+  assert.equal(question.data.semanticRole, "email");
+  assert.deepEqual({ ...question.data.validation }, { minLength: 6, maxLength: 120 });
+
+  const questionSheet = sheetByHeader(harness.sourceSheets, "questionId");
+  const storedQuestion = records(questionSheet)
+    .find((row) => row.questionId === question.data.questionId);
+  assert.deepEqual(JSON.parse(storedQuestion.options), {
+    choices: [],
+    minLength: 6,
+    maxLength: 120
+  });
+  const settings = JSON.parse(registryValue(harness, "ADMIN_SETTINGS"));
+  assert.equal(settings.registration.events["event-1"].fieldRoles.email, question.data.questionId);
+
+  const before = JSON.stringify(records(questionSheet));
+  assert.equal(harness.context.saveAdminQuestion({
+    eventId: "event-1",
+    label: "Broken",
+    type: "text",
+    required: true,
+    semanticRole: "unknown-role",
+    validation: { minLength: 10, maxLength: 2 }
+  }).code, "INVALID_REQUEST");
+  assert.equal(JSON.stringify(records(questionSheet)), before);
 });
 
 test("seat plans cover every mode and reserve, close, and reopen seats without deleting rows", async () => {
@@ -1420,6 +1535,81 @@ test("a published pointer recovers after maintenance expiry when clearing the ma
   assert.equal(adminMutation.ok, true, JSON.stringify(adminMutation));
   assert.equal(registryValue(harness, "SWITCH_MAINTENANCE"), "");
   assert.equal(records(harness.targetSheets["\u6d3b\u52a8"])[0].title, "Recovered target");
+});
+
+test("real public event reads expose only safe visible projections and authoritative server time", async () => {
+  const rows = baseRows();
+  rows["活动"].push(
+    {
+      ...rows["活动"][0],
+      eventId: "draft-event",
+      title: "Private draft",
+      status: "draft"
+    },
+    {
+      ...rows["活动"][0],
+      eventId: "archived-event",
+      title: "Private archive",
+      status: "archived"
+    },
+    {
+      ...rows["活动"][0],
+      eventId: "upcoming-event",
+      title: "Public preview",
+      status: "upcoming"
+    }
+  );
+  rows["场次"].push({
+    ...rows["场次"][0],
+    sessionId: "draft-session",
+    title: "Hidden session",
+    status: "draft"
+  });
+  rows["座位"].push({
+    seatId: "held-private-seat",
+    eventId: "event-1",
+    sessionId: "session-1",
+    label: "SECRET-HOLD",
+    zone: "A",
+    status: "held",
+    holderRegistrationId: "HOLD|private-owner|9999999999999",
+    createdAt: "2026-07-01T00:00:00Z",
+    updatedAt: "2026-07-01T00:00:00Z"
+  });
+  rows["报名问题"][0].options = JSON.stringify({
+    choices: [],
+    minLength: 6,
+    maxLength: 120,
+    pattern: "^[^@]+@[^@]+$"
+  });
+  const harness = await createHarness({ rows, nowIso: "2026-08-10T04:00:00Z" });
+  const context = await createPublicRegistrationContext(harness.sourceSheets, {});
+
+  const listed = context.listEvents({});
+  assert.equal(listed.ok, true, JSON.stringify(listed));
+  assert.equal(listed.data.serverNow, "2026-08-10T04:00:00.000Z");
+  assert.deepEqual(
+    Array.from(listed.data.events, (event) => event.id).sort(),
+    ["event-1", "upcoming-event"]
+  );
+  assert.equal(JSON.stringify(listed.data).includes("Private draft"), false);
+  assert.equal(JSON.stringify(listed.data).includes("source-sheet-id"), false);
+
+  const detail = context.getEvent({ eventId: "event-1" });
+  assert.equal(detail.ok, true, JSON.stringify(detail));
+  assert.equal(detail.data.serverNow, "2026-08-10T04:00:00.000Z");
+  assert.deepEqual(
+    Array.from(detail.data.event.sessions, (session) => session.id),
+    ["session-1"]
+  );
+  assert.equal(detail.data.event.fields[0].constraints.minLength, 6);
+  assert.equal(detail.data.event.fields[0].constraints.maxLength, 120);
+  assert.equal(detail.data.event.seats.some((seat) => seat.id === "held-private-seat"), false);
+  assert.equal(JSON.stringify(detail.data).includes("holderRegistrationId"), false);
+  assert.equal(JSON.stringify(detail.data).includes("rowNumber"), false);
+
+  assert.equal(context.getEvent({ eventId: "draft-event" }).code, "EVENT_NOT_FOUND");
+  assert.equal(context.getEvent({ eventId: "archived-event" }).code, "EVENT_NOT_FOUND");
 });
 
 test("Sheet switching aborts maintenance without publishing when no public ack arrives", async () => {

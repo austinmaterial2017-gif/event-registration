@@ -18,8 +18,8 @@
       <h1>员工讲座签到</h1>
       <p>员工身份来自当前 Google 登录会话，页面不会接受手动填写的身份。</p>
       <form id="lookup-form">
-        <label>二维码 token
-          <input name="token" autocomplete="off" required>
+        <label>二维码 token 或验票网址
+          <input name="token" inputmode="url" autocomplete="off" required>
         </label>
         <button type="submit">读取凭证</button>
       </form>
@@ -45,6 +45,19 @@
       const summary = document.querySelector("#ticket-summary");
       let activeToken = "";
 
+      function parseScannedTicketToken(value) {
+        const text = String(value || "").trim();
+        if (!text || text.length > 2048) return "";
+        try {
+          const parsed = new URL(text, window.location.href);
+          const queryToken = parsed.searchParams.get("token");
+          if (queryToken && queryToken.trim().length <= 512) return queryToken.trim();
+        } catch (_ignored) {
+          // A camera/scanner may provide the opaque token directly.
+        }
+        return text.length <= 512 && !/\s/.test(text) ? text : "";
+      }
+
       function showResult(result) {
         if (!result || result.ok !== true) {
           message.textContent = result && result.message ? result.message : "员工签到不可用。";
@@ -64,14 +77,23 @@
         message.textContent = "已读取凭证；请选择本次签到场次。";
       }
 
-      lookupForm.addEventListener("submit", (event) => {
-        event.preventDefault();
-        activeToken = lookupForm.elements.token.value.trim();
+      function lookupTicketForCheckIn(value) {
+        activeToken = parseScannedTicketToken(value);
+        if (!activeToken) {
+          message.textContent = "二维码或验票网址无效。";
+          return;
+        }
+        lookupForm.elements.token.value = activeToken;
         message.textContent = "正在读取凭证…";
         google.script.run
           .withSuccessHandler(showResult)
           .withFailureHandler(() => { message.textContent = "员工签到不可用。"; })
           .getStaffTicketForCheckIn({ token: activeToken });
+      }
+
+      lookupForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        lookupTicketForCheckIn(lookupForm.elements.token.value);
       });
 
       checkInForm.addEventListener("submit", (event) => {
@@ -87,6 +109,10 @@
           .withFailureHandler(() => { message.textContent = "员工签到不可用。"; })
           .checkIn({ token: activeToken, sessionId: checkInForm.elements.sessionId.value });
       });
+
+      const initialParameters = new URLSearchParams(window.location.search);
+      const initialScan = initialParameters.get("token") || initialParameters.get("scan") || "";
+      if (initialScan) lookupTicketForCheckIn(initialScan);
     </script>
   </body>
 </html>

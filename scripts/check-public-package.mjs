@@ -62,9 +62,19 @@ const forbidden = [
 for (const [label, pattern] of forbidden) if (pattern.test(combined)) fail(`contains ${label}`);
 
 const config = files.find(({ name }) => name === "js/config.js")?.text || "";
-const configMatch = config.match(/^export const APPS_SCRIPT_WEB_APP_URL = "([^"]+)";\s*$/);
-if (!configMatch) fail("public endpoint configuration must be one exact export.");
-const configuredEndpoint = configMatch[1];
+const configLines = config.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+const allowedConfigLine = /^export const (APPS_SCRIPT_WEB_APP_URL|PUBLIC_BASE_URL) = "([^"]+)";$/;
+const configValues = new Map();
+for (const line of configLines) {
+  const match = line.match(allowedConfigLine);
+  if (!match) fail("public endpoint configuration must contain only approved exact exports.");
+  if (configValues.has(match[1])) fail(`duplicate public configuration export ${match[1]}.`);
+  configValues.set(match[1], match[2]);
+}
+if (!configValues.has("APPS_SCRIPT_WEB_APP_URL")) {
+  fail("public endpoint configuration must include APPS_SCRIPT_WEB_APP_URL.");
+}
+const configuredEndpoint = configValues.get("APPS_SCRIPT_WEB_APP_URL");
 const usesPlaceholder = configuredEndpoint === "PASTE_APPS_SCRIPT_WEB_APP_URL_HERE";
 if (!usesPlaceholder && (!endpointPattern.test(approvedEndpoint) || configuredEndpoint !== approvedEndpoint)) {
   fail("public endpoint must be the separately approved exact Apps Script endpoint.");

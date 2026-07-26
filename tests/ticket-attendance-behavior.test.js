@@ -4,6 +4,7 @@ import { buildVerificationUrl, createTicketViewModel, renderTicketMarkup } from 
 import { encodeQrMatrix } from "../public/js/qr.js";
 import { createVerificationViewModel } from "../public/js/verify-page.js";
 import { readFile } from "node:fs/promises";
+import vm from "node:vm";
 
 const ticket = {
   ticketNumber: "EVT-ABC123",
@@ -58,9 +59,34 @@ test("ticket status distinguishes active, cancelled, and ended states", () => {
   assert.deepEqual(createTicketViewModel({ ...ticket, status: "ended" }).status, { code: "ended", label: "活动已结束" });
 });
 
-test("QR payload is a local verification URL containing only the opaque token", () => {
-  const payload = buildVerificationUrl(ticket.token);
-  assert.equal(payload, "verify.html?token=opaque-token-123");
+test("ticket renders masked configured fields and only server-authorized owner actions", () => {
+  const actionable = {
+    ...ticket,
+    displayFields: [{ id: "badge", label: "Badge code", value: "SE****91" }],
+    capabilities: { canCancel: true, canExchangeSeat: true },
+    exchangeOptions: [{
+      seatId: "A-02",
+      label: "A-02",
+      zone: "front",
+      sessionId: "opening",
+      replacesSeatId: "A-01"
+    }]
+  };
+  const view = createTicketViewModel(actionable);
+  const markup = renderTicketMarkup(view);
+  assert.deepEqual(view.displayFields, [{ id: "badge", label: "Badge code", value: "SE****91" }]);
+  assert.match(markup, /Badge code/);
+  assert.match(markup, /SE\*\*\*\*91/);
+  assert.match(markup, /data-ticket-action="cancel"/);
+  assert.match(markup, /data-ticket-action="exchange"/);
+  assert.match(markup, /A-02/);
+  assert.equal(markup.includes("SECRET-7391"), false);
+});
+
+test("QR payload is an absolute physical-camera URL containing only the opaque token", () => {
+  const payload = buildVerificationUrl(ticket.token, "https://events.example.org/summer/");
+  assert.equal(payload, "https://events.example.org/summer/verify.html?token=opaque-token-123");
+  assert.equal(new URL(payload).protocol, "https:");
   assert.equal(payload.includes(ticket.ticketNumber), false);
   assert.equal(payload.includes(ticket.participant.name), false);
 
@@ -84,7 +110,7 @@ test("verification view offers separate sessions and never treats scanning as ch
   assert.equal(view.checkedIn, false);
 });
 
-test("public ticket and verification pages are read-only while staff mutation stays in Apps Script HTML", async () => {
+test("public verification stays read-only, ticket mutations require owner verification, and staff check-in stays protected", async () => {
   const [ticketHtml, verifyHtml, verifyPage, staffHtml] = await Promise.all([
     readFile(new URL("../public/ticket.html", import.meta.url), "utf8"),
     readFile(new URL("../public/verify.html", import.meta.url), "utf8"),
@@ -95,10 +121,75 @@ test("public ticket and verification pages are read-only while staff mutation st
   assert.match(ticketHtml, /ticketNumber/);
   assert.match(ticketHtml, /verificationValue/);
   assert.match(ticketHtml, /print-ticket/);
+  const ticketPage = await readFile(new URL("../public/js/ticket-page.js", import.meta.url), "utf8");
+  assert.match(ticketPage, /cancelRegistration/);
+  assert.match(ticketPage, /exchangeSeat/);
+  assert.doesNotMatch(ticketPage, /\bcheckIn\b|google\.script\.run/);
   assert.doesNotMatch(verifyHtml, /staff-check-in-form|confirmCheckIn|staffIdentity/);
   assert.doesNotMatch(verifyPage, /\bcheckIn\b|google\.script\.run/);
   assert.match(staffHtml, /google\.script\.run/);
   assert.match(staffHtml, /confirmCheckIn/);
   assert.match(staffHtml, /sessionId/);
   assert.doesNotMatch(staffHtml, /staffIdentity/);
+});
+
+test("staff check-in accepts a raw token or scanned verification URL and auto-loads a token query", async () => {
+  const staffHtml = await readFile(
+    new URL("../staff-apps-script/StaffCheckIn.html", import.meta.url),
+    "utf8"
+  );
+  const script = [...staffHtml.matchAll(/<script>([\s\S]*?)<\/script>/g)].at(-1)?.[1];
+  assert.ok(script, "staff script missing");
+  const calls = [];
+  const listeners = {};
+  const lookupForm = {
+    elements: { token: { value: "" } },
+    addEventListener: (type, handler) => { listeners[`lookup:${type}`] = handler; }
+  };
+  const checkInForm = {
+    hidden: true,
+    elements: {
+      sessionId: { value: "", length: 1, append() {} },
+      confirmCheckIn: { checked: false }
+    },
+    addEventListener: (type, handler) => { listeners[`checkin:${type}`] = handler; }
+  };
+  const nodes = {
+    "#lookup-form": lookupForm,
+    "#check-in-form": checkInForm,
+    "#message": { textContent: "" },
+    "#ticket-summary": { textContent: "" }
+  };
+  const runner = {
+    withSuccessHandler() { return this; },
+    withFailureHandler() { return this; },
+    getStaffTicketForCheckIn(payload) { calls.push(payload); return this; },
+    checkIn() { return this; }
+  };
+  const context = vm.createContext({
+    URL,
+    URLSearchParams,
+    document: {
+      querySelector: (selector) => nodes[selector],
+      createElement: () => ({ value: "", textContent: "" })
+    },
+    window: {
+      location: {
+        href: "https://script.google.com/macros/s/staff/exec?token=query-token-123",
+        search: "?token=query-token-123"
+      }
+    },
+    google: { script: { run: runner } }
+  });
+  vm.runInContext(script, context, { filename: "StaffCheckIn.inline.js" });
+
+  assert.equal(
+    context.parseScannedTicketToken(
+      "https://events.example.org/summer/verify.html?token=scanned-token-456"
+    ),
+    "scanned-token-456"
+  );
+  assert.equal(context.parseScannedTicketToken("raw-token-789"), "raw-token-789");
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ token: "query-token-123" }]);
+  assert.equal(lookupForm.elements.token.value, "query-token-123");
 });

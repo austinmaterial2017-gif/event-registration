@@ -46,5 +46,20 @@ export function validateRegistrationDraft(event, sessionIds, seat, answers, serv
   const errors = [...selection.errors, ...Object.values(answerValidation.errors)];
   if (!availability.canRegister) errors.push(availability.phase === "upcoming" ? "报名尚未开放。" : "报名已截止或未开放。");
   if (getSeatModeState(event?.seatMode).requiresSelection && !seat) errors.push(event?.seatMode === "zone" ? "请选择座位区域。" : "请选择座位。");
+  const seatChoices = Array.isArray(seat) ? seat.filter(Boolean) : seat ? [seat] : [];
+  const seats = Array.isArray(event?.seats) ? event.seats : [];
+  const hasSharedSeats = seats.some((candidate) =>
+    typeof candidate === "string" || !candidate?.sessionId);
+  const expectedChoices = getSeatModeState(event?.seatMode).requiresSelection
+    ? hasSharedSeats
+      ? 1
+      : Math.max(1, (Array.isArray(sessionIds) ? sessionIds : []).filter((sessionId) =>
+          seats.some((candidate) => candidate?.sessionId === sessionId)).length)
+    : 0;
+  if (seatChoices.length < expectedChoices) {
+    errors.push(event?.seatMode === "zone"
+      ? "请选择每个场次的座位区域。"
+      : "请选择每个场次的座位。");
+  }
   return { valid: errors.length === 0, errors, availability };
 }

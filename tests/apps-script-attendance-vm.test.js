@@ -108,11 +108,15 @@ async function createHarness(options = {}) {
   };
   const repositoryBindings = options.staffProject
       ? {
+        getRegistrySpreadsheet_: getConfiguredSpreadsheet,
+        getConfiguredSpreadsheet,
         getRootConfiguredSpreadsheet_: getConfiguredSpreadsheet,
         getConfiguredSpreadsheet_: getConfiguredSpreadsheet,
         getRequiredSheet_: getRequiredSheet,
         normalizeRow_: normalizeRow,
+        readRows,
         readRows_: readRows,
+        getAdminSettings: () => ({}),
         requireNoSwitchMaintenance_: () => {},
         withScriptLock_: withScriptLock
       }
@@ -126,6 +130,7 @@ async function createHarness(options = {}) {
       };
   const context = vm.createContext({
     Date: ServerDate, JSON, Math, Object, Array, String, Number, RegExp, Error, isFinite,
+    SHEET_DEFINITIONS: headers,
     Utilities: { getUuid: () => `checkin-${++uuid}` },
     PropertiesService: {
       getScriptProperties: () => ({
@@ -139,10 +144,16 @@ async function createHarness(options = {}) {
     },
     ...repositoryBindings
   });
-  const serviceUrl = options.staffProject
-    ? new URL("../staff-apps-script/AttendanceService.gs", import.meta.url)
-    : new URL("../apps-script/AttendanceService.gs", import.meta.url);
-  vm.runInContext(await readFile(serviceUrl, "utf8"), context);
+  const publicServiceUrl = new URL("../apps-script/AttendanceService.gs", import.meta.url);
+  vm.runInContext(await readFile(publicServiceUrl, "utf8"), context);
+  if (options.staffProject) {
+    const internalServiceUrl = new URL("../apps-script/InternalMutationService.gs", import.meta.url);
+    vm.runInContext(await readFile(internalServiceUrl, "utf8"), context);
+    context.invokeInternalBackend_ = (action, payload, actor) =>
+      withScriptLock(() => context.executeInternalActionLocked_(action, payload, actor));
+    const staffServiceUrl = new URL("../staff-apps-script/AttendanceService.gs", import.meta.url);
+    vm.runInContext(await readFile(staffServiceUrl, "utf8"), context);
+  }
   return { context, sheets, writes, locks };
 }
 

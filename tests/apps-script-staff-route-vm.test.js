@@ -259,6 +259,80 @@ test("every administrator RPC denies an unauthorized session before any Sheet or
   assert.equal(lockAccesses, 0);
 });
 
+test("authorized staff and administrator RPCs delegate state work to the signed public backend without a staff-project lock or Sheet write", async () => {
+  const delegated = [];
+  let lockAccesses = 0;
+  let sheetAccesses = 0;
+  const context = vm.createContext({
+    JSON, Object, Array, String, Number, RegExp, Error, Date, Math, isFinite,
+    Session: {
+      getActiveUser: () => ({ getEmail: () => "admin@example.com" })
+    },
+    PropertiesService: {
+      getScriptProperties: () => ({
+        getProperty: (key) => {
+          if (key === "ADMIN_EMAIL_ALLOWLIST") return JSON.stringify(["admin@example.com"]);
+          if (key === "ATTENDANCE_STAFF_ALLOWLIST") return JSON.stringify(["admin@example.com"]);
+          return null;
+        }
+      })
+    },
+    invokeInternalBackend_: (action, payload, actor) => {
+      delegated.push({ action, payload: JSON.parse(JSON.stringify(payload)), actor });
+      return { ok: true, data: { delegated: action } };
+    },
+    LockService: {
+      getScriptLock: () => {
+        lockAccesses += 1;
+        throw new Error("staff project must not serialize shared mutations");
+      }
+    },
+    SpreadsheetApp: {
+      openById: () => {
+        sheetAccesses += 1;
+        throw new Error("staff project must not write shared state");
+      }
+    }
+  });
+  for (const file of ["AttendanceService.gs", "AdminService.gs"]) {
+    vm.runInContext(await readFile(new URL(file, staffScriptRoot), "utf8"), context, { filename: file });
+  }
+
+  assert.equal(context.getStaffTicketForCheckIn({ token: "ticket-token" }).ok, true);
+  assert.equal(context.checkIn({ token: "ticket-token", sessionId: "session-1" }).ok, true);
+  assert.equal(context.getAdminDashboard({ search: "Alice" }).ok, true);
+  assert.equal(context.saveAdminEvent({ eventId: "event-1", status: "closed" }).ok, true);
+  assert.equal(context.saveAdminSession({ eventId: "event-1", sessionId: "session-1" }).ok, true);
+  assert.equal(context.saveAdminSeatPlan({ eventId: "event-1", action: "generate" }).ok, true);
+  assert.equal(context.saveAdminQuestion({ eventId: "event-1", questionId: "email" }).ok, true);
+  assert.equal(context.adminRecordAction({
+    registrationId: "registration-1",
+    action: "cancel_registration",
+    confirm: true
+  }).ok, true);
+  assert.equal(context.testAdminSheetConnection({ spreadsheetId: "candidate" }).ok, true);
+  assert.equal(context.switchAdminSheet({ spreadsheetId: "candidate", confirm: true }).ok, true);
+
+  assert.deepEqual(
+    delegated.map(({ action }) => action),
+    [
+      "staff.getTicket",
+      "staff.checkIn",
+      "admin.getDashboard",
+      "admin.saveEvent",
+      "admin.saveSession",
+      "admin.saveSeatPlan",
+      "admin.saveQuestion",
+      "admin.recordAction",
+      "admin.testSheet",
+      "admin.switchSheet"
+    ]
+  );
+  assert.ok(delegated.every(({ actor }) => actor === "admin@example.com"));
+  assert.equal(lockAccesses, 0);
+  assert.equal(sheetAccesses, 0);
+});
+
 test("deployment guide requires separate public and staff Apps Script projects", async () => {
   const guide = await readFile(new URL("../apps-script/DEPLOYMENT.md", import.meta.url), "utf8");
   assert.match(guide, /two separate Apps Script projects/i);

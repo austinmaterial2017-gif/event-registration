@@ -103,6 +103,7 @@ async function createHarness({ rows = baseRows(), settings, onWrite } = {}) {
     RegExp,
     Error,
     isFinite,
+    SHEET_DEFINITIONS: headers,
     Utilities: { getUuid: () => `00000000-0000-4000-8000-${String(++uuid).padStart(12, "0")}` },
     getRegistrySpreadsheet_: () => spreadsheet,
     getConfiguredSpreadsheet: () => spreadsheet,
@@ -119,7 +120,13 @@ async function createHarness({ rows = baseRows(), settings, onWrite } = {}) {
         identityFields: ["email"],
         verificationField: "email",
         seatHoldsEnabled: true,
-        events: { "event-1": { seatExchangeEnabled: true, seatHoldsEnabled: true } }
+        events: {
+          "event-1": {
+            cancellationEnabled: true,
+            seatExchangeEnabled: true,
+            seatHoldsEnabled: true
+          }
+        }
       }
     },
     withScriptLock: (callback) => {
@@ -149,6 +156,10 @@ function registrationPayload(overrides = {}) {
 function sheetObjects(sheet) {
   return sheet.rows.slice(1).map((values) =>
     Object.fromEntries(headers[sheet.name].map((key, index) => [key, values[index]])));
+}
+
+function sheetWithHeader(harness, header) {
+  return Object.values(harness.sheets).find((sheet) => headers[sheet.name].includes(header));
 }
 
 test("owner ticket projections mask names and contacts and never return dynamic answers", async () => {
@@ -750,6 +761,286 @@ test("pre-release rollback failure returns integrity error while the old seat re
   const oldSeat = sheetObjects(harness.sheets["座位"]).find((seat) => seat.seatId === "a1");
   assert.equal(oldSeat.holderRegistrationId, created.data.registrationId);
   assert.ok(sheetObjects(harness.sheets["操作记录"]).some((row) => row.action === "INTEGRITY_ALERT"));
+});
+
+test("event policy blocks participant cancellation and exposes truthful ticket capabilities", async () => {
+  const settings = {
+    registration: {
+      identityFields: ["email"],
+      verificationField: "email",
+      events: {
+        "event-1": {
+          cancellationEnabled: false,
+          seatExchangeEnabled: false
+        }
+      }
+    }
+  };
+  const harness = await createHarness({ settings });
+  const created = harness.context.createRegistration(registrationPayload());
+  assert.equal(created.ok, true);
+  assert.deepEqual({ ...created.data.capabilities }, {
+    canCancel: false,
+    canExchangeSeat: false
+  });
+
+  const cancelled = harness.context.cancelRegistration({
+    ticketNumber: created.data.ticketNumber,
+    verificationValue: "alice@example.com"
+  });
+  assert.equal(cancelled.ok, false);
+  assert.equal(cancelled.code, "CANCELLATION_DISABLED");
+  assert.ok(sheetObjects(sheetWithHeader(harness, "registrationId"))
+    .every((row) => row.status === "active"));
+});
+
+test("semantic field roles populate participant columns and configured ticket fields stay masked", async () => {
+  const rows = baseRows({
+    questions: [
+      { questionId: "q-name", eventId: "event-1", label: "Display name", type: "text", required: true, status: "active" },
+      { questionId: "q-mail", eventId: "event-1", label: "Contact email", type: "email", required: true, status: "active" },
+      { questionId: "q-phone", eventId: "event-1", label: "Mobile", type: "tel", required: true, status: "active" },
+      { questionId: "q-badge", eventId: "event-1", label: "Badge code", type: "text", required: true, status: "active" }
+    ]
+  });
+  const settings = {
+    registration: {
+      events: {
+        "event-1": {
+          identityFields: ["q-mail"],
+          verificationField: "q-mail",
+          fieldRoles: { name: "q-name", email: "q-mail", phone: "q-phone" },
+          showOnTicketFields: ["q-badge"],
+          cancellationEnabled: true
+        }
+      }
+    }
+  };
+  const harness = await createHarness({ rows, settings });
+  const created = harness.context.createRegistration(registrationPayload({
+    answers: {
+      "q-name": "Alice Chan",
+      "q-mail": "alice@example.com",
+      "q-phone": "+60 12-345 6789",
+      "q-badge": "SECRET-7391"
+    }
+  }));
+  assert.equal(created.ok, true, JSON.stringify(created));
+  const participant = sheetObjects(sheetWithHeader(harness, "participantId"))[0];
+  assert.equal(participant.name, "Alice Chan");
+  assert.equal(participant.email, "alice@example.com");
+  assert.equal(participant.phone, "+60 12-345 6789");
+  assert.deepEqual(JSON.parse(JSON.stringify(created.data.displayFields)), [{
+    id: "q-badge",
+    label: "Badge code",
+    value: "SE****91"
+  }]);
+  assert.equal(JSON.stringify(created.data).includes("SECRET-7391"), false);
+
+  const lookedUp = harness.context.lookupTicket({
+    ticketNumber: created.data.ticketNumber,
+    verificationValue: "alice@example.com"
+  });
+  assert.equal(lookedUp.ok, true);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(lookedUp.data.displayFields)),
+    JSON.parse(JSON.stringify(created.data.displayFields))
+  );
+});
+
+test("admin-shaped nested validation enforces text, choices, and checkbox selection bounds", async () => {
+  const rows = baseRows({
+    questions: [
+      {
+        questionId: "name", eventId: "event-1", label: "Name", type: "text",
+        required: true,
+        options: JSON.stringify({ choices: [], validation: { minLength: 3, maxLength: 10 } }),
+        status: "active"
+      },
+      {
+        questionId: "email", eventId: "event-1", label: "Email", type: "email",
+        required: true, status: "active"
+      },
+      {
+        questionId: "topics", eventId: "event-1", label: "Topics", type: "checkbox",
+        required: true,
+        options: JSON.stringify({
+          choices: ["A", "B", "C"],
+          validation: { minSelections: 2, maxSelections: 2 }
+        }),
+        status: "active"
+      }
+    ]
+  });
+  const harness = await createHarness({ rows });
+  assert.equal(harness.context.createRegistration(registrationPayload({
+    answers: { name: "Al", email: "alice@example.com", topics: ["A", "B"] }
+  })).code, "INVALID_REQUEST");
+  assert.equal(harness.context.createRegistration(registrationPayload({
+    answers: { name: "Alice", email: "alice@example.com", topics: ["A"] }
+  })).code, "INVALID_REQUEST");
+  assert.equal(harness.context.createRegistration(registrationPayload({
+    answers: { name: "Alice", email: "alice@example.com", topics: ["A", "X"] }
+  })).code, "INVALID_REQUEST");
+  assert.equal(harness.context.createRegistration(registrationPayload({
+    answers: { name: "Alice", email: "alice@example.com", topics: ["A", "B"] }
+  })).ok, true);
+});
+
+test("only active or open sessions can register and topic groups enforce their configured maximum", async () => {
+  const rows = baseRows({
+    sessions: [
+      { sessionId: "s1", eventId: "event-1", title: "One", startsAt: "2030-01-01T09:00:00Z", endsAt: "2030-01-01T10:00:00Z", required: false, capacity: 5, status: "open" },
+      { sessionId: "s2", eventId: "event-1", title: "Two", startsAt: "2030-01-01T10:00:00Z", endsAt: "2030-01-01T11:00:00Z", required: false, capacity: 5, status: "active" },
+      { sessionId: "draft", eventId: "event-1", title: "Hidden", startsAt: "2030-01-01T11:00:00Z", endsAt: "2030-01-01T12:00:00Z", required: false, capacity: 5, status: "draft" }
+    ],
+    event: { maxChoices: 3 }
+  });
+  const settings = {
+    registration: {
+      identityFields: [],
+      events: {
+        "event-1": {
+          sessions: {
+            s1: { groupRule: { id: "topic-a", min: 0, max: 1 } },
+            s2: { groupRule: { id: "topic-a", min: 0, max: 1 } }
+          }
+        }
+      }
+    }
+  };
+  const harness = await createHarness({ rows, settings });
+  assert.equal(harness.context.createRegistration(registrationPayload({
+    sessionIds: ["draft"]
+  })).code, "INVALID_REQUEST");
+  assert.equal(harness.context.createRegistration(registrationPayload({
+    sessionIds: ["s1", "s2"]
+  })).code, "INVALID_REQUEST");
+  assert.equal(harness.context.createRegistration(registrationPayload({
+    sessionIds: ["s2"],
+    answers: { name: "Bob", email: "bob@example.com" }
+  })).ok, true);
+});
+
+test("seat holds are owner-bound, submit-compatible, releasable, and policy controlled", async () => {
+  const rows = baseRows({
+    event: { seatMode: "self" },
+    seats: [
+      {
+        seatId: "seat-a", eventId: "event-1", sessionId: "",
+        label: "A-01", zone: "front", status: "available"
+      }
+    ]
+  });
+  const settings = {
+    registration: {
+      identityFields: ["email"],
+      verificationField: "email",
+      events: {
+        "event-1": {
+          cancellationEnabled: true,
+          seatHoldsEnabled: true,
+          seatHoldMinutes: 2
+        }
+      }
+    }
+  };
+  const harness = await createHarness({ rows, settings });
+  const held = harness.context.createSeatHold({
+    eventId: "event-1",
+    seatId: "seat-a",
+    holdOwner: "browser-owner-0001"
+  });
+  assert.equal(held.ok, true, JSON.stringify(held));
+  assert.equal(held.data.seatId, "seat-a");
+  assert.equal(held.data.holdOwner, "browser-owner-0001");
+  assert.ok(Date.parse(held.data.expiresAt) > Date.parse(held.data.serverNow));
+  assert.match(
+    sheetObjects(sheetWithHeader(harness, "seatId"))[0].holderRegistrationId,
+    /^HOLD\|browser-owner-0001\|\d+$/
+  );
+
+  const stolen = harness.context.createSeatHold({
+    eventId: "event-1",
+    seatId: "seat-a",
+    holdOwner: "browser-owner-0002"
+  });
+  assert.equal(stolen.code, "SEAT_UNAVAILABLE");
+  const wrongRelease = harness.context.releaseSeatHold({
+    eventId: "event-1",
+    seatId: "seat-a",
+    holdOwner: "browser-owner-0002"
+  });
+  assert.equal(wrongRelease.code, "SEAT_HOLD_OWNERSHIP");
+
+  const created = harness.context.createRegistration(registrationPayload({
+    seatChoices: ["seat-a"],
+    seatHoldOwner: "browser-owner-0001"
+  }));
+  assert.equal(created.ok, true, JSON.stringify(created));
+  assert.equal(
+    sheetObjects(sheetWithHeader(harness, "seatId"))[0].holderRegistrationId,
+    created.data.registrationId
+  );
+
+  const releaseHarness = await createHarness({ rows: baseRows({
+    event: { seatMode: "self" },
+    seats: [{
+      seatId: "seat-b", eventId: "event-1", sessionId: "",
+      label: "B-01", zone: "front", status: "available"
+    }]
+  }), settings });
+  assert.equal(releaseHarness.context.createSeatHold({
+    eventId: "event-1", seatId: "seat-b", holdOwner: "browser-owner-0003"
+  }).ok, true);
+  assert.equal(releaseHarness.context.releaseSeatHold({
+    eventId: "event-1", seatId: "seat-b", holdOwner: "browser-owner-0003"
+  }).ok, true);
+  const releasedSeat = sheetObjects(sheetWithHeader(releaseHarness, "seatId"))[0];
+  assert.equal(releasedSeat.status, "available");
+  assert.equal(releasedSeat.holderRegistrationId, "");
+
+  const disabled = await createHarness({ rows, settings: {
+    registration: { identityFields: [], events: { "event-1": { seatHoldsEnabled: false } } }
+  } });
+  assert.equal(disabled.context.createSeatHold({
+    eventId: "event-1", seatId: "seat-a", holdOwner: "browser-owner-0004"
+  }).code, "SEAT_HOLD_DISABLED");
+});
+
+test("seat exchange never crosses between shared and session-bound seat scopes", async () => {
+  const rows = baseRows({
+    event: { seatMode: "self" },
+    seats: [
+      { seatId: "shared-old", eventId: "event-1", sessionId: "", label: "S-01", zone: "main", status: "available" },
+      { seatId: "session-new", eventId: "event-1", sessionId: "s1", label: "A-02", zone: "main", status: "available" },
+      { seatId: "shared-new", eventId: "event-1", sessionId: "", label: "S-02", zone: "main", status: "available" }
+    ]
+  });
+  const harness = await createHarness({ rows });
+  const created = harness.context.createRegistration(registrationPayload({
+    seatChoices: ["shared-old"]
+  }));
+  assert.equal(created.ok, true);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(created.data.exchangeOptions)),
+    [{
+      seatId: "shared-new", label: "S-02", zone: "main",
+      sessionId: "", replacesSeatId: "shared-old"
+    }]
+  );
+  assert.equal(harness.context.exchangeSeat({
+    ticketNumber: created.data.ticketNumber,
+    verificationValue: "alice@example.com",
+    oldSeatId: "shared-old",
+    newSeatId: "session-new"
+  }).code, "SEAT_UNAVAILABLE");
+  assert.equal(harness.context.exchangeSeat({
+    ticketNumber: created.data.ticketNumber,
+    verificationValue: "alice@example.com",
+    oldSeatId: "shared-old",
+    newSeatId: "shared-new"
+  }).ok, true);
 });
 
 test("router rejects non-exact and inherited action names with the fixed public envelope", async () => {

@@ -147,6 +147,10 @@
               <form id="event-form">
                 <input name="eventId" type="hidden">
                 <div class="fields">
+                  <label>锁位分钟数<input name="seatHoldMinutes" type="number" min="1" step="1" value="5"></label>
+                  <label class="check"><input name="seatHoldsEnabled" type="checkbox">选座时暂时锁位</label>
+                </div>
+                <div class="fields">
                   <label class="wide">活动名称<input name="title" required maxlength="200"></label>
                   <label class="wide">说明<textarea name="description" maxlength="5000"></textarea></label>
                   <label>状态<select name="status">
@@ -240,6 +244,12 @@
             <div class="panel-body split">
               <form id="question-form">
                 <input name="questionId" type="hidden">
+                <label>资料用途<select name="semanticRole">
+                  <option value="">一般问题</option>
+                  <option value="name">姓名栏</option>
+                  <option value="email">电邮栏</option>
+                  <option value="phone">电话栏</option>
+                </select></label>
                 <div class="fields">
                   <label>活动 ID<input name="eventId" required></label>
                   <label>字段类型<select name="type">

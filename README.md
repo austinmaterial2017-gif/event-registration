@@ -26,12 +26,15 @@
 3. 在「项目设置 → 脚本属性」设置：
    - `ACTIVE_SPREADSHEET_ID`：永久注册表的 Sheet ID。
    - `SWITCH_PROBE_SHARED_SECRET`：随机生成、至少 32 个字符的机密；稍后在工作人员项目使用完全相同的值。
+   - `INTERNAL_API_SHARED_SECRET`：另一组随机生成、至少 32 个字符的机密；稍后在工作人员项目使用完全相同的值。不要与上一项共用。
+   - `PUBLIC_BASE_URL`：参与者网站的 GitHub Pages 根网址，例如 `https://你的帐号.github.io/仓库名`；若网址尚未建立，可在发布 Pages 后补上并重新部署公开 Web App。
 4. 在编辑器中手动运行一次 `setupSystem()`，完成授权并初始化表头。它不会清空已有资料；空的活动表会加入一条草稿示例活动。
 5. 部署为 Web App：**以部署者身份执行**、**所有人（含匿名访问者）**。复制 `/exec` 公开 URL。
-6. 只将这个公开 URL 放入 [`public/js/config.js`](public/js/config.js)：
+6. 在 [`public/js/config.js`](public/js/config.js) 填入公开 Apps Script URL 和参与者网站根网址：
 
    ```js
    export const APPS_SCRIPT_WEB_APP_URL = "https://script.google.com/macros/s/你的公开部署ID/exec";
+   export const PUBLIC_BASE_URL = "https://你的帐号.github.io/仓库名";
    ```
 
 不要在公开目录写入 Sheet ID、共享密钥、工作人员/管理员 URL 或名单。
@@ -46,6 +49,7 @@
    - `ADMIN_EMAIL_ALLOWLIST`：管理员邮件地址的独立 JSON 数组。
    - `PUBLIC_BACKEND_URL`：上一步公开项目的正式 `/exec` URL。
    - `SWITCH_PROBE_SHARED_SECRET`：与公开项目完全相同的至少 32 字符机密。
+   - `INTERNAL_API_SHARED_SECRET`：与公开项目完全相同的另一组至少 32 字符机密，用于签署工作人员签到及管理员操作。
 4. 部署为 Web App：**以访问 Web App 的使用者身份执行**、**要求登录**（可用时限制为组织网域）。
 5. 分发这个部署 URL 仅限受保护的工作人员/管理员渠道。普通签到页使用该 URL；管理员页为 `?view=admin`。不得把这两个 URL 放进 GitHub、二维码、参与者讯息或 `public/`。
 

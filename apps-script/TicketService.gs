@@ -38,6 +38,7 @@ function cancelRegistration(payload) {
       if (match.records.every(function(record) { return record.status === 'cancelled'; })) {
         return ticketProjectionFromRecords_(match);
       }
+      if (!match.policy.cancellationEnabled) ticketError_('CANCELLATION_DISABLED');
       var registrationSnapshots = snapshotTicketRows_(spreadsheet, '报名项目', match.records);
       var occupiedSeats = readRows(spreadsheet, '座位').filter(function(seat) {
         return seatBelongsToRegistration_(seat, match.registrationId);
@@ -105,7 +106,7 @@ function exchangeSeat(payload) {
       if (!oldSeat) ticketError_('SEAT_UNAVAILABLE');
       var newSeat = allSeats.filter(function(seat) {
         return (seat.seatId === payload.newSeatId || seat.label === payload.newSeatId) &&
-          (!oldSeat.sessionId || !seat.sessionId || seat.sessionId === oldSeat.sessionId);
+          String(seat.sessionId || '') === String(oldSeat.sessionId || '');
       })[0];
       var exchangeNow = new Date();
       if (newSeat) expireSeatHold_(newSeat, policy, exchangeNow);
@@ -171,6 +172,7 @@ function runTicketService_(callback) {
 
 function ticketFailure_(code) {
   var messages = {
+    CANCELLATION_DISABLED: 'Cancellation is not enabled for this event.',
     INVALID_REQUEST: '提交信息无效，请检查后重试。',
     TICKET_NOT_FOUND: '未找到对应凭证。',
     TICKET_VERIFICATION_FAILED: '验证信息不匹配。',
@@ -219,6 +221,17 @@ function requireVerifiedTicket_(spreadsheet, registry, payload, registrations) {
   })[0] || {};
   var sessions = collectTicketSessions_(spreadsheet, records, event.eventId);
   var registrationId = records[0].registrationId;
+  var allSeats = readRows(spreadsheet, ticketSheetNameByHeader_('seatId')).filter(function(seat) {
+    return seat.eventId === event.eventId;
+  });
+  var questions = readRows(
+    spreadsheet, ticketSheetNameByHeader_('questionId')
+  ).filter(function(question) {
+    return question.eventId === event.eventId;
+  });
+  var ticketFields = Array.isArray(stored.ticketFields)
+    ? stored.ticketFields
+    : buildStoredTicketFields_(questions, stored.values, policy);
   var seats = readRows(spreadsheet, '座位').filter(function(seat) {
     return seatBelongsToRegistration_(seat, registrationId);
   });
@@ -231,6 +244,9 @@ function requireVerifiedTicket_(spreadsheet, registry, payload, registrations) {
     participant: participant,
     sessions: sessions,
     seats: seats,
+    allSeats: allSeats,
+    policy: policy,
+    ticketFields: ticketFields,
     records: records
   };
 }
@@ -313,6 +329,9 @@ function ticketProjectionFromRecords_(match) {
     registrationId: match.registrationId,
     ticketNumber: match.ticketNumber,
     token: match.token,
+    verifyUrl: typeof buildPublicVerificationUrl_ === 'function'
+      ? buildPublicVerificationUrl_(match.token)
+      : '',
     eventId: match.event.eventId,
     eventTitle: match.event.title,
     location: match.event.location,
@@ -322,6 +341,11 @@ function ticketProjectionFromRecords_(match) {
       phone: maskPrivateValue_(match.participant.phone),
       email: maskPrivateValue_(match.participant.email)
     },
+    displayFields: projectTicketDisplayFields_(match.ticketFields),
+    capabilities: ticketCapabilities_(match.status, match.policy),
+    exchangeOptions: buildTicketExchangeOptions_(
+      match.allSeats || [], match.seats || [], match.policy, match.status, new Date()
+    ),
     sessions: match.sessions.map(function(session) {
       return {
         sessionId: session.sessionId,
@@ -507,4 +531,13 @@ function raiseTicketIntegrityError_(spreadsheet, registrationId, stage, restoreF
   integrityError.restoreFailures = restoreFailures;
   integrityError.auditFailure = auditFailure;
   throw integrityError;
+}
+
+function ticketSheetNameByHeader_(header) {
+  var names = Object.keys(SHEET_DEFINITIONS || {}).filter(function(name) {
+    return Array.isArray(SHEET_DEFINITIONS[name]) &&
+      SHEET_DEFINITIONS[name].indexOf(header) !== -1;
+  });
+  if (names.length !== 1) ticketError_('INTERNAL');
+  return names[0];
 }

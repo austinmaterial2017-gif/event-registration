@@ -4,6 +4,11 @@ export const DEMO_ENDPOINT_PLACEHOLDER = "PASTE_APPS_SCRIPT_WEB_APP_URL_HERE";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const PUBLIC_ERROR_MESSAGES = {
+  CANCELLATION_DISABLED: "This event does not allow participant cancellation.",
+  SEAT_EXCHANGE_DISABLED: "This event does not allow seat exchange.",
+  SEAT_HOLD_DISABLED: "Seat holds are not enabled for this event.",
+  SEAT_HOLD_OWNERSHIP: "This seat is held by another browser session.",
+  SEAT_UNAVAILABLE: "The selected seat is no longer available.",
   EVENT_NOT_FOUND: "未找到该活动。",
   INVALID_REQUEST: "提交信息无效，请检查后重试。",
   REGISTRATION_CLOSED: "报名已截止。",
@@ -117,10 +122,30 @@ export function createApiClient({ endpoint = APPS_SCRIPT_WEB_APP_URL, fetchImpl 
       eventId: requestData?.eventId,
       sessionIds: requestData?.sessionIds,
       seatChoices: requestData?.seatChoices,
-      answers: requestData?.answers
+      answers: requestData?.answers,
+      seatHoldOwner: requestData?.seatHoldOwner
     }),
     lookupTicket: (ticketNumber, verificationValue) => request("lookupTicket", { ticketNumber, verificationValue }),
-    verifyTicket: (token) => request("verifyTicket", { token })
+    verifyTicket: (token) => request("verifyTicket", { token }),
+    createSeatHold: (requestData) => request("createSeatHold", {
+      eventId: requestData?.eventId,
+      seatId: requestData?.seatId,
+      holdOwner: requestData?.holdOwner
+    }),
+    releaseSeatHold: (requestData) => request("releaseSeatHold", {
+      eventId: requestData?.eventId,
+      seatId: requestData?.seatId,
+      holdOwner: requestData?.holdOwner
+    }),
+    cancelRegistration: (ticketNumber, verificationValue) =>
+      request("cancelRegistration", { ticketNumber, verificationValue }),
+    exchangeSeat: (requestData) => request("exchangeSeat", {
+      ticketNumber: requestData?.ticketNumber,
+      verificationValue: requestData?.verificationValue,
+      oldSeatId: requestData?.oldSeatId,
+      newSeatId: requestData?.newSeatId,
+      seatHoldOwner: requestData?.seatHoldOwner
+    })
   };
 }
 
@@ -131,3 +156,8 @@ export const getEvent = (eventId) => publicClient.getEvent(eventId);
 export const createRegistration = (request) => publicClient.createRegistration(request);
 export const lookupTicket = (ticketNumber, verificationValue) => publicClient.lookupTicket(ticketNumber, verificationValue);
 export const verifyTicket = (token) => publicClient.verifyTicket(token);
+export const createSeatHold = (request) => publicClient.createSeatHold(request);
+export const releaseSeatHold = (request) => publicClient.releaseSeatHold(request);
+export const cancelRegistration = (ticketNumber, verificationValue) =>
+  publicClient.cancelRegistration(ticketNumber, verificationValue);
+export const exchangeSeat = (request) => publicClient.exchangeSeat(request);

@@ -1,9 +1,20 @@
 import { createRegistration, getEvent } from "./api.js";
+import { createSeatHold, releaseSeatHold } from "./api.js";
 import { applyRegistrationGate, getFieldControlSpec, getSeatModeState, validateRegistrationDraft } from "./registration-flow.js";
 import { transitionToTicket } from "./registration-success.js";
 
 const form = typeof document === "undefined" ? null : document.querySelector("#registration-form");
-const state = { selectedSessions: new Set(), seatChoices: [], review: null, event: null, serverOffset: Number.NaN };
+const state = {
+  selectedSessions: new Set(),
+  seatChoices: [],
+  seatSelections: new Map(),
+  seatHolds: new Map(),
+  holdOwner: "",
+  holdTimer: null,
+  review: null,
+  event: null,
+  serverOffset: Number.NaN
+};
 
 function node(tag, className, content) {
   const element = document.createElement(tag);
@@ -13,6 +24,16 @@ function node(tag, className, content) {
 }
 function serverTimestamp() { return Date.now() + state.serverOffset; }
 function selectedEventId() { return new URLSearchParams(window.location.search).get("event"); }
+
+export function createSeatHoldOwner(cryptoRef = globalThis.crypto) {
+  if (typeof cryptoRef?.randomUUID === "function") return `hold-${cryptoRef.randomUUID()}`;
+  if (typeof cryptoRef?.getRandomValues !== "function") {
+    throw new Error("Secure browser randomness is unavailable.");
+  }
+  const bytes = new Uint8Array(24);
+  cryptoRef.getRandomValues(bytes);
+  return `hold-${[...bytes].map((value) => value.toString(16).padStart(2, "0")).join("")}`;
+}
 
 function appendFieldLabel(container, field, controlId) {
   const label = node("label"); label.htmlFor = controlId; label.append(document.createTextNode(field.label));
@@ -49,6 +70,173 @@ function renderSeatOptions(event) {
   holder.append(grid);
 }
 
+function normalizedPublicSeats(event) {
+  return (Array.isArray(event?.seats) ? event.seats : []).map((seat) =>
+    typeof seat === "string"
+      ? { id: seat, label: seat, zone: "", sessionId: "" }
+      : {
+          id: String(seat?.id || seat?.seatId || ""),
+          label: String(seat?.label || seat?.id || ""),
+          zone: String(seat?.zone || ""),
+          sessionId: String(seat?.sessionId || "")
+        }
+  ).filter((seat) => seat.id);
+}
+
+function selectedSeatGroups(event) {
+  const seats = normalizedPublicSeats(event);
+  const shared = seats.filter((seat) => !seat.sessionId);
+  if (shared.length) return [{ id: "shared", label: "全活动通用座位", seats: shared }];
+  return [...state.selectedSessions].map((sessionId) => {
+    const session = (event.sessions || []).find((candidate) => candidate.id === sessionId);
+    return {
+      id: sessionId,
+      label: session?.title || sessionId,
+      seats: seats.filter((seat) => seat.sessionId === sessionId)
+    };
+  }).filter((group) => group.seats.length);
+}
+
+function syncSeatChoices(event) {
+  state.seatChoices = selectedSeatGroups(event)
+    .map((group) => state.seatSelections.get(group.id))
+    .filter(Boolean);
+}
+
+function holdStatus(message = "") {
+  const status = document.querySelector("#seat-hold-status");
+  if (status) status.textContent = message;
+}
+
+async function releaseGroupHold(event, groupId) {
+  const hold = state.seatHolds.get(groupId);
+  state.seatHolds.delete(groupId);
+  if (!hold || !state.holdOwner) return;
+  await releaseSeatHold({
+    eventId: event.id,
+    seatId: hold.seatId,
+    holdOwner: state.holdOwner
+  });
+}
+
+function scheduleSeatHoldCountdown(event) {
+  if (state.holdTimer) window.clearTimeout(state.holdTimer);
+  const active = [...state.seatHolds.entries()]
+    .map(([groupId, hold]) => ({ groupId, ...hold, expiresAtMs: Date.parse(hold.expiresAt) }))
+    .filter((hold) => Number.isFinite(hold.expiresAtMs));
+  if (!active.length) {
+    holdStatus("");
+    return;
+  }
+  const remaining = Math.min(...active.map((hold) => hold.expiresAtMs - serverTimestamp()));
+  if (remaining <= 0) {
+    for (const hold of active.filter((item) => item.expiresAtMs <= serverTimestamp())) {
+      state.seatHolds.delete(hold.groupId);
+      state.seatSelections.delete(hold.groupId);
+    }
+    syncSeatChoices(event);
+    holdStatus("座位保留已到期，请重新选择。");
+    renderSeatOptionsV2(event);
+    return;
+  }
+  holdStatus(`已暂时保留座位，剩余 ${Math.max(1, Math.ceil(remaining / 1000))} 秒。`);
+  state.holdTimer = window.setTimeout(() => scheduleSeatHoldCountdown(event), 1000);
+}
+
+async function chooseSelfSeat(event, groupId, seatId) {
+  const previous = state.seatSelections.get(groupId);
+  if (previous === seatId) return;
+  if (previous) await releaseGroupHold(event, groupId);
+  state.seatSelections.delete(groupId);
+  syncSeatChoices(event);
+  if (!event.seatHoldsEnabled) {
+    state.seatSelections.set(groupId, seatId);
+    syncSeatChoices(event);
+    return;
+  }
+  holdStatus("正在保留座位…");
+  const result = await createSeatHold({
+    eventId: event.id,
+    seatId,
+    holdOwner: state.holdOwner
+  });
+  if (!result.ok) {
+    holdStatus(result.message || "座位未能保留，请重新选择。");
+    renderSeatOptionsV2(event);
+    return;
+  }
+  state.seatSelections.set(groupId, seatId);
+  state.seatHolds.set(groupId, {
+    seatId,
+    expiresAt: result.data.expiresAt
+  });
+  syncSeatChoices(event);
+  scheduleSeatHoldCountdown(event);
+}
+
+function renderSeatOptionsV2(event) {
+  const holder = document.querySelector("#seat-options");
+  holder.replaceChildren();
+  const seatState = getSeatModeState(event.seatMode);
+  if (seatState.mode === "none" || seatState.mode === "auto") {
+    holder.append(node("p", "helper", seatState.label));
+    state.seatSelections.clear();
+    state.seatChoices = [];
+    return;
+  }
+  const groups = selectedSeatGroups(event);
+  const currentGroupIds = new Set(groups.map((group) => group.id));
+  for (const groupId of [...state.seatSelections.keys()]) {
+    if (!currentGroupIds.has(groupId)) {
+      void releaseGroupHold(event, groupId);
+      state.seatSelections.delete(groupId);
+    }
+  }
+  for (const group of groups) {
+    const fieldset = document.createElement("fieldset");
+    fieldset.className = "question";
+    fieldset.append(node("legend", "", group.label));
+    if (seatState.mode === "zone") {
+      const select = document.createElement("select");
+      select.setAttribute("aria-label", `${group.label}座位区域`);
+      const placeholder = node("option", "", "请选择区域");
+      placeholder.value = "";
+      select.append(placeholder);
+      const zones = [...new Set(group.seats.map((seat) => seat.zone).filter(Boolean))];
+      for (const zone of zones) {
+        const option = node("option", "", zone);
+        option.value = zone;
+        option.selected = state.seatSelections.get(group.id) === zone;
+        select.append(option);
+      }
+      select.addEventListener("change", () => {
+        if (select.value) state.seatSelections.set(group.id, select.value);
+        else state.seatSelections.delete(group.id);
+        syncSeatChoices(event);
+      });
+      fieldset.append(select);
+    } else {
+      const grid = node("div", "choice-grid");
+      for (const seat of group.seats) {
+        const label = node("label", "seat-choice");
+        const input = document.createElement("input");
+        input.type = "radio";
+        input.name = `seat-${group.id}`;
+        input.value = seat.id;
+        input.checked = state.seatSelections.get(group.id) === seat.id;
+        input.addEventListener("change", () => {
+          if (input.checked) void chooseSelfSeat(event, group.id, seat.id);
+        });
+        label.append(input, node("span", "", seat.label || seat.id));
+        grid.append(label);
+      }
+      fieldset.append(grid);
+    }
+    holder.append(fieldset);
+  }
+  syncSeatChoices(event);
+}
+
 function renderQuestions(event) {
   const holder = document.querySelector("#dynamic-questions"); holder.replaceChildren();
   for (const field of event.fields || []) {
@@ -65,6 +253,19 @@ function renderQuestions(event) {
       appendFieldLabel(wrapper, field, controlId);
       if (field.type === "select") { const placeholder = node("option", "", "请选择"); placeholder.value = ""; control.append(placeholder); for (const value of field.options || []) { const option = node("option", "", value); option.value = value; control.append(option); } }
       wrapper.append(control);
+    }
+    const constraints = field.constraints && typeof field.constraints === "object"
+      ? field.constraints : {};
+    for (const input of wrapper.querySelectorAll("input, textarea, select")) {
+      if (field.type === "checkbox") input.required = false;
+      if (constraints.min !== undefined) input.min = String(constraints.min);
+      if (constraints.max !== undefined) input.max = String(constraints.max);
+      if (constraints.minLength !== undefined) input.minLength = Number(constraints.minLength);
+      if (constraints.maxLength !== undefined) input.maxLength = Number(constraints.maxLength);
+      if (constraints.pattern && "pattern" in input) input.pattern = String(constraints.pattern);
+      if (!input.autocomplete && ["name", "email", "phone"].includes(field.semanticRole)) {
+        input.autocomplete = field.semanticRole === "phone" ? "tel" : field.semanticRole;
+      }
     }
     holder.append(wrapper);
   }
@@ -116,14 +317,38 @@ function setRegistrationEnabled(event) {
   return availability;
 }
 
-function validateReview(event, request) { return validateRegistrationDraft(event, request.sessionIds, request.seatChoices[0], request.answers, serverTimestamp()); }
+function validateReview(event, request) {
+  return validateRegistrationDraft(
+    event, request.sessionIds, request.seatChoices, request.answers, serverTimestamp()
+  );
+}
 
 async function initialise() {
   const eventId = selectedEventId(); const result = eventId ? await getEvent(eventId) : { ok: false, message: "未指定活动。" };
   if (!result.ok || !result.data?.event) { document.querySelector("#registration-content").hidden = true; const closed = document.querySelector("#registration-closed"); closed.hidden = false; closed.textContent = result.message || "暂时无法加载活动，请返回活动列表重试。"; return; }
   const timestamp = Date.parse(result.data.serverNow); state.serverOffset = Number.isFinite(timestamp) ? timestamp - Date.now() : Number.NaN; state.event = result.data.event;
-  document.querySelector("#event-meta").textContent = state.event.title; renderSessionChoices(state.event); renderSeatOptions(state.event); renderQuestions(state.event); setRegistrationEnabled(state.event);
-  form.addEventListener("submit", (submitEvent) => { submitEvent.preventDefault(); const request = { eventId: state.event.id, sessionIds: [...state.selectedSessions], seatChoices: [...state.seatChoices], answers: collectAnswers(state.event) }; const validation = validateReview(state.event, request); showErrors(validation.errors); if (validation.valid) showReview(state.event, request); });
+  state.holdOwner = createSeatHoldOwner();
+  document.querySelector("#event-meta").textContent = state.event.title;
+  renderSessionChoices(state.event);
+  document.querySelector("#session-options").addEventListener("change", () => {
+    renderSeatOptionsV2(state.event);
+  });
+  renderSeatOptionsV2(state.event);
+  renderQuestions(state.event);
+  setRegistrationEnabled(state.event);
+  form.addEventListener("submit", (submitEvent) => {
+    submitEvent.preventDefault();
+    const request = {
+      eventId: state.event.id,
+      sessionIds: [...state.selectedSessions],
+      seatChoices: [...state.seatChoices],
+      answers: collectAnswers(state.event),
+      seatHoldOwner: state.holdOwner
+    };
+    const validation = validateReview(state.event, request);
+    showErrors(validation.errors);
+    if (validation.valid) showReview(state.event, request);
+  });
   document.querySelector("#edit-registration").addEventListener("click", () => { state.review = null; document.querySelector("#review-card").hidden = true; form.hidden = false; form.querySelector("input, textarea, select")?.focus(); });
   const finalSubmit = document.querySelector("#final-submit");
   finalSubmit.addEventListener("click", createFinalSubmitHandler({

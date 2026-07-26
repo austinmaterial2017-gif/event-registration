@@ -9,21 +9,23 @@ function createRegistration(payload) {
   return runRegistrationService_(function() {
     return withScriptLock(function() {
       var request = requireRegistrationPayload_(payload);
-      var spreadsheet = getConfiguredSpreadsheet();
+      var registry = getRegistrySpreadsheet_();
+      requireNoSwitchMaintenance_(registry);
+      var spreadsheet = getConfiguredSpreadsheet(registry);
       var recoveryFailures = recoverPendingTransactions_(spreadsheet);
       if (recoveryFailures.length) registrationError_('INTEGRITY_ERROR');
       cleanupStaleTicketSeats_(spreadsheet);
       var now = new Date();
-      var event = requireOpenEvent_(request.eventId, now);
-      var settings = getAdminSettings();
+      var event = requireOpenEvent_(spreadsheet, request.eventId, now);
+      var settings = getAdminSettings(registry);
       var policy = getRegistrationPolicy_(settings, event.eventId);
-      var questions = readRows('报名问题').filter(function(question) {
+      var questions = readRows(spreadsheet, '报名问题').filter(function(question) {
         return question.eventId === event.eventId && question.status !== 'inactive';
       });
-      var sessions = readRows('场次').filter(function(session) {
+      var sessions = readRows(spreadsheet, '场次').filter(function(session) {
         return session.eventId === event.eventId && session.status !== 'cancelled' && session.status !== 'inactive';
       });
-      var registrations = readRows('报名项目');
+      var registrations = readRows(spreadsheet, '报名项目');
       var answers = validateDynamicAnswers_(questions, request.answers);
       var selectedSessions = validateSessionSelection_(event, sessions, request.sessionIds);
 
@@ -31,7 +33,7 @@ function createRegistration(payload) {
       validateDuplicateIdentity_(policy.identityFields, answers, registrations, event.eventId);
       validateSessionConflicts_(selectedSessions);
 
-      var seats = readRows('座位').filter(function(seat) { return seat.eventId === event.eventId; });
+      var seats = readRows(spreadsheet, '座位').filter(function(seat) { return seat.eventId === event.eventId; });
       var selectedSeats = selectRegistrationSeats_(
         event,
         policy,
@@ -128,6 +130,7 @@ function registrationFailure_(code) {
     DUPLICATE_REGISTRATION: '相同身份信息已报名。',
     SEAT_UNAVAILABLE: '所选座位不可用。',
     INTEGRITY_ERROR: '数据一致性检查失败，请联系管理员。',
+    MAINTENANCE: '系统正在切换数据连接，请稍后重试。',
     INTERNAL: '请求未能完成，请稍后重试。'
   };
   var safeCode = Object.prototype.hasOwnProperty.call(allowed, code) ? code : 'INTERNAL';
@@ -155,8 +158,10 @@ function requireRegistrationPayload_(payload) {
   };
 }
 
-function requireOpenEvent_(eventId, now) {
-  var event = readRows('活动').filter(function(candidate) { return candidate.eventId === eventId; })[0];
+function requireOpenEvent_(spreadsheet, eventId, now) {
+  var event = readRows(spreadsheet, '活动').filter(function(candidate) {
+    return candidate.eventId === eventId;
+  })[0];
   if (!event) registrationError_('EVENT_NOT_FOUND');
   if (event.status !== 'open') {
     registrationError_(event.status === 'upcoming' ? 'REGISTRATION_NOT_OPEN' : 'REGISTRATION_CLOSED');
@@ -583,7 +588,7 @@ function cleanupPendingRegistration_(seatSnapshots, participant, registrationBat
 
 function recoverPendingTransactions_(spreadsheet) {
   var failures = [];
-  var registrations = readRows('报名项目');
+  var registrations = readRows(spreadsheet, '报名项目');
   var pending = registrations.filter(function(record) { return record.status === 'pending'; });
   var activeIds = {};
   registrations.forEach(function(record) {
@@ -592,7 +597,7 @@ function recoverPendingTransactions_(spreadsheet) {
     }
   });
   var seatSheet = getRequiredSheet_(spreadsheet, '座位');
-  readRows('座位').forEach(function(seat) {
+  readRows(spreadsheet, '座位').forEach(function(seat) {
     var match = /^PENDING\|(.+)$/.exec(String(seat.holderRegistrationId || ''));
     if (!match) return;
     var registrationId = match[1];
@@ -621,7 +626,7 @@ function recoverPendingTransactions_(spreadsheet) {
   var blockedRegistrationIds = {};
   pending.forEach(function(record) { pendingParticipants[record.participantId] = record.registrationId; });
   var participantSheet = getRequiredSheet_(spreadsheet, '参加者');
-  readRows('参加者').slice().reverse().forEach(function(participant) {
+  readRows(spreadsheet, '参加者').slice().reverse().forEach(function(participant) {
     if (!pendingParticipants[participant.participantId]) return;
     var hasCommittedRegistration = registrations.some(function(record) {
       return record.participantId === participant.participantId && record.status !== 'pending';

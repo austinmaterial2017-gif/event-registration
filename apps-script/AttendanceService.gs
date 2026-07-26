@@ -6,7 +6,9 @@
 function verifyTicket(payload) {
   return runAttendanceService_(function() {
     return withScriptLock(function() {
-      var match = findAttendanceTicket_(payload && payload.token);
+      var registry = getRegistrySpreadsheet_();
+      var spreadsheet = getConfiguredSpreadsheet(registry);
+      var match = findAttendanceTicket_(spreadsheet, payload && payload.token);
       return attendancePublicProjection_(match);
     });
   });
@@ -37,10 +39,10 @@ function attendanceError_(code) {
   throw error;
 }
 
-function findAttendanceTicket_(token) {
+function findAttendanceTicket_(spreadsheet, token) {
   if (typeof token !== 'string' || !token.trim() || token.length > 512) attendanceError_('TOKEN_INVALID');
   var normalizedToken = token.trim();
-  var records = readRows('报名项目').filter(function(record) {
+  var records = readRows(spreadsheet, '报名项目').filter(function(record) {
     if (String(record.status || '').toLowerCase() === 'pending') return false;
     return attendanceStoredToken_(record.answers) === normalizedToken;
   });
@@ -50,21 +52,21 @@ function findAttendanceTicket_(token) {
   records = records.filter(function(record) {
     return record.registrationId === registrationId && record.eventId === records[0].eventId;
   });
-  var event = readRows('活动').filter(function(candidate) {
+  var event = readRows(spreadsheet, '活动').filter(function(candidate) {
     return candidate.eventId === records[0].eventId;
   })[0];
   if (!event) attendanceError_('TOKEN_INVALID');
-  var participant = readRows('参加者').filter(function(candidate) {
+  var participant = readRows(spreadsheet, '参加者').filter(function(candidate) {
     return candidate.participantId === records[0].participantId;
   })[0] || {};
   var selected = {};
   records.forEach(function(record) {
     attendanceStringArray_(record.sessionIds).forEach(function(sessionId) { selected[sessionId] = true; });
   });
-  var sessions = readRows('场次').filter(function(session) {
+  var sessions = readRows(spreadsheet, '场次').filter(function(session) {
     return session.eventId === event.eventId && selected[session.sessionId];
   });
-  var seats = readRows('座位').filter(function(seat) {
+  var seats = readRows(spreadsheet, '座位').filter(function(seat) {
     return seat.holderRegistrationId === registrationId ||
       seat.holderRegistrationId === 'PENDING|' + registrationId;
   });

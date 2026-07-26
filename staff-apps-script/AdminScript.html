@@ -334,11 +334,27 @@
     document.querySelector("#switch-sheet").addEventListener("click", () => {
       const spreadsheetId = document.querySelector("#sheet-form").elements.spreadsheetId.value.trim();
       if (!window.confirm("确认切换？旧数据会保留，系统不会自动迁移。")) return;
-      setStatus("正在切换数据表…");
+      setStatus("正在验证公开后端的数据表权限…");
       adminRunner_((data) => {
-        setStatus(data.warning);
-        document.querySelector("#sheet-form").reset();
-        loadDashboard();
+        const probeBody = JSON.stringify({
+          action: "probeSheetSwitch",
+          payload: { nonce: data.nonce }
+        });
+        fetch(data.probeUrl, {
+          method: "POST",
+          mode: "no-cors",
+          headers: { "Content-Type": "text/plain;charset=UTF-8" },
+          body: probeBody
+        })
+          .catch(() => null)
+          .then(() => {
+            setStatus("正在确认数据表切换…");
+            adminRunner_((completed) => {
+              setStatus(completed.warning);
+              document.querySelector("#sheet-form").reset();
+              loadDashboard();
+            }).switchAdminSheet({ nonce: data.nonce, confirm: true });
+          });
       }).switchAdminSheet({ spreadsheetId, confirm: true });
     });
 

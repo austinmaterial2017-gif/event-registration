@@ -16,47 +16,38 @@ var SHEET_DEFINITIONS = {
 /** Initializes all private sheets without replacing any populated cells. */
 function setupSystem() {
   return withScriptLock(function() {
-    var spreadsheet = getConfiguredSpreadsheet();
+    var spreadsheet = getRegistrySpreadsheet_();
     initializeSpreadsheet_(spreadsheet, true);
     return spreadsheet.getId();
   });
 }
 
-/** Returns the spreadsheet selected for this deployment. */
-function getConfiguredSpreadsheet() {
+/** Returns the stable registry Sheet selected for this deployment. */
+function getRegistrySpreadsheet_() {
   var spreadsheetId = PropertiesService.getScriptProperties().getProperty(ACTIVE_SPREADSHEET_ID);
   if (!spreadsheetId) throw new Error('Spreadsheet is not configured.');
-  var visited = {};
-  for (var redirects = 0; redirects < 50; redirects += 1) {
-    if (visited[spreadsheetId]) throw new Error('Spreadsheet redirect cycle.');
-    visited[spreadsheetId] = true;
-    var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
-    var nextSpreadsheetId = getSharedSettingValue_(spreadsheet, ACTIVE_SPREADSHEET_ID);
-    if (nextSpreadsheetId === null || nextSpreadsheetId === '') return spreadsheet;
-    if (typeof nextSpreadsheetId !== 'string' || !nextSpreadsheetId.trim()) {
-      throw new Error('Spreadsheet redirect is invalid.');
-    }
-    spreadsheetId = nextSpreadsheetId.trim();
+  return SpreadsheetApp.openById(spreadsheetId);
+}
+
+/** Returns the spreadsheet selected for this deployment. */
+function getConfiguredSpreadsheet(registrySpreadsheet) {
+  if (!registrySpreadsheet) throw new Error('Registry spreadsheet is required.');
+  var spreadsheetId = getSharedSettingValue_(registrySpreadsheet, ACTIVE_SPREADSHEET_ID);
+  if (spreadsheetId === null || spreadsheetId === '') return registrySpreadsheet;
+  if (typeof spreadsheetId !== 'string' || !spreadsheetId.trim()) {
+    throw new Error('Spreadsheet pointer is invalid.');
   }
-  throw new Error('Too many spreadsheet redirects.');
+  return SpreadsheetApp.openById(spreadsheetId.trim());
 }
 
 /** Returns administrator-controlled options kept outside public files. */
-function getAdminSettings() {
-  var shared = getSharedSettingValue_(getConfiguredSpreadsheet(), ADMIN_SETTINGS);
-  var fallback = PropertiesService.getScriptProperties().getProperty(ADMIN_SETTINGS);
-  return resolveAdminSettings_(shared, fallback);
-}
-
-function resolveAdminSettings_(shared, fallback) {
-  var parsedShared = parseAdminSettings_(shared);
-  if (parsedShared) return parsedShared;
-  var parsedFallback = parseAdminSettings_(fallback);
-  if (parsedFallback) return parsedFallback;
-  if (shared !== null || fallback !== null) {
-    throw new Error('Administrator settings are invalid.');
-  }
-  return {};
+function getAdminSettings(registrySpreadsheet) {
+  if (!registrySpreadsheet) throw new Error('Registry spreadsheet is required.');
+  var parsed = parseAdminSettings_(
+    getSharedSettingValue_(registrySpreadsheet, ADMIN_SETTINGS)
+  );
+  if (!parsed) throw new Error('Administrator settings are invalid.');
+  return parsed;
 }
 
 function parseAdminSettings_(serialized) {
@@ -78,6 +69,14 @@ function getSharedSettingValue_(spreadsheet, key) {
     if (values[index][0] === key) return values[index][1];
   }
   return null;
+}
+
+function requireNoSwitchMaintenance_(registrySpreadsheet) {
+  var maintenance = getSharedSettingValue_(registrySpreadsheet, 'SWITCH_MAINTENANCE');
+  if (maintenance === null || maintenance === '') return;
+  var error = new Error('Switch maintenance is active.');
+  error.publicCode = 'MAINTENANCE';
+  throw error;
 }
 
 /** Selects and non-destructively initializes a spreadsheet for this deployment. */
@@ -107,8 +106,8 @@ function withScriptLock(callback) {
 }
 
 /** Reads data rows as objects, including their one-based row number. */
-function readRows(sheetName) {
-  var sheet = getRequiredSheet_(getConfiguredSpreadsheet(), sheetName);
+function readRows(spreadsheet, sheetName) {
+  var sheet = getRequiredSheet_(spreadsheet, sheetName);
   if (sheet.getLastRow() <= 1) return [];
 
   var headers = SHEET_DEFINITIONS[sheetName];
@@ -122,7 +121,8 @@ function readRows(sheetName) {
 /** Appends an array or header-keyed object to a private sheet. */
 function appendRow(sheetName, row) {
   return withScriptLock(function() {
-    var spreadsheet = getConfiguredSpreadsheet();
+    var registry = getRegistrySpreadsheet_();
+    var spreadsheet = getConfiguredSpreadsheet(registry);
     var sheet = getRequiredSheet_(spreadsheet, sheetName);
     var values = normalizeRow_(sheetName, row);
     sheet.getRange(sheet.getLastRow() + 1, 1, 1, values.length).setValues([values]);
@@ -134,7 +134,8 @@ function appendRow(sheetName, row) {
 function updateRow(sheetName, rowNumber, values) {
   if (!Number.isInteger(rowNumber) || rowNumber < 2) throw new Error('Invalid row number.');
   return withScriptLock(function() {
-    var spreadsheet = getConfiguredSpreadsheet();
+    var registry = getRegistrySpreadsheet_();
+    var spreadsheet = getConfiguredSpreadsheet(registry);
     var sheet = getRequiredSheet_(spreadsheet, sheetName);
     if (rowNumber > sheet.getLastRow()) throw new Error('Row does not exist.');
     var rowValues = normalizeRow_(sheetName, values);

@@ -6,10 +6,13 @@
 function lookupTicket(payload) {
   return runTicketService_(function() {
     return withScriptLock(function() {
-      var spreadsheet = getConfiguredSpreadsheet();
+      var registry = getRegistrySpreadsheet_();
+      var spreadsheet = getConfiguredSpreadsheet(registry);
       recoverPendingTransactions_(spreadsheet);
       cleanupStaleTicketSeats_(spreadsheet);
-      var match = requireVerifiedTicket_(payload, readRows('报名项目'));
+      var match = requireVerifiedTicket_(
+        spreadsheet, registry, payload, readRows(spreadsheet, '报名项目')
+      );
       return ticketProjectionFromRecords_(match);
     });
   });
@@ -23,16 +26,20 @@ function lookupTicket(payload) {
 function cancelRegistration(payload) {
   return runTicketService_(function() {
     return withScriptLock(function() {
-      var spreadsheet = getConfiguredSpreadsheet();
+      var registry = getRegistrySpreadsheet_();
+      requireNoSwitchMaintenance_(registry);
+      var spreadsheet = getConfiguredSpreadsheet(registry);
       var recoveryFailures = recoverPendingTransactions_(spreadsheet);
       if (recoveryFailures.length) ticketError_('INTEGRITY_ERROR');
       cleanupStaleTicketSeats_(spreadsheet);
-      var match = requireVerifiedTicket_(payload, readRows('报名项目'));
+      var match = requireVerifiedTicket_(
+        spreadsheet, registry, payload, readRows(spreadsheet, '报名项目')
+      );
       if (match.records.every(function(record) { return record.status === 'cancelled'; })) {
         return ticketProjectionFromRecords_(match);
       }
       var registrationSnapshots = snapshotTicketRows_(spreadsheet, '报名项目', match.records);
-      var occupiedSeats = readRows('座位').filter(function(seat) {
+      var occupiedSeats = readRows(spreadsheet, '座位').filter(function(seat) {
         return seatBelongsToRegistration_(seat, match.registrationId);
       });
       var seatSnapshots = snapshotTicketRows_(spreadsheet, '座位', occupiedSeats);
@@ -72,19 +79,25 @@ function cancelRegistration(payload) {
 function exchangeSeat(payload) {
   return runTicketService_(function() {
     return withScriptLock(function() {
-      var spreadsheet = getConfiguredSpreadsheet();
+      var registry = getRegistrySpreadsheet_();
+      requireNoSwitchMaintenance_(registry);
+      var spreadsheet = getConfiguredSpreadsheet(registry);
       var recoveryFailures = recoverPendingTransactions_(spreadsheet);
       if (recoveryFailures.length) ticketError_('INTEGRITY_ERROR');
       var cleanupFailures = cleanupStaleTicketSeats_(spreadsheet);
-      var match = requireVerifiedTicket_(payload, readRows('报名项目'));
+      var match = requireVerifiedTicket_(
+        spreadsheet, registry, payload, readRows(spreadsheet, '报名项目')
+      );
       if (cleanupFailures[match.registrationId]) ticketError_('EXCHANGE_PENDING_CLEANUP');
-      var policy = getRegistrationPolicy_(getAdminSettings(), match.event.eventId);
+      var policy = getRegistrationPolicy_(getAdminSettings(registry), match.event.eventId);
       if (!policy.seatExchangeEnabled) ticketError_('SEAT_EXCHANGE_DISABLED');
       if (!payload || typeof payload.newSeatId !== 'string' || !payload.newSeatId.trim()) {
         ticketError_('INVALID_REQUEST');
       }
 
-      var allSeats = readRows('座位').filter(function(seat) { return seat.eventId === match.event.eventId; });
+      var allSeats = readRows(spreadsheet, '座位').filter(function(seat) {
+        return seat.eventId === match.event.eventId;
+      });
       var oldSeats = allSeats.filter(function(seat) { return seatBelongsToRegistration_(seat, match.registrationId); });
       var oldSeat = payload.oldSeatId
         ? oldSeats.filter(function(seat) { return seat.seatId === payload.oldSeatId; })[0]
@@ -138,7 +151,7 @@ function exchangeSeat(payload) {
           newSeatId: newSeat.seatId
         });
       }
-      match.seats = readRows('座位').filter(function(seat) {
+      match.seats = readRows(spreadsheet, '座位').filter(function(seat) {
         return seatBelongsToRegistration_(seat, match.registrationId);
       });
       if (releaseFailed) ticketError_('EXCHANGE_PENDING_CLEANUP');
@@ -165,6 +178,7 @@ function ticketFailure_(code) {
     SEAT_UNAVAILABLE: '所选座位不可用。',
     INTEGRITY_ERROR: '数据一致性检查失败，请联系管理员。',
     EXCHANGE_PENDING_CLEANUP: '座位更换正在清理旧座位，请稍后重试。',
+    MAINTENANCE: '系统正在切换数据连接，请稍后重试。',
     INTERNAL: '请求未能完成，请稍后重试。'
   };
   var safeCode = Object.prototype.hasOwnProperty.call(messages, code) ? code : 'INTERNAL';
@@ -177,7 +191,7 @@ function ticketError_(code) {
   throw error;
 }
 
-function requireVerifiedTicket_(payload, registrations) {
+function requireVerifiedTicket_(spreadsheet, registry, payload, registrations) {
   if (!payload || typeof payload !== 'object' ||
       typeof payload.ticketNumber !== 'string' || !payload.ticketNumber.trim() ||
       typeof payload.verificationValue !== 'string' || !payload.verificationValue.trim()) {
@@ -189,23 +203,23 @@ function requireVerifiedTicket_(payload, registrations) {
   });
   if (!records.length) ticketError_('TICKET_NOT_FOUND');
 
-  var event = readRows('活动').filter(function(candidate) {
+  var event = readRows(spreadsheet, '活动').filter(function(candidate) {
     return candidate.eventId === records[0].eventId;
   })[0];
   if (!event) ticketError_('TICKET_NOT_FOUND');
-  var policy = getRegistrationPolicy_(getAdminSettings(), event.eventId);
+  var policy = getRegistrationPolicy_(getAdminSettings(registry), event.eventId);
   var stored = parseStoredRegistrationAnswers_(records[0].answers);
   var verificationField = stored.verificationField || policy.verificationField || policy.identityFields[0];
   if (!verificationField ||
       normalizeIdentityValue_(stored.values[verificationField]) !== normalizeIdentityValue_(payload.verificationValue)) {
     ticketError_('TICKET_VERIFICATION_FAILED');
   }
-  var participant = readRows('参加者').filter(function(candidate) {
+  var participant = readRows(spreadsheet, '参加者').filter(function(candidate) {
     return candidate.participantId === records[0].participantId;
   })[0] || {};
-  var sessions = collectTicketSessions_(records, event.eventId);
+  var sessions = collectTicketSessions_(spreadsheet, records, event.eventId);
   var registrationId = records[0].registrationId;
-  var seats = readRows('座位').filter(function(seat) {
+  var seats = readRows(spreadsheet, '座位').filter(function(seat) {
     return seatBelongsToRegistration_(seat, registrationId);
   });
   return {
@@ -229,7 +243,7 @@ function seatBelongsToRegistration_(seat, registrationId) {
 function cleanupStaleTicketSeats_(spreadsheet) {
   var activeChoices = {};
   var knownRegistrationIds = {};
-  readRows('报名项目').forEach(function(record) {
+  readRows(spreadsheet, '报名项目').forEach(function(record) {
     knownRegistrationIds[record.registrationId] = true;
     if (!REGISTRATION_ACTIVE_STATUSES[String(record.status || '').toLowerCase()]) return;
     if (!activeChoices[record.registrationId]) activeChoices[record.registrationId] = {};
@@ -239,7 +253,7 @@ function cleanupStaleTicketSeats_(spreadsheet) {
   });
   var failures = {};
   var seatSheet = getRequiredSheet_(spreadsheet, '座位');
-  readRows('座位').forEach(function(seat) {
+  readRows(spreadsheet, '座位').forEach(function(seat) {
     var holder = String(seat.holderRegistrationId || '');
     var pendingMatch = /^PENDING\|(.+)$/.exec(holder);
     var registrationId = pendingMatch ? pendingMatch[1] : holder;
@@ -273,12 +287,12 @@ function cleanupStaleTicketSeats_(spreadsheet) {
   return failures;
 }
 
-function collectTicketSessions_(records, eventId) {
+function collectTicketSessions_(spreadsheet, records, eventId) {
   var selected = {};
   records.forEach(function(record) {
     parseStringArray_(record.sessionIds).forEach(function(sessionId) { selected[sessionId] = true; });
   });
-  return readRows('场次').filter(function(session) {
+  return readRows(spreadsheet, '场次').filter(function(session) {
     return session.eventId === eventId && selected[session.sessionId];
   });
 }

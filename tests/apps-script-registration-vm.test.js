@@ -104,10 +104,13 @@ async function createHarness({ rows = baseRows(), settings, onWrite } = {}) {
     Error,
     isFinite,
     Utilities: { getUuid: () => `00000000-0000-4000-8000-${String(++uuid).padStart(12, "0")}` },
+    getRegistrySpreadsheet_: () => spreadsheet,
     getConfiguredSpreadsheet: () => spreadsheet,
+    getSharedSettingValue_: () => null,
+    requireNoSwitchMaintenance_: () => {},
     getRequiredSheet_: (_spreadsheet, name) => sheets[name],
     normalizeRow_: (name, row) => headers[name].map((key) => row[key] ?? ""),
-    readRows: (name) => sheets[name].rows.slice(1).map((values, index) => ({
+    readRows: (_spreadsheet, name) => sheets[name].rows.slice(1).map((values, index) => ({
       rowNumber: index + 2,
       ...Object.fromEntries(headers[name].map((key, column) => [key, values[column]]))
     })),

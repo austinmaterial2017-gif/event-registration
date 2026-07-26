@@ -240,3 +240,71 @@ Fresh verification after the second fix round:
 - Full `npm.cmd test` suite: 118 passed, 0 failed.
 - `node scripts/build-admin-source-bundles.mjs --check`: passed.
 - `git diff --check`: passed.
+
+## Fix round 3
+
+Closed the cross-deployment consistency and switch-preflight findings.
+
+Every public and staff RPC now resolves its stable registry and active data
+Sheet once at entry, then passes those exact Spreadsheet objects through all
+reads, writes, policy access, ticket cleanup, attendance, and registration
+recovery helpers. Resolver and row helpers no longer have optional fallback
+paths that can re-open a changed pointer. An interleaving regression changes
+the registry pointer during a registration and proves that all target Sheet
+rows remain byte-for-byte unchanged while the already-pinned source request
+completes. A corresponding staff lookup test proves the same read behavior.
+
+`ADMIN_SETTINGS` is authoritative only in the permanent registry Sheet.
+Active data switches do not move policy. Missing, blank, malformed, array, or
+otherwise invalid registry settings fail closed in both deployments, even
+when their separate legacy Script Properties contain valid but conflicting
+objects.
+
+Sheet switching now uses a two-phase public-deployer preflight:
+
+- the staff deployment validates the candidate schema, creates a short-lived
+  random nonce, and stages `SWITCH_MAINTENANCE` plus a candidate record in the
+  stable registry;
+- the protected administrator UI sends only the nonce to the configured
+  official public `/exec` endpoint;
+- the public deployment reads the candidate ID only from the registry, opens
+  it under the public deployer's identity, validates every exact header, and
+  writes an HMAC-SHA256 signed, nonce- and expiry-matched acknowledgement;
+- the staff deployment revalidates the candidate and publishes the active
+  pointer only after verifying that acknowledgement; and
+- missing acknowledgements, wrong or expired nonces, public open/schema
+  failures, and malformed state abort without pointer publication.
+
+The public probe always returns the same generic result and rejects payloads
+containing anything other than the staged nonce, so it cannot be used as an
+arbitrary Sheet-opening oracle. New registrations, cancellations, seat
+exchanges, staff check-ins, and all administrator mutations fail closed while
+maintenance is staged. Read-only requests and mutations that passed the entry
+maintenance check keep using their pinned data Sheet through completion. The
+pointer is published while maintenance remains set, and maintenance is
+cleared only after that publication.
+
+The deployment guide now requires an identical 32+-character probe secret in
+both projects, the public `/exec` URL in the staff project, a populated
+registry `ADMIN_SETTINGS` row, and target Sheet access for both the public
+deployer and every required staff/administrator account. Generated public and
+staff source bundles include the new probe service and current UI.
+
+Regression coverage includes:
+
+- public and staff pointer-change interleavings;
+- missing, blank, and malformed authoritative settings;
+- staged maintenance and no-ack abort;
+- wrong and expired nonces;
+- rejection of a submitted arbitrary Sheet ID;
+- public-deployer open failure; and
+- successful signed acknowledgement followed by pointer publication and
+  switch-state cleanup.
+
+Fresh verification after the third fix round:
+
+- Full `npm.cmd test`: 124 passed, 0 failed, 0 skipped.
+- `node scripts/build-admin-source-bundles.mjs --check`: passed.
+- `git diff --check`: passed.
+- Independent Critical/Important review after extending maintenance to every
+  mutating RPC: clean.

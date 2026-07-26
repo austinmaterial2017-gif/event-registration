@@ -56,5 +56,6 @@ test("the configured spreadsheet can be opened before the shared settings sheet 
   const source = await readFile(new URL("../apps-script/Repository.gs", import.meta.url), "utf8");
   vm.runInContext(source, context);
 
-  assert.equal(context.getConfiguredSpreadsheet(), spreadsheet);
+  const registry = context.getRegistrySpreadsheet_();
+  assert.equal(context.getConfiguredSpreadsheet(registry), spreadsheet);
 });

@@ -13,22 +13,14 @@ var STAFF_SHEET_DEFINITIONS = {
   '操作记录': ['auditId', 'action', 'entityType', 'entityId', 'actor', 'details', 'createdAt']
 };
 
-function getConfiguredSpreadsheet_() {
-  var spreadsheet = getRootConfiguredSpreadsheet_();
-  var spreadsheetId = String(spreadsheet.getId());
-  var visited = {};
-  for (var redirects = 0; redirects < 50; redirects += 1) {
-    if (visited[spreadsheetId]) throw new Error('Staff spreadsheet redirect cycle.');
-    visited[spreadsheetId] = true;
-    var nextSpreadsheetId = getSharedSettingValue_(spreadsheet, ACTIVE_SPREADSHEET_ID);
-    if (nextSpreadsheetId === null || nextSpreadsheetId === '') return spreadsheet;
-    if (typeof nextSpreadsheetId !== 'string' || !nextSpreadsheetId.trim()) {
-      throw new Error('Staff spreadsheet redirect is invalid.');
-    }
-    spreadsheetId = nextSpreadsheetId.trim();
-    spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+function getConfiguredSpreadsheet_(registrySpreadsheet) {
+  if (!registrySpreadsheet) throw new Error('Staff registry spreadsheet is required.');
+  var spreadsheetId = getSharedSettingValue_(registrySpreadsheet, ACTIVE_SPREADSHEET_ID);
+  if (spreadsheetId === null || spreadsheetId === '') return registrySpreadsheet;
+  if (typeof spreadsheetId !== 'string' || !spreadsheetId.trim()) {
+    throw new Error('Staff spreadsheet pointer is invalid.');
   }
-  throw new Error('Too many staff spreadsheet redirects.');
+  return SpreadsheetApp.openById(spreadsheetId.trim());
 }
 
 function getRootConfiguredSpreadsheet_() {
@@ -37,29 +29,22 @@ function getRootConfiguredSpreadsheet_() {
   return SpreadsheetApp.openById(spreadsheetId);
 }
 
-function getAdminSettings_() {
-  var shared = getSharedSettingValue_(getConfiguredSpreadsheet_(), ADMIN_SETTINGS);
-  var fallback = PropertiesService.getScriptProperties().getProperty(ADMIN_SETTINGS);
-  return resolveAdminSettings_(shared, fallback);
+function getAdminSettings_(registrySpreadsheet) {
+  if (!registrySpreadsheet) throw new Error('Staff registry spreadsheet is required.');
+  var parsed = parseAdminSettings_(
+    getSharedSettingValue_(registrySpreadsheet, ADMIN_SETTINGS)
+  );
+  if (!parsed) throw new Error('Administrator settings are invalid.');
+  return parsed;
 }
 
-function setAdminSettings_(settings) {
+function setAdminSettings_(registrySpreadsheet, settings) {
+  if (!registrySpreadsheet) throw new Error('Staff registry spreadsheet is required.');
   setSharedSettingValue_(
-    getConfiguredSpreadsheet_(),
+    registrySpreadsheet,
     ADMIN_SETTINGS,
     JSON.stringify(settings || {})
   );
-}
-
-function resolveAdminSettings_(shared, fallback) {
-  var parsedShared = parseAdminSettings_(shared);
-  if (parsedShared) return parsedShared;
-  var parsedFallback = parseAdminSettings_(fallback);
-  if (parsedFallback) return parsedFallback;
-  if (shared !== null || fallback !== null) {
-    throw new Error('Administrator settings are invalid.');
-  }
-  return {};
 }
 
 function parseAdminSettings_(serialized) {
@@ -101,6 +86,14 @@ function getSharedSettingValue_(spreadsheet, key) {
   return null;
 }
 
+function requireNoSwitchMaintenance_(registrySpreadsheet) {
+  var maintenance = getSharedSettingValue_(registrySpreadsheet, 'SWITCH_MAINTENANCE');
+  if (maintenance === null || maintenance === '') return;
+  var error = new Error('Switch maintenance is active.');
+  error.publicCode = 'MAINTENANCE';
+  throw error;
+}
+
 function openSpreadsheetById_(spreadsheetId) {
   if (typeof spreadsheetId !== 'string' || !spreadsheetId.trim() || spreadsheetId.length > 256) {
     throw new Error('Invalid spreadsheet selection.');
@@ -127,8 +120,8 @@ function getRequiredSheet_(spreadsheet, sheetName) {
   return sheet;
 }
 
-function readRows_(sheetName) {
-  var sheet = getRequiredSheet_(getConfiguredSpreadsheet_(), sheetName);
+function readRows_(spreadsheet, sheetName) {
+  var sheet = getRequiredSheet_(spreadsheet, sheetName);
   if (sheet.getLastRow() <= 1) return [];
   var headers = STAFF_SHEET_DEFINITIONS[sheetName];
   return sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues().map(function(values, index) {

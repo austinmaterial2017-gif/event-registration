@@ -34,7 +34,7 @@ test("Apps Script repository declares every private sheet with explicit headers"
   assert.match(repository, /function\s+getConfiguredSpreadsheet\s*\(/);
   assert.match(repository, /function\s+setActiveSpreadsheet\s*\(\s*spreadsheetId\s*\)/);
   assert.match(repository, /function\s+withScriptLock\s*\(\s*callback\s*\)/);
-  assert.match(repository, /function\s+readRows\s*\(\s*sheetName\s*\)/);
+  assert.match(repository, /function\s+readRows\s*\(\s*spreadsheet\s*,\s*sheetName\s*\)/);
   assert.match(repository, /function\s+appendRow\s*\(\s*sheetName\s*,\s*row\s*\)/);
   assert.match(repository, /function\s+updateRow\s*\(\s*sheetName\s*,\s*rowNumber\s*,\s*values\s*\)/);
 });

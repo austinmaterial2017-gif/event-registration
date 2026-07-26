@@ -73,6 +73,10 @@ test("administrator client uses only explicit RPCs, safe DOM rendering, confirma
   assert.match(script, /\.withSuccessHandler\s*\(/);
   assert.match(script, /\.withFailureHandler\s*\(/);
   assert.match(script, /confirm:\s*true/);
+  assert.match(script, /fetch\s*\(\s*data\.probeUrl/);
+  assert.match(script, /action:\s*["']probeSheetSwitch["']/);
+  assert.match(script, /payload:\s*\{\s*nonce:\s*data\.nonce\s*\}/);
+  assert.match(script, /\.switchAdminSheet\(\{\s*nonce:\s*data\.nonce,\s*confirm:\s*true\s*\}\)/);
   assert.match(script, /navigator\.clipboard\.writeText\s*\(/);
   assert.match(script, /data-copy-bundle/);
   assert.match(script, /editAdminEvent\s*\(/);

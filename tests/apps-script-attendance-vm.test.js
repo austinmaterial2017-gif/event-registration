@@ -95,7 +95,7 @@ async function createHarness(options = {}) {
   const getConfiguredSpreadsheet = () => spreadsheet;
   const getRequiredSheet = (_spreadsheet, name) => sheets[name];
   const normalizeRow = (name, row) => headers[name].map((key) => row[key] ?? "");
-  const readRows = (name) => sheets[name].rows.slice(1).map((values, index) => ({
+  const readRows = (_spreadsheet, name) => sheets[name].rows.slice(1).map((values, index) => ({
     rowNumber: index + 2,
     ...Object.fromEntries(headers[name].map((key, column) => [key, values[column]]))
   }));
@@ -107,14 +107,17 @@ async function createHarness(options = {}) {
     finally { locks.push("release"); lockDepth -= 1; }
   };
   const repositoryBindings = options.staffProject
-    ? {
+      ? {
+        getRootConfiguredSpreadsheet_: getConfiguredSpreadsheet,
         getConfiguredSpreadsheet_: getConfiguredSpreadsheet,
         getRequiredSheet_: getRequiredSheet,
         normalizeRow_: normalizeRow,
         readRows_: readRows,
+        requireNoSwitchMaintenance_: () => {},
         withScriptLock_: withScriptLock
       }
-    : {
+      : {
+        getRegistrySpreadsheet_: getConfiguredSpreadsheet,
         getConfiguredSpreadsheet,
         getRequiredSheet_: getRequiredSheet,
         normalizeRow_: normalizeRow,

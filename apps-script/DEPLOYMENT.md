@@ -19,6 +19,12 @@ Create an Apps Script project from the files under `apps-script/`.
 This project contains no staff page, staff allowlist, Session identity lookup,
 or attendance mutation function.
 
+The public project requires these Script Properties:
+
+- `ACTIVE_SPREADSHEET_ID`: the permanent registry Sheet ID
+- `SWITCH_PROBE_SHARED_SECRET`: a randomly generated secret of at least 32
+  characters, identical to the value in the staff project
+
 ## Staff project: `staff-apps-script/`
 
 Create a different Apps Script project from the files under
@@ -39,10 +45,10 @@ The staff project requires these Script Properties:
   emails
 - `ADMIN_EMAIL_ALLOWLIST`: a separate JSON array of normalized administrator
   Google-account emails
-
-Existing deployments may also retain `ADMIN_SETTINGS` as a legacy/bootstrap
-Script Property until the shared spreadsheet contains its authoritative
-`ADMIN_SETTINGS` row.
+- `PUBLIC_BACKEND_URL`: the public project's official
+  `https://script.google.com/macros/s/.../exec` URL
+- `SWITCH_PROBE_SHARED_SECRET`: the same randomly generated secret of at least
+  32 characters configured in the public project
 
 Example allowlist:
 
@@ -56,12 +62,14 @@ Web App executes as the user accessing it, not as the deployer.
 
 Administrator-controlled attendance, event, session, countdown, cancellation,
 exchange, ticket-field, and duplicate-identity policies are stored as JSON in
-the shared private Sheet's `系统设置` tab under the `ADMIN_SETTINGS` key. The
+the permanent registry Sheet's `系统设置` tab under the `ADMIN_SETTINGS` key.
+The registry row is authoritative: it must contain a non-empty JSON object.
+Blank, missing, or malformed registry settings fail closed in both projects;
+neither project falls back to its separate Script Properties. The
 administrator project writes this row and both projects read it, so policy
 changes take effect in the anonymous registration project despite the
-projects having separate Script Properties. Existing deployments may retain
-their `ADMIN_SETTINGS` Script Property as a fallback; the next administrator
-policy save writes the complete effective settings into the shared row.
+projects having separate Script Properties. `ADMIN_SETTINGS` must therefore
+be populated in the registry before either deployment serves traffic.
 
 The attendance allowlist does not grant administrator access. The attendance
 and administrator allowlists are independent:
@@ -87,12 +95,34 @@ unauthorized administrator sessions receive the same fixed denial page.
 
 The administrator's data-table panel shows connection status and can test a
 submitted target Sheet before a switch. Switching requires explicit
-confirmation. It publishes an `ACTIVE_SPREADSHEET_ID` pointer in the private
-`系统设置` tab of the original configured Sheet. Both projects retain that
-Sheet as their stable Script Property root and follow the same private
-pointer, so both deployments change active data on one shared settings write.
-Old data remains in the previous Sheet. Migration is not automatic, and the
-switch does not initialize, copy, migrate, or delete business rows.
+confirmation and a two-phase preflight:
+
+1. The staff project validates the target schema, creates a short-lived random
+   nonce in the permanent registry, and enables registry maintenance.
+2. The protected administrator page sends only that nonce to the configured
+   public backend. The public deployer reads the candidate ID from the
+   registry, opens it with its own execution identity, validates the schema,
+   and writes a signed, nonce-matched acknowledgement.
+3. The staff project verifies the unexpired acknowledgement and only then
+   publishes `ACTIVE_SPREADSHEET_ID`. Missing, invalid, expired, or failed
+   acknowledgements abort without publishing.
+
+New registrations, cancellations, seat exchanges, check-ins, and
+administrator mutations fail closed while maintenance is staged. Read-only
+requests and mutation requests that already passed the entry maintenance
+check continue on their pinned data Sheet. Both projects retain the original
+Sheet as their permanent Script Property root; the active pointer and
+`ADMIN_SETTINGS` policy always live in that stable registry. Old data remains
+in the previous Sheet. Migration is not automatic, and the switch does not
+initialize, copy, migrate, or delete business rows.
+
+Every switch target must already contain the exact initialized data schema and
+must be shared with:
+
+- the public Apps Script deployer account, because the anonymous Web App
+  executes as that deployer; and
+- every staff or administrator account that needs to use the authenticated
+  Web App, because it executes as the accessing user.
 
 ## Source bundles and two-project setup
 
@@ -106,11 +136,14 @@ source bundles:
 3. Set Script Properties manually in each project. Both projects must
    initially point `ACTIVE_SPREADSHEET_ID` at the same initialized private
    Sheet and retain it as their stable root. Later confirmed administrator
-   switches are propagated through the shared pointer. The generated source
-   contains property names only; it does not contain current property values,
-   Sheet IDs, allowlist members, credentials, participant rows, or answers.
-4. Grant each staff or administrator account the required access to the
-   selected private Sheet.
+   switches are propagated through the shared pointer. Configure the same
+   `SWITCH_PROBE_SHARED_SECRET` in both projects and set `PUBLIC_BACKEND_URL`
+   in the staff project. The generated source contains property names only; it
+   does not contain current property values, Sheet IDs, allowlist members,
+   credentials, participant rows, or answers.
+4. Populate the registry Sheet's authoritative `ADMIN_SETTINGS` row.
+5. Grant the public deployer and each required staff or administrator account
+   access to the registry and every candidate data Sheet.
 
 The source bundles are generated during development from the tracked files.
 Run `node scripts/build-admin-source-bundles.mjs` after changing bundled Apps

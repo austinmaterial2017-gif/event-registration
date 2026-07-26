@@ -13,6 +13,7 @@ var PUBLIC_ERROR_MESSAGES = {
   TICKET_NOT_FOUND: '未找到对应凭证。',
   TICKET_VERIFICATION_FAILED: '验证信息不匹配。',
   TOKEN_INVALID: '凭证无效或已过期。',
+  MAINTENANCE: '系统正在切换数据连接，请稍后重试。',
   NOT_IMPLEMENTED: '请求暂不可用。',
   INTERNAL: '请求未能完成，请稍后重试。'
 };
@@ -24,7 +25,8 @@ var PUBLIC_ROUTES = {
   'lookupTicket': function(payload) { return lookupTicket(payload); },
   'verifyTicket': function(payload) { return verifyTicket(payload); },
   'cancelRegistration': function(payload) { return cancelRegistration(payload); },
-  'exchangeSeat': function(payload) { return exchangeSeat(payload); }
+  'exchangeSeat': function(payload) { return exchangeSeat(payload); },
+  'probeSheetSwitch': function(payload) { return probeSheetSwitch(payload); }
 };
 
 /** Public health page. */

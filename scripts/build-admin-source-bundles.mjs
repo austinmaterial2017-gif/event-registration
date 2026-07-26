@@ -11,6 +11,7 @@ const publicFiles = [
   "apps-script/RegistrationService.gs",
   "apps-script/TicketService.gs",
   "apps-script/AttendanceService.gs",
+  "apps-script/SwitchProbeService.gs",
   "apps-script/Code.gs"
 ];
 const staffFiles = [

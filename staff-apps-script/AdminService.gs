@@ -1,4 +1,10 @@
 var ADMIN_EMAIL_ALLOWLIST = 'ADMIN_EMAIL_ALLOWLIST';
+var PUBLIC_BACKEND_URL = 'PUBLIC_BACKEND_URL';
+var SWITCH_PROBE_SHARED_SECRET = 'SWITCH_PROBE_SHARED_SECRET';
+var SWITCH_PROBE = 'SWITCH_PROBE';
+var SWITCH_PROBE_ACK = 'SWITCH_PROBE_ACK';
+var SWITCH_MAINTENANCE = 'SWITCH_MAINTENANCE';
+var SWITCH_PROBE_TTL_MS = 120000;
 
 /** Returns the administrator dashboard for the authenticated Google session. */
 function getAdminDashboard(payload) {
@@ -89,6 +95,7 @@ function adminFailure_(code) {
     CONFIRMATION_REQUIRED: '此操作需要明确确认。',
     SHEET_CONNECTION_FAILED: '无法连接到指定的数据表。',
     INTEGRITY_ERROR: '数据一致性检查失败，请联系管理员。',
+    MAINTENANCE: '系统正在切换数据连接，请稍后重试。',
     INTERNAL: '请求未能完成，请稍后重试。'
   };
   var safeCode = Object.prototype.hasOwnProperty.call(messages, code) ? code : 'INTERNAL';
@@ -149,8 +156,9 @@ function getAdminDashboard_(payload) {
   var request = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
   var search = typeof request.search === 'string' ? request.search.trim().toLowerCase() : '';
   return withScriptLock_(function() {
-    var spreadsheet = getConfiguredSpreadsheet_();
-    var settings = getAdminSettings_();
+    var registry = getRootConfiguredSpreadsheet_();
+    var spreadsheet = getConfiguredSpreadsheet_(registry);
+    var settings = getAdminSettings_(registry);
     var events = readAdminRows_(spreadsheet, '活动');
     var sessions = readAdminRows_(spreadsheet, '场次');
     var seats = readAdminRows_(spreadsheet, '座位');
@@ -244,7 +252,9 @@ function getAdminDashboard_(payload) {
 function saveAdminEvent_(payload, actor) {
   var request = requireAdminObject_(payload);
   return withScriptLock_(function() {
-    var spreadsheet = getConfiguredSpreadsheet_();
+    var registry = getRootConfiguredSpreadsheet_();
+    requireNoSwitchMaintenance_(registry);
+    var spreadsheet = getConfiguredSpreadsheet_(registry);
     var existing = request.eventId
       ? findAdminRow_(spreadsheet, '活动', 'eventId', request.eventId)
       : null;
@@ -308,13 +318,13 @@ function saveAdminEvent_(payload, actor) {
       updatedAt: now
     };
     writeAdminRow_(spreadsheet, '活动', existing && existing.rowNumber, row);
-    var settings = getAdminSettings_();
+    var settings = getAdminSettings_(registry);
     var policy = ensureAdminEventPolicy_(settings, eventId);
     copyAdminBooleanField_(request, policy, 'showOpeningCountdown');
     copyAdminBooleanField_(request, policy, 'showClosingCountdown');
     copyAdminBooleanField_(request, policy, 'cancellationEnabled');
     copyAdminBooleanField_(request, policy, 'seatExchangeEnabled');
-    setAdminSettings_(settings);
+    setAdminSettings_(registry, settings);
     appendAdminAudit_(
       spreadsheet,
       request.action ? String(request.action).toUpperCase() + '_EVENT' : (existing ? 'UPDATE_EVENT' : 'CREATE_EVENT'),
@@ -343,7 +353,9 @@ function saveAdminSession_(payload, actor) {
     adminError_('INVALID_REQUEST');
   }
   return withScriptLock_(function() {
-    var spreadsheet = getConfiguredSpreadsheet_();
+    var registry = getRootConfiguredSpreadsheet_();
+    requireNoSwitchMaintenance_(registry);
+    var spreadsheet = getConfiguredSpreadsheet_(registry);
     if (!findAdminRow_(spreadsheet, '活动', 'eventId', request.eventId.trim())) {
       adminError_('NOT_FOUND');
     }
@@ -377,7 +389,7 @@ function saveAdminSession_(payload, actor) {
       updatedAt: now
     };
     writeAdminRow_(spreadsheet, '场次', existing && existing.rowNumber, row);
-    var settings = getAdminSettings_();
+    var settings = getAdminSettings_(registry);
     var sessionPolicy = ensureAdminSessionPolicy_(settings, row.eventId, sessionId);
     sessionPolicy.location = adminTextField_(
       request, 'location', sessionPolicy.location, ''
@@ -385,7 +397,7 @@ function saveAdminSession_(payload, actor) {
     sessionPolicy.groupRule = adminTextField_(
       request, 'groupRule', sessionPolicy.groupRule, ''
     );
-    setAdminSettings_(settings);
+    setAdminSettings_(registry, settings);
     appendAdminAudit_(
       spreadsheet, existing ? 'UPDATE_SESSION' : 'CREATE_SESSION',
       'session', sessionId, actor, { eventId: row.eventId }
@@ -400,7 +412,9 @@ function saveAdminQuestion_(payload, actor) {
     adminError_('INVALID_REQUEST');
   }
   return withScriptLock_(function() {
-    var spreadsheet = getConfiguredSpreadsheet_();
+    var registry = getRootConfiguredSpreadsheet_();
+    requireNoSwitchMaintenance_(registry);
+    var spreadsheet = getConfiguredSpreadsheet_(registry);
     if (!findAdminRow_(spreadsheet, '活动', 'eventId', request.eventId.trim())) {
       adminError_('NOT_FOUND');
     }
@@ -441,7 +455,7 @@ function saveAdminQuestion_(payload, actor) {
       createdAt: existing ? existing.createdAt : now,
       updatedAt: now
     };
-    var settings = getAdminSettings_();
+    var settings = getAdminSettings_(registry);
     var policy = ensureAdminEventPolicy_(settings, row.eventId);
     var inheritedIdentityFields = settings.registration &&
       Array.isArray(settings.registration.identityFields) ? settings.registration.identityFields : [];
@@ -470,11 +484,11 @@ function saveAdminQuestion_(payload, actor) {
     var removesIdentity = adminListHas_(configuredIdentityFields, questionId) &&
       !adminListHas_(identityFields, questionId);
     if (removesIdentity) {
-      setAdminSettings_(settings);
+      setAdminSettings_(registry, settings);
       writeAdminRow_(spreadsheet, '报名问题', existing && existing.rowNumber, row);
     } else {
       writeAdminRow_(spreadsheet, '报名问题', existing && existing.rowNumber, row);
-      setAdminSettings_(settings);
+      setAdminSettings_(registry, settings);
     }
     appendAdminAudit_(
       spreadsheet, existing ? 'UPDATE_QUESTION' : 'CREATE_QUESTION',
@@ -488,7 +502,9 @@ function saveAdminSeatPlan_(payload, actor) {
   var request = requireAdminObject_(payload);
   var action = String(request.action || 'generate').toLowerCase();
   return withScriptLock_(function() {
-    var spreadsheet = getConfiguredSpreadsheet_();
+    var registry = getRootConfiguredSpreadsheet_();
+    requireNoSwitchMaintenance_(registry);
+    var spreadsheet = getConfiguredSpreadsheet_(registry);
     if (action === 'reserve' || action === 'close' || action === 'reopen') {
       var seat = findAdminRow_(spreadsheet, '座位', 'seatId', request.seatId);
       if (!seat) adminError_('NOT_FOUND');
@@ -570,7 +586,9 @@ function adminRecordAction_(payload, actor) {
     adminError_('INVALID_REQUEST');
   }
   return withScriptLock_(function() {
-    var spreadsheet = getConfiguredSpreadsheet_();
+    var registry = getRootConfiguredSpreadsheet_();
+    requireNoSwitchMaintenance_(registry);
+    var spreadsheet = getConfiguredSpreadsheet_(registry);
     var registrations = readAdminRows_(spreadsheet, '报名项目').filter(function(record) {
       return record.registrationId === request.registrationId.trim();
     });
@@ -714,62 +732,189 @@ function testAdminSheetConnection_(payload) {
 function switchAdminSheet_(payload) {
   var request = requireAdminObject_(payload);
   if (request.confirm !== true) adminError_('CONFIRMATION_REQUIRED');
-  if (typeof request.spreadsheetId !== 'string' || !request.spreadsheetId.trim()) {
-    adminError_('INVALID_REQUEST');
-  }
   return withScriptLock_(function() {
-    var spreadsheet;
-    var rootSpreadsheet;
-    try {
-      rootSpreadsheet = getRootConfiguredSpreadsheet_();
-      spreadsheet = openSpreadsheetById_(request.spreadsheetId);
-      validateAdminSpreadsheet_(spreadsheet);
-    } catch (error) {
-      if (error && error.publicCode) throw error;
-      adminError_('SHEET_CONNECTION_FAILED');
+    var registry = getRootConfiguredSpreadsheet_();
+    if (typeof request.spreadsheetId === 'string' && request.spreadsheetId.trim() &&
+        (request.nonce === undefined || request.nonce === null || request.nonce === '')) {
+      return stageAdminSheetSwitch_(registry, request.spreadsheetId.trim());
     }
-    var targetId = request.spreadsheetId.trim();
-    var rootId = String(rootSpreadsheet.getId());
-    var rootPointer = getSharedSettingValue_(rootSpreadsheet, ACTIVE_SPREADSHEET_ID);
-    var targetPointer = rootId === targetId
-      ? rootPointer
-      : getSharedSettingValue_(spreadsheet, ACTIVE_SPREADSHEET_ID);
-    try {
-      setSharedSettingValue_(spreadsheet, ACTIVE_SPREADSHEET_ID, '');
-      if (rootId !== targetId) {
-        setSharedSettingValue_(rootSpreadsheet, ACTIVE_SPREADSHEET_ID, targetId);
-      }
-    } catch (error) {
-      try {
-        if (rootId !== targetId) {
-          setSharedSettingValue_(
-            spreadsheet,
-            ACTIVE_SPREADSHEET_ID,
-            targetPointer === null ? '' : targetPointer
-          );
-          setSharedSettingValue_(
-            rootSpreadsheet,
-            ACTIVE_SPREADSHEET_ID,
-            rootPointer === null ? '' : rootPointer
-          );
-        } else {
-          setSharedSettingValue_(
-            rootSpreadsheet,
-            ACTIVE_SPREADSHEET_ID,
-            rootPointer === null ? '' : rootPointer
-          );
-        }
-      } catch (_ignored) {
-        // The original failure remains private; a later confirmed switch can repair the pointer.
-      }
-      throw error;
+    if (typeof request.nonce === 'string' && request.nonce &&
+        (request.spreadsheetId === undefined || request.spreadsheetId === null ||
+         request.spreadsheetId === '')) {
+      return finalizeAdminSheetSwitch_(registry, request.nonce);
     }
-    return {
-      connected: true,
-      sheetName: String(spreadsheet.getName ? spreadsheet.getName() : 'Connected'),
-      warning: '旧数据仍保留在原数据表中；系统不会自动迁移任何数据。'
-    };
+    adminError_('INVALID_REQUEST');
   });
+}
+
+function stageAdminSheetSwitch_(registry, candidateSpreadsheetId) {
+  var configuration = requireSwitchProbeConfiguration_();
+  var existingMaintenance = getSharedSettingValue_(registry, SWITCH_MAINTENANCE);
+  if (typeof existingMaintenance === 'string' && existingMaintenance.trim()) {
+    var existing = parseAdminSwitchObject_(existingMaintenance);
+    if (existing && isFutureSwitchTime_(existing.expiresAt)) adminError_('CONFLICT');
+    clearAdminSwitchState_(registry);
+  }
+
+  var candidate;
+  try {
+    candidate = openSpreadsheetById_(candidateSpreadsheetId);
+    validateAdminSpreadsheet_(candidate);
+  } catch (error) {
+    if (error && error.publicCode) throw error;
+    adminError_('SHEET_CONNECTION_FAILED');
+  }
+
+  var expiresAt = new Date(Date.now() + SWITCH_PROBE_TTL_MS).toISOString();
+  var nonce = createAdminSwitchNonce_(configuration.secret);
+  try {
+    setSharedSettingValue_(
+      registry,
+      SWITCH_MAINTENANCE,
+      JSON.stringify({ nonce: nonce, expiresAt: expiresAt })
+    );
+    setSharedSettingValue_(
+      registry,
+      SWITCH_PROBE,
+      JSON.stringify({
+        nonce: nonce,
+        candidateSpreadsheetId: candidateSpreadsheetId,
+        expiresAt: expiresAt,
+        createdAt: new Date().toISOString()
+      })
+    );
+    setSharedSettingValue_(registry, SWITCH_PROBE_ACK, '');
+  } catch (error) {
+    try {
+      clearAdminSwitchState_(registry);
+    } catch (_ignored) {
+      // A partially staged switch remains fail-closed until an administrator retries.
+    }
+    throw error;
+  }
+  return {
+    state: 'probe_required',
+    nonce: nonce,
+    expiresAt: expiresAt,
+    probeUrl: configuration.publicBackendUrl
+  };
+}
+
+function finalizeAdminSheetSwitch_(registry, nonce) {
+  var probe = parseAdminSwitchObject_(getSharedSettingValue_(registry, SWITCH_PROBE));
+  var maintenance = parseAdminSwitchObject_(
+    getSharedSettingValue_(registry, SWITCH_MAINTENANCE)
+  );
+  if (!probe || !maintenance || probe.nonce !== nonce || maintenance.nonce !== nonce) {
+    adminError_('CONFLICT');
+  }
+  if (!isFutureSwitchTime_(probe.expiresAt) ||
+      maintenance.expiresAt !== probe.expiresAt ||
+      typeof probe.candidateSpreadsheetId !== 'string' ||
+      !probe.candidateSpreadsheetId.trim()) {
+    clearAdminSwitchState_(registry);
+    adminError_('SHEET_CONNECTION_FAILED');
+  }
+
+  var ack = parseAdminSwitchObject_(getSharedSettingValue_(registry, SWITCH_PROBE_ACK));
+  var configuration = requireSwitchProbeConfiguration_();
+  if (!isValidAdminSwitchAck_(ack, probe, configuration.secret)) {
+    clearAdminSwitchState_(registry);
+    adminError_('SHEET_CONNECTION_FAILED');
+  }
+
+  var candidate;
+  try {
+    candidate = openSpreadsheetById_(probe.candidateSpreadsheetId);
+    validateAdminSpreadsheet_(candidate);
+  } catch (error) {
+    clearAdminSwitchState_(registry);
+    if (error && error.publicCode) throw error;
+    adminError_('SHEET_CONNECTION_FAILED');
+  }
+
+  var pointer = String(registry.getId()) === probe.candidateSpreadsheetId
+    ? ''
+    : probe.candidateSpreadsheetId;
+  setSharedSettingValue_(registry, ACTIVE_SPREADSHEET_ID, pointer);
+  setSharedSettingValue_(registry, SWITCH_MAINTENANCE, '');
+  try {
+    setSharedSettingValue_(registry, SWITCH_PROBE, '');
+    setSharedSettingValue_(registry, SWITCH_PROBE_ACK, '');
+  } catch (_ignored) {
+    // Maintenance is already cleared after publication; stale probe rows are inert.
+  }
+  return {
+    connected: true,
+    sheetName: String(candidate.getName ? candidate.getName() : 'Connected'),
+    warning: '旧数据仍保留在原数据表中；系统不会自动迁移任何数据。'
+  };
+}
+
+function requireSwitchProbeConfiguration_() {
+  var properties = PropertiesService.getScriptProperties();
+  var secret = properties.getProperty(SWITCH_PROBE_SHARED_SECRET);
+  var publicBackendUrl = properties.getProperty(PUBLIC_BACKEND_URL);
+  if (typeof secret !== 'string' || secret.length < 32 ||
+      typeof publicBackendUrl !== 'string' ||
+      !/^https:\/\/script\.google\.com\/macros\/s\/[^/?#]+\/exec$/.test(publicBackendUrl)) {
+    adminError_('SHEET_CONNECTION_FAILED');
+  }
+  return { secret: secret, publicBackendUrl: publicBackendUrl };
+}
+
+function createAdminSwitchNonce_(secret) {
+  var randomInput = Utilities.getUuid() + '\n' + Utilities.getUuid();
+  return Utilities.base64EncodeWebSafe(
+    Utilities.computeHmacSha256Signature(randomInput, secret)
+  );
+}
+
+function isValidAdminSwitchAck_(ack, probe, secret) {
+  if (!ack || ack.nonce !== probe.nonce || ack.expiresAt !== probe.expiresAt ||
+      typeof ack.verifiedAt !== 'string' || typeof ack.signature !== 'string') {
+    return false;
+  }
+  var verifiedAt = new Date(ack.verifiedAt).getTime();
+  var expiresAt = new Date(probe.expiresAt).getTime();
+  if (!isFinite(verifiedAt) || !isFinite(expiresAt) || verifiedAt > expiresAt) return false;
+  return ack.signature === signAdminSwitchAck_(
+    probe.nonce,
+    probe.candidateSpreadsheetId,
+    probe.expiresAt,
+    secret
+  );
+}
+
+function signAdminSwitchAck_(nonce, candidateSpreadsheetId, expiresAt, secret) {
+  return Utilities.base64EncodeWebSafe(
+    Utilities.computeHmacSha256Signature(
+      nonce + '\n' + candidateSpreadsheetId + '\n' + expiresAt,
+      secret
+    )
+  );
+}
+
+function parseAdminSwitchObject_(serialized) {
+  if (typeof serialized !== 'string' || !serialized.trim()) return null;
+  try {
+    var value = JSON.parse(serialized);
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+  } catch (_ignored) {
+    return null;
+  }
+}
+
+function isFutureSwitchTime_(serialized) {
+  if (typeof serialized !== 'string') return false;
+  var time = new Date(serialized).getTime();
+  return isFinite(time) && time > Date.now();
+}
+
+function clearAdminSwitchState_(registry) {
+  setSharedSettingValue_(registry, SWITCH_MAINTENANCE, '');
+  setSharedSettingValue_(registry, SWITCH_PROBE, '');
+  setSharedSettingValue_(registry, SWITCH_PROBE_ACK, '');
 }
 
 function getAdminSourceBundles_(payload) {

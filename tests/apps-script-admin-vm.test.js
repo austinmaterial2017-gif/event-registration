@@ -1,10 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
+import { createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 const staffScriptRoot = new URL("../staff-apps-script/", import.meta.url);
 const publicScriptRoot = new URL("../apps-script/", import.meta.url);
+const switchProbeSecret = "test-switch-probe-secret-with-32-bytes";
 
 const headers = {
   "系统设置": ["key", "value", "updatedAt"],
@@ -26,6 +28,7 @@ class FakeSheet {
     this.writeAttemptCount = 0;
     this.writeErrorsByAttempt = new Map();
     this.afterWriteCallbacks = [];
+    this.afterReadCallbacks = [];
   }
 
   failNextWrite(error = new Error(`injected ${this.name} write failure`)) {
@@ -43,8 +46,15 @@ class FakeSheet {
   afterNextWrite(callback) {
     this.afterWriteCallbacks.push(callback);
   }
+  afterNextRead(callback) {
+    this.afterReadCallbacks.push(callback);
+  }
   notifyWrite() {
     const callback = this.afterWriteCallbacks.shift();
+    if (callback) callback();
+  }
+  notifyRead() {
+    const callback = this.afterReadCallbacks.shift();
     if (callback) callback();
   }
   getName() { return this.name; }
@@ -58,8 +68,12 @@ class FakeSheet {
   }
   getRange(row, column, rowCount, columnCount) {
     return {
-      getValues: () => Array.from({ length: rowCount }, (_, y) =>
-        Array.from({ length: columnCount }, (_, x) => this.rows[row - 1 + y]?.[column - 1 + x] ?? "")),
+      getValues: () => {
+        const values = Array.from({ length: rowCount }, (_, y) =>
+          Array.from({ length: columnCount }, (_, x) => this.rows[row - 1 + y]?.[column - 1 + x] ?? ""));
+        this.notifyRead();
+        return values;
+      },
       setValues: (values) => {
         this.consumeWriteFailure();
         this.writeCount += 1;
@@ -150,6 +164,25 @@ function records(sheet) {
     Object.fromEntries(headers[sheet.name].map((key, index) => [key, values[index]])));
 }
 
+function registryValue(harness, key) {
+  const row = records(harness.sourceSheets["系统设置"]).find((candidate) => candidate.key === key);
+  return row ? row.value : null;
+}
+
+function setRegistryValue(harness, key, value) {
+  const sheet = harness.sourceSheets["系统设置"];
+  const keyColumn = headers["系统设置"].indexOf("key");
+  const valueColumn = headers["系统设置"].indexOf("value");
+  const updatedAtColumn = headers["系统设置"].indexOf("updatedAt");
+  const row = sheet.rows.slice(1).find((candidate) => candidate[keyColumn] === key);
+  if (row) {
+    row[valueColumn] = value;
+    row[updatedAtColumn] = "2026-07-26T04:00:00Z";
+  } else {
+    sheet.rows.push([key, value, "2026-07-26T04:00:00Z"]);
+  }
+}
+
 function readHarnessAdminSettings(harness) {
   const shared = records(harness.sourceSheets["系统设置"])
     .find((row) => row.key === "ADMIN_SETTINGS");
@@ -186,10 +219,22 @@ async function createHarness(options = {}) {
   };
   const properties = {
     ACTIVE_SPREADSHEET_ID: "source-sheet-id",
+    ATTENDANCE_STAFF_ALLOWLIST: JSON.stringify(options.staffAllowlist || ["admin@example.com"]),
     ADMIN_EMAIL_ALLOWLIST: JSON.stringify(options.adminAllowlist || ["admin@example.com"]),
-    ADMIN_SETTINGS: JSON.stringify(options.adminSettings || defaultAdminSettings)
+    ADMIN_SETTINGS: JSON.stringify(options.adminSettings || defaultAdminSettings),
+    PUBLIC_BACKEND_URL: "https://script.google.com/macros/s/public-deployment/exec",
+    SWITCH_PROBE_SHARED_SECRET: switchProbeSecret
   };
-  const sourceSheets = Object.fromEntries(Object.entries(cloneRows(options.rows || baseRows()))
+  const sourceRows = cloneRows(options.rows || baseRows());
+  if (options.seedRegistrySettings !== false &&
+      !sourceRows["系统设置"].some((row) => row.key === "ADMIN_SETTINGS")) {
+    sourceRows["系统设置"].push({
+      key: "ADMIN_SETTINGS",
+      value: JSON.stringify(options.adminSettings || defaultAdminSettings),
+      updatedAt: "2026-07-01T00:00:00Z"
+    });
+  }
+  const sourceSheets = Object.fromEntries(Object.entries(sourceRows)
     .map(([name, values]) => [name, new FakeSheet(name, values)]));
   const targetSheets = Object.fromEntries(Object.entries(cloneRows(options.targetRows || baseRows()))
     .map(([name, values]) => [name, new FakeSheet(name, values)]));
@@ -209,9 +254,10 @@ async function createHarness(options = {}) {
   let lockDepth = 0;
   let uuid = 0;
   const RealDate = Date;
+  const serverNow = options.nowIso || "2026-07-26T04:00:00Z";
   class ServerDate extends RealDate {
-    constructor(value) { super(value === undefined ? "2026-07-26T04:00:00Z" : value); }
-    static now() { return RealDate.parse("2026-07-26T04:00:00Z"); }
+    constructor(value) { super(value === undefined ? serverNow : value); }
+    static now() { return RealDate.parse(serverNow); }
   }
   const context = vm.createContext({
     JSON, Object, Array, String, Number, RegExp, Error, Math, isFinite, Date: ServerDate,
@@ -246,10 +292,13 @@ async function createHarness(options = {}) {
       })
     },
     Utilities: {
-      getUuid: () => `generated-${++uuid}`
+      getUuid: () => `generated-${++uuid}`,
+      computeHmacSha256Signature: (value, key) =>
+        Array.from(createHmac("sha256", key).update(value).digest()),
+      base64EncodeWebSafe: (bytes) => Buffer.from(bytes).toString("base64url")
     }
   });
-  for (const file of ["Repository.gs", "AdminService.gs"]) {
+  for (const file of ["Repository.gs", "AttendanceService.gs", "AdminService.gs"]) {
     vm.runInContext(await readFile(new URL(file, staffScriptRoot), "utf8"), context, { filename: file });
   }
   return {
@@ -261,10 +310,17 @@ async function createHarness(options = {}) {
   };
 }
 
-async function createPublicRegistrationContext(sourceSheets, fallbackSettings, additionalSpreadsheets = {}) {
+async function createPublicRegistrationContext(
+  sourceSheets,
+  fallbackSettings,
+  additionalSpreadsheets = {},
+  propertyOverrides = {}
+) {
   const properties = {
     ACTIVE_SPREADSHEET_ID: "source-sheet-id",
-    ADMIN_SETTINGS: JSON.stringify(fallbackSettings)
+    ADMIN_SETTINGS: JSON.stringify(fallbackSettings),
+    SWITCH_PROBE_SHARED_SECRET: switchProbeSecret,
+    ...propertyOverrides
   };
   const spreadsheets = {
     "source-sheet-id": sourceSheets,
@@ -305,13 +361,49 @@ async function createPublicRegistrationContext(sourceSheets, fallbackSettings, a
       })
     },
     Utilities: {
-      getUuid: () => `00000000-0000-4000-8000-${String(++uuid).padStart(12, "0")}`
+      getUuid: () => `00000000-0000-4000-8000-${String(++uuid).padStart(12, "0")}`,
+      computeHmacSha256Signature: (value, key) =>
+        Array.from(createHmac("sha256", key).update(value).digest()),
+      base64EncodeWebSafe: (bytes) => Buffer.from(bytes).toString("base64url")
+    },
+    ContentService: {
+      MimeType: { JSON: "application/json" },
+      createTextOutput: (content) => ({
+        content,
+        setMimeType() { return this; }
+      })
     }
   });
-  for (const file of ["Repository.gs", "RegistrationService.gs", "TicketService.gs"]) {
+  const openedSpreadsheetIds = [];
+  context.SpreadsheetApp.openById = (spreadsheetId) => {
+    openedSpreadsheetIds.push(spreadsheetId);
+    const sheets = spreadsheets[spreadsheetId];
+    if (!sheets) throw new Error("missing spreadsheet");
+    return {
+      getId: () => spreadsheetId,
+      getName: () => spreadsheetId,
+      getSheetByName: (name) => sheets[name] || null
+    };
+  };
+  context.__openedSpreadsheetIds = openedSpreadsheetIds;
+  for (const file of [
+    "Repository.gs",
+    "RegistrationService.gs",
+    "TicketService.gs",
+    "AttendanceService.gs",
+    "SwitchProbeService.gs",
+    "Code.gs"
+  ]) {
     vm.runInContext(await readFile(new URL(file, publicScriptRoot), "utf8"), context, { filename: file });
   }
   return context;
+}
+
+function postPublic(context, action, payload) {
+  const response = context.doPost({
+    postData: { contents: JSON.stringify({ action, payload }) }
+  });
+  return JSON.parse(response.content);
 }
 
 test("event lifecycle changes preserve every related history row and save advanced policy", async () => {
@@ -716,7 +808,90 @@ test("clearing the final identity flag is observed by the separate public regist
   assert.equal(registered.ok, true, JSON.stringify(registered));
 });
 
-test("blank or malformed shared settings use valid legacy settings and never disable duplicate checks", async () => {
+test("a public registration pins one active spreadsheet even when the root pointer changes mid-request", async () => {
+  const rows = baseRows();
+  rows["系统设置"] = [{
+    key: "ADMIN_SETTINGS",
+    value: JSON.stringify({
+      registration: {
+        identityFields: ["email"],
+        events: { "event-1": { identityFields: [] } }
+      }
+    }),
+    updatedAt: "2026-07-01T00:00:00Z"
+  }];
+  const targetRows = baseRows();
+  targetRows["场次"] = [];
+  const harness = await createHarness({ rows, targetRows });
+  const sourceRegistrationCount = records(harness.sourceSheets["报名项目"]).length;
+  const targetSnapshot = JSON.stringify(Object.fromEntries(
+    Object.entries(harness.targetSheets).map(([name, sheet]) => [name, sheet.rows])
+  ));
+  harness.sourceSheets["活动"].afterNextRead(() => {
+    harness.sourceSheets["系统设置"].appendRow([
+      "ACTIVE_SPREADSHEET_ID",
+      "target-sheet-id",
+      "2026-07-26T04:00:00Z"
+    ]);
+    harness.sourceSheets["系统设置"].appendRow([
+      "SWITCH_MAINTENANCE",
+      JSON.stringify({ nonce: "mid-request", expiresAt: "2026-08-10T04:02:00Z" }),
+      "2026-07-26T04:00:00Z"
+    ]);
+  });
+  const publicContext = await createPublicRegistrationContext(
+    harness.sourceSheets,
+    {
+      registration: {
+        identityFields: ["email"],
+        events: { "event-1": { identityFields: ["email"] } }
+      }
+    },
+    { "target-sheet-id": harness.targetSheets }
+  );
+
+  const registered = publicContext.createRegistration({
+    eventId: "event-1",
+    sessionIds: ["session-1"],
+    seatChoices: ["seat-new"],
+    answers: { email: "alice@example.com" }
+  });
+
+  assert.equal(registered.ok, true, JSON.stringify(registered));
+  assert.equal(records(harness.sourceSheets["报名项目"]).length, sourceRegistrationCount + 1);
+  assert.equal(JSON.stringify(Object.fromEntries(
+    Object.entries(harness.targetSheets).map(([name, sheet]) => [name, sheet.rows])
+  )), targetSnapshot);
+  assert.equal(publicContext.createRegistration({
+    eventId: "event-1",
+    sessionIds: ["session-1"],
+    seatChoices: ["seat-new"],
+    answers: { email: "second@example.com" }
+  }).code, "MAINTENANCE");
+});
+
+test("a staff lookup pins one active spreadsheet even when the root pointer changes mid-request", async () => {
+  const rows = baseRows();
+  const targetRows = baseRows();
+  targetRows["活动"] = [];
+  const harness = await createHarness({ rows, targetRows });
+  harness.sourceSheets["报名项目"].afterNextRead(() => {
+    harness.sourceSheets["系统设置"].appendRow([
+      "ACTIVE_SPREADSHEET_ID",
+      "target-sheet-id",
+      "2026-07-26T04:00:00Z"
+    ]);
+  });
+
+  const result = harness.context.getStaffTicketForCheckIn({
+    token: "opaque-private-ticket-token"
+  });
+
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.data.event.title, "Ideas Forum");
+});
+
+test("blank or malformed authoritative registry settings fail closed despite valid project properties", async () => {
   for (const sharedValue of ["", "{not-json"]) {
     const rows = baseRows();
     rows["系统设置"] = [{
@@ -726,11 +901,7 @@ test("blank or malformed shared settings use valid legacy settings and never dis
     }];
     const harness = await createHarness({ rows });
     const dashboard = harness.context.getAdminDashboard({});
-    assert.equal(
-      dashboard.data.questions.find((question) => question.questionId === "email").duplicateIdentity,
-      true,
-      sharedValue
-    );
+    assert.equal(dashboard.code, "INTERNAL", sharedValue);
 
     const publicContext = await createPublicRegistrationContext(
       harness.sourceSheets,
@@ -747,28 +918,24 @@ test("blank or malformed shared settings use valid legacy settings and never dis
       seatChoices: ["seat-new"],
       answers: { email: "alice@example.com" }
     });
-    assert.equal(registered.code, "DUPLICATE_REGISTRATION", sharedValue);
+    assert.equal(registered.code, "INTERNAL", sharedValue);
   }
 });
 
-test("malformed shared and legacy settings fail closed", async () => {
+test("missing authoritative registry settings fail closed despite valid project properties", async () => {
   const rows = baseRows();
-  rows["系统设置"] = [{
-    key: "ADMIN_SETTINGS",
-    value: "{not-json",
-    updatedAt: "2026-07-01T00:00:00Z"
-  }];
-  const harness = await createHarness({
-    rows,
-    adminSettings: "{also-not-json"
-  });
-  harness.properties.ADMIN_SETTINGS = "{also-not-json";
+  const harness = await createHarness({ rows, seedRegistrySettings: false });
 
   assert.equal(harness.context.getAdminDashboard({}).code, "INTERNAL");
 
   const publicContext = await createPublicRegistrationContext(
     harness.sourceSheets,
-    "{also-not-json"
+    {
+      registration: {
+        identityFields: ["email"],
+        events: { "event-1": { identityFields: ["email"] } }
+      }
+    }
   );
   const registered = publicContext.createRegistration({
     eventId: "event-1",
@@ -966,10 +1133,8 @@ test("connection testing validates the target without returning or activating it
   assert.equal(harness.context.testAdminSheetConnection({ spreadsheetId: "missing" }).code, "SHEET_CONNECTION_FAILED");
 });
 
-test("Sheet switching requires confirmation and publishes a pointer followed by the public project", async () => {
-  const harness = await createHarness();
-  const sourceCounts = Object.fromEntries(Object.entries(harness.sourceSheets)
-    .map(([name, sheet]) => [name, sheet.rows.length]));
+test("Sheet switching stages maintenance, waits for a public-deployer ack, then atomically publishes the pointer", async () => {
+  const harness = await createHarness({ nowIso: "2026-08-10T04:00:00Z" });
   const targetCounts = Object.fromEntries(Object.entries(harness.targetSheets)
     .map(([name, sheet]) => [name, sheet.rows.length]));
 
@@ -982,14 +1147,45 @@ test("Sheet switching requires confirmation and publishes a pointer followed by 
     {},
     { "target-sheet-id": harness.targetSheets }
   );
-  harness.sourceSheets["系统设置"].afterNextWrite(() => {
-    assert.equal(publicContext.getConfiguredSpreadsheet().getId(), "target-sheet-id");
-    assert.equal(harness.context.getConfiguredSpreadsheet_().getId(), "target-sheet-id");
-    assert.equal(harness.properties.ACTIVE_SPREADSHEET_ID, "source-sheet-id");
+
+  const staged = harness.context.switchAdminSheet({
+    spreadsheetId: "target-sheet-id",
+    confirm: true
   });
+  assert.equal(staged.ok, true);
+  assert.equal(staged.data.state, "probe_required");
+  assert.equal(typeof staged.data.nonce, "string");
+  assert.ok(staged.data.nonce.length >= 32);
+  assert.equal(staged.data.probeUrl, harness.properties.PUBLIC_BACKEND_URL);
+  assert.equal(JSON.stringify(staged).includes("target-sheet-id"), false);
+  assert.equal(registryValue(harness, "ACTIVE_SPREADSHEET_ID"), null);
+  assert.equal(JSON.parse(registryValue(harness, "SWITCH_MAINTENANCE")).nonce, staged.data.nonce);
+  assert.equal(JSON.parse(registryValue(harness, "SWITCH_PROBE")).candidateSpreadsheetId, "target-sheet-id");
+
+  const blockedRegistration = publicContext.createRegistration({
+    eventId: "event-1",
+    sessionIds: ["session-1"],
+    seatChoices: ["seat-new"],
+    answers: { email: "during-switch@example.com" }
+  });
+  assert.equal(blockedRegistration.code, "MAINTENANCE");
+  assert.equal(publicContext.cancelRegistration({}).code, "MAINTENANCE");
+  assert.equal(publicContext.exchangeSeat({}).code, "MAINTENANCE");
+  assert.equal(harness.context.checkIn({}).code, "MAINTENANCE");
+  assert.equal(harness.context.saveAdminEvent({}).code, "MAINTENANCE");
+
+  assert.deepEqual(
+    postPublic(publicContext, "probeSheetSwitch", { nonce: staged.data.nonce }),
+    { ok: true, data: { status: "processed" } }
+  );
+  const ack = JSON.parse(registryValue(harness, "SWITCH_PROBE_ACK"));
+  assert.equal(ack.nonce, staged.data.nonce);
+  assert.equal(typeof ack.signature, "string");
+  assert.ok(ack.signature.length >= 32);
+  assert.equal(registryValue(harness, "ACTIVE_SPREADSHEET_ID"), null);
 
   const switched = harness.context.switchAdminSheet({
-    spreadsheetId: "target-sheet-id",
+    nonce: staged.data.nonce,
     confirm: true
   });
   assert.equal(switched.ok, true);
@@ -998,32 +1194,125 @@ test("Sheet switching requires confirmation and publishes a pointer followed by 
   assert.match(switched.data.warning, /不会自动迁移/);
   assert.equal(harness.properties.ACTIVE_SPREADSHEET_ID, "source-sheet-id");
   assert.equal(JSON.stringify(switched).includes("target-sheet-id"), false);
-  const pointer = records(harness.sourceSheets["系统设置"])
-    .find((row) => row.key === "ACTIVE_SPREADSHEET_ID");
-  assert.equal(pointer.value, "target-sheet-id");
+  assert.equal(registryValue(harness, "ACTIVE_SPREADSHEET_ID"), "target-sheet-id");
+  assert.equal(registryValue(harness, "SWITCH_MAINTENANCE"), "");
+  assert.equal(registryValue(harness, "SWITCH_PROBE"), "");
+  assert.equal(registryValue(harness, "SWITCH_PROBE_ACK"), "");
+  assert.equal(
+    publicContext.getConfiguredSpreadsheet(publicContext.getRegistrySpreadsheet_()).getId(),
+    "target-sheet-id"
+  );
 
-  assert.equal(publicContext.getConfiguredSpreadsheet().getId(), "target-sheet-id");
+  for (const [name, count] of Object.entries(targetCounts)) {
+    assert.equal(harness.targetSheets[name].rows.length, count, `target ${name}`);
+  }
+});
 
-  const switchedBack = harness.context.switchAdminSheet({
-    spreadsheetId: "source-sheet-id",
+test("Sheet switching aborts maintenance without publishing when no public ack arrives", async () => {
+  const harness = await createHarness({ nowIso: "2026-08-10T04:00:00Z" });
+  const staged = harness.context.switchAdminSheet({
+    spreadsheetId: "target-sheet-id",
     confirm: true
   });
-  assert.equal(switchedBack.ok, true);
-  assert.equal(harness.properties.ACTIVE_SPREADSHEET_ID, "source-sheet-id");
-  assert.equal(publicContext.getConfiguredSpreadsheet().getId(), "source-sheet-id");
 
-  for (const [name, count] of Object.entries(sourceCounts)) {
-    assert.equal(
-      harness.sourceSheets[name].rows.length,
-      count + (name === "系统设置" ? 1 : 0),
-      `source ${name}`
-    );
-  }
-  for (const [name, count] of Object.entries(targetCounts)) {
-    assert.equal(
-      harness.targetSheets[name].rows.length,
-      count + (name === "系统设置" ? 1 : 0),
-      `target ${name}`
-    );
-  }
+  assert.equal(staged.ok, true);
+  const finalized = harness.context.switchAdminSheet({ nonce: staged.data.nonce, confirm: true });
+
+  assert.equal(finalized.code, "SHEET_CONNECTION_FAILED");
+  assert.equal(registryValue(harness, "ACTIVE_SPREADSHEET_ID"), null);
+  assert.equal(registryValue(harness, "SWITCH_MAINTENANCE"), "");
+  assert.equal(registryValue(harness, "SWITCH_PROBE"), "");
+  assert.equal(registryValue(harness, "SWITCH_PROBE_ACK"), "");
+});
+
+test("the public switch probe accepts only the staged nonce and never an arbitrary Sheet ID", async () => {
+  const harness = await createHarness({ nowIso: "2026-08-10T04:00:00Z" });
+  const publicContext = await createPublicRegistrationContext(
+    harness.sourceSheets,
+    {},
+    {
+      "target-sheet-id": harness.targetSheets,
+      "attacker-sheet-id": Object.fromEntries(Object.entries(cloneRows(baseRows()))
+        .map(([name, values]) => [name, new FakeSheet(name, values)]))
+    }
+  );
+  const staged = harness.context.switchAdminSheet({
+    spreadsheetId: "target-sheet-id",
+    confirm: true
+  });
+
+  assert.deepEqual(
+    postPublic(publicContext, "probeSheetSwitch", {
+      nonce: "wrong-nonce",
+      spreadsheetId: "attacker-sheet-id"
+    }),
+    { ok: true, data: { status: "processed" } }
+  );
+  assert.equal(registryValue(harness, "SWITCH_PROBE_ACK"), "");
+  assert.equal(publicContext.__openedSpreadsheetIds.includes("attacker-sheet-id"), false);
+  assert.equal(
+    harness.context.switchAdminSheet({ nonce: "wrong-nonce", confirm: true }).code,
+    "CONFLICT"
+  );
+  assert.notEqual(registryValue(harness, "SWITCH_MAINTENANCE"), "");
+
+  assert.equal(
+    harness.context.switchAdminSheet({ nonce: staged.data.nonce, confirm: true }).code,
+    "SHEET_CONNECTION_FAILED"
+  );
+  assert.equal(registryValue(harness, "SWITCH_MAINTENANCE"), "");
+  assert.equal(registryValue(harness, "ACTIVE_SPREADSHEET_ID"), null);
+});
+
+test("an expired switch probe cannot be acknowledged or published", async () => {
+  const harness = await createHarness({ nowIso: "2026-08-10T04:00:00Z" });
+  const publicContext = await createPublicRegistrationContext(
+    harness.sourceSheets,
+    {},
+    { "target-sheet-id": harness.targetSheets }
+  );
+  const staged = harness.context.switchAdminSheet({
+    spreadsheetId: "target-sheet-id",
+    confirm: true
+  });
+  const expired = "2026-08-10T03:59:59.000Z";
+  const probe = JSON.parse(registryValue(harness, "SWITCH_PROBE"));
+  const maintenance = JSON.parse(registryValue(harness, "SWITCH_MAINTENANCE"));
+  probe.expiresAt = expired;
+  maintenance.expiresAt = expired;
+  setRegistryValue(harness, "SWITCH_PROBE", JSON.stringify(probe));
+  setRegistryValue(harness, "SWITCH_MAINTENANCE", JSON.stringify(maintenance));
+
+  assert.deepEqual(
+    postPublic(publicContext, "probeSheetSwitch", { nonce: staged.data.nonce }),
+    { ok: true, data: { status: "processed" } }
+  );
+  assert.equal(registryValue(harness, "SWITCH_PROBE_ACK"), "");
+  assert.equal(
+    harness.context.switchAdminSheet({ nonce: staged.data.nonce, confirm: true }).code,
+    "SHEET_CONNECTION_FAILED"
+  );
+  assert.equal(registryValue(harness, "ACTIVE_SPREADSHEET_ID"), null);
+  assert.equal(registryValue(harness, "SWITCH_MAINTENANCE"), "");
+});
+
+test("a target the public deployer cannot open never receives pointer publication", async () => {
+  const harness = await createHarness({ nowIso: "2026-08-10T04:00:00Z" });
+  const publicContext = await createPublicRegistrationContext(harness.sourceSheets, {});
+  const staged = harness.context.switchAdminSheet({
+    spreadsheetId: "target-sheet-id",
+    confirm: true
+  });
+
+  assert.deepEqual(
+    postPublic(publicContext, "probeSheetSwitch", { nonce: staged.data.nonce }),
+    { ok: true, data: { status: "processed" } }
+  );
+  assert.equal(registryValue(harness, "SWITCH_PROBE_ACK"), "");
+  assert.equal(
+    harness.context.switchAdminSheet({ nonce: staged.data.nonce, confirm: true }).code,
+    "SHEET_CONNECTION_FAILED"
+  );
+  assert.equal(registryValue(harness, "ACTIVE_SPREADSHEET_ID"), null);
+  assert.equal(registryValue(harness, "SWITCH_MAINTENANCE"), "");
 });

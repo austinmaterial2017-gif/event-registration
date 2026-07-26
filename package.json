@@ -3,6 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test tests/*.test.js"
+    "test": "node --test tests/*.test.js",
+    "check:bundles": "node scripts/build-admin-source-bundles.mjs --check",
+    "check:public": "node scripts/check-public-package.mjs",
+    "check": "npm test && npm run check:bundles && npm run check:public"
   }
 }

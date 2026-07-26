@@ -29,3 +29,22 @@
 ## Concerns
 
 None.
+
+## Fix round 1
+
+- Masked participant names in every owner ticket projection; contacts remain masked and dynamic/private answers are never projected.
+- Corrected seat grouping: a blank-session seat is one event-level seat shared by the registration, while session-bound seats allocate one matching label/zone per selected session. One public seat choice can drive either model.
+- Registration items are now built and appended with one batched `setValues` call after validation. Participant/registration/seat compensation reports `INTEGRITY_ERROR` and records `INTEGRITY_ALERT` if restoration fails.
+- Exchange snapshots cover all registration rows and both old/new seats. A normal failure restores the old seat and original token; restoration failure is no longer suppressed and produces an explicit integrity result plus audit.
+- Expired seat holds are made available, stale ownership is cleared, and the same behavior applies when exchanging a seat.
+- Numeric form strings use strict decimal/scientific syntax and are stored as finite numbers. Hexadecimal and other coercion-only formats are rejected.
+- Unknown selection and seat modes, plus malformed nonempty event timestamps, now fail closed.
+- Ticket lookup now holds the script lock while collecting its multi-sheet snapshot.
+- Added `apps-script-registration-vm.test.js`, which evaluates the real Apps Script services with mocked Spreadsheet, lock, and UUID services. It covers masking, shared/session seat allocation, numeric conversion, fail-closed modes/timestamps, expired holds, partial write rollback, compensation failure auditing, batched writes, serialized duplicate calls, cancellation persistence, lookup locking, token rotation, old-seat restoration, integrity failures, and exact route rejection.
+
+### Fix-round verification
+
+- Target VM suite: 15 passed, 0 failed.
+- Full `npm.cmd test`: 50 passed, 0 failed, 0 skipped.
+- Apps Script syntax compilation check: 3 files passed.
+- `git diff --check`: passed.

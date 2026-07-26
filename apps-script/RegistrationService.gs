@@ -37,6 +37,9 @@ function createRegistration(payload) {
         request.seatHoldOwner,
         now
       );
+      var expiredSeats = seats.filter(function(seat) {
+        return seat.expiredHold === true && selectedSeats.indexOf(seat) === -1;
+      });
 
       var registrationId = Utilities.getUuid();
       var participantId = Utilities.getUuid();
@@ -45,30 +48,28 @@ function createRegistration(payload) {
       var createdAt = now.toISOString();
       var spreadsheet = getConfiguredSpreadsheet();
       var appendedRows = [];
-      var seatSnapshots = snapshotSeatRows_(spreadsheet, selectedSeats);
+      var seatSnapshots = snapshotSeatRows_(spreadsheet, selectedSeats.concat(expiredSeats));
       var participant;
 
       try {
         participant = appendParticipantRow_(spreadsheet, participantId, answers, createdAt);
         appendedRows.push(participant);
         var rowsToWrite = selectedSessions.length ? selectedSessions : [null];
-        var registrationRows = rowsToWrite.map(function(session) {
-          var appended = appendRegistrationRow_(
-            spreadsheet,
-            registrationId,
-            participantId,
-            event.eventId,
-            ticketNumber,
-            session,
-            selectedSeats,
-            answers,
-            token,
-            policy,
-            createdAt
-          );
-          appendedRows.push(appended);
-          return appended;
-        });
+        var registrationBatch = appendRegistrationRows_(
+          spreadsheet,
+          registrationId,
+          participantId,
+          event.eventId,
+          ticketNumber,
+          rowsToWrite,
+          selectedSeats,
+          answers,
+          token,
+          policy,
+          createdAt
+        );
+        appendedRows.push(registrationBatch);
+        clearExpiredSeatHolds_(spreadsheet, expiredSeats, createdAt);
         claimRegistrationSeats_(spreadsheet, selectedSeats, registrationId, createdAt);
         appendRegistrationAudit_(spreadsheet, 'CREATE_REGISTRATION', registrationId, {
           eventId: event.eventId,
@@ -87,8 +88,11 @@ function createRegistration(payload) {
           createdAt
         );
       } catch (error) {
-        rollbackRegistrationWrites_(appendedRows);
-        restoreSeatSnapshots_(seatSnapshots);
+        var rollbackFailures = rollbackRegistrationWrites_(appendedRows)
+          .concat(restoreSeatSnapshots_(seatSnapshots));
+        if (rollbackFailures.length) {
+          raiseRegistrationIntegrityError_(spreadsheet, registrationId, rollbackFailures);
+        }
         throw error;
       }
     });
@@ -113,6 +117,7 @@ function registrationFailure_(code) {
     REGISTRATION_NOT_OPEN: '报名尚未开放。',
     DUPLICATE_REGISTRATION: '相同身份信息已报名。',
     SEAT_UNAVAILABLE: '所选座位不可用。',
+    INTEGRITY_ERROR: '数据一致性检查失败，请联系管理员。',
     INTERNAL: '请求未能完成，请稍后重试。'
   };
   var safeCode = Object.prototype.hasOwnProperty.call(allowed, code) ? code : 'INTERNAL';
@@ -149,6 +154,8 @@ function requireOpenEvent_(eventId, now) {
   var nowMs = now.getTime();
   var opensAt = parseRegistrationDate_(event.opensAt);
   var closesAt = parseRegistrationDate_(event.closesAt);
+  if (hasRegistrationValue_(event.opensAt) && opensAt === null) registrationError_('INVALID_REQUEST');
+  if (hasRegistrationValue_(event.closesAt) && closesAt === null) registrationError_('INVALID_REQUEST');
   if (opensAt !== null && nowMs < opensAt) registrationError_('REGISTRATION_NOT_OPEN');
   if (closesAt !== null && nowMs >= closesAt) registrationError_('REGISTRATION_CLOSED');
   return event;
@@ -179,6 +186,11 @@ function validateDynamicAnswers_(questions, submittedAnswers) {
 
     var constraints = parseQuestionOptions_(question.options);
     if (type === 'number') {
+      if (typeof value === 'string') {
+        var numericText = value.trim();
+        if (!/^-?(?:\d+|\d*\.\d+)(?:[eE][+-]?\d+)?$/.test(numericText)) registrationError_('INVALID_REQUEST');
+        value = Number(numericText);
+      }
       if (typeof value !== 'number' || !isFinite(value)) registrationError_('INVALID_REQUEST');
       if (constraints.min !== undefined && value < Number(constraints.min)) registrationError_('INVALID_REQUEST');
       if (constraints.max !== undefined && value > Number(constraints.max)) registrationError_('INVALID_REQUEST');
@@ -224,6 +236,8 @@ function validateSessionSelection_(event, sessions, submittedSessionIds) {
   });
 
   var selectionMode = String(event.selectionMode || 'free').toLowerCase();
+  var allowedSelectionModes = { none: true, single: true, all: true, free: true, mixed: true, multiple: true };
+  if (!allowedSelectionModes[selectionMode]) registrationError_('INVALID_REQUEST');
   if (selectionMode === 'none' && selected.length) registrationError_('INVALID_REQUEST');
   if (selectionMode === 'single' && selected.length !== 1) registrationError_('INVALID_REQUEST');
   if (selectionMode === 'all' && selected.length !== sessions.length) registrationError_('INVALID_REQUEST');
@@ -288,23 +302,31 @@ function validateSessionConflicts_(selectedSessions) {
 function selectRegistrationSeats_(event, policy, selectedSessions, seats, submittedChoices, holdOwner, now) {
   if (!Array.isArray(submittedChoices)) registrationError_('INVALID_REQUEST');
   var seatMode = String(event.seatMode || 'none').toLowerCase();
+  if (!{ none: true, auto: true, self: true, zone: true }[seatMode]) registrationError_('INVALID_REQUEST');
   if (seatMode === 'none') {
     if (submittedChoices.length) registrationError_('INVALID_REQUEST');
     return [];
   }
-  var requiredSeatCount = selectedSessions.length || 1;
+  seats.forEach(function(seat) { expireSeatHold_(seat, policy, now); });
+  var sharedSeats = seats.filter(function(seat) { return !seat.sessionId; });
+  var seatGroups = sharedSeats.length ? [{ sessionId: '', seats: sharedSeats }] :
+    (selectedSessions.length ? selectedSessions.map(function(session) {
+      return {
+        sessionId: session.sessionId,
+        seats: seats.filter(function(seat) { return seat.sessionId === session.sessionId; })
+      };
+    }) : [{ sessionId: '', seats: seats }]);
   var chosen = [];
   var used = {};
   var choices = submittedChoices.slice();
-  if (seatMode === 'self' && choices.length !== requiredSeatCount) registrationError_('INVALID_REQUEST');
-  if (seatMode === 'zone' && choices.length !== requiredSeatCount) registrationError_('INVALID_REQUEST');
+  if ((seatMode === 'self' || seatMode === 'zone') &&
+      choices.length !== 1 && choices.length !== seatGroups.length) registrationError_('INVALID_REQUEST');
 
-  for (var index = 0; index < requiredSeatCount; index += 1) {
-    var sessionId = selectedSessions[index] ? selectedSessions[index].sessionId : '';
-    var choice = choices[index];
-    var candidate = seats.filter(function(seat) {
+  for (var index = 0; index < seatGroups.length; index += 1) {
+    var group = seatGroups[index];
+    var choice = choices.length === 1 ? choices[0] : choices[index];
+    var candidate = group.seats.filter(function(seat) {
       if (used[seat.seatId]) return false;
-      if (seat.sessionId && sessionId && seat.sessionId !== sessionId) return false;
       if (seatMode === 'self' && seat.seatId !== choice && seat.label !== choice) return false;
       if (seatMode === 'zone' && seat.zone !== choice) return false;
       return isSeatAvailableForRegistration_(seat, policy, holdOwner, now);
@@ -322,6 +344,22 @@ function isSeatAvailableForRegistration_(seat, policy, holdOwner, now) {
   if (status !== 'held' || !policy.seatHoldsEnabled) return false;
   var hold = parseSeatHold_(seat);
   return !!hold && hold.holdOwner === holdOwner && hold.holdExpiresAt > now.getTime();
+}
+
+function expireSeatHold_(seat, policy, now) {
+  if (String(seat.status || '').toLowerCase() !== 'held' || !policy.seatHoldsEnabled) return;
+  var hold = parseSeatHold_(seat);
+  if (hold && hold.holdExpiresAt !== null && hold.holdExpiresAt <= now.getTime()) {
+    seat.expiredHoldSnapshot = {
+      seatId: seat.seatId, eventId: seat.eventId, sessionId: seat.sessionId,
+      label: seat.label, zone: seat.zone, status: seat.status,
+      holderRegistrationId: seat.holderRegistrationId,
+      createdAt: seat.createdAt, updatedAt: seat.updatedAt
+    };
+    seat.status = 'available';
+    seat.holderRegistrationId = '';
+    seat.expiredHold = true;
+  }
 }
 
 function parseSeatHold_(seat) {
@@ -361,33 +399,35 @@ function appendParticipantRow_(spreadsheet, participantId, answers, createdAt) {
   return { sheet: sheet, rowNumber: rowNumber, values: values };
 }
 
-function appendRegistrationRow_(spreadsheet, registrationId, participantId, eventId, ticketNumber,
-  session, selectedSeats, answers, token, policy, createdAt) {
+function appendRegistrationRows_(spreadsheet, registrationId, participantId, eventId, ticketNumber,
+  sessions, selectedSeats, answers, token, policy, createdAt) {
   var sheet = getRequiredSheet_(spreadsheet, '报名项目');
-  var sessionId = session ? session.sessionId : '';
-  var seatIds = selectedSeats.filter(function(seat) {
-    return !sessionId || !seat.sessionId || seat.sessionId === sessionId;
-  }).map(function(seat) { return seat.seatId; });
   var storedAnswers = JSON.stringify({
     values: answers,
     ticketToken: token,
     verificationField: policy.verificationField || (policy.identityFields[0] || '')
   });
-  var values = normalizeRow_('报名项目', {
-    registrationId: registrationId,
-    eventId: eventId,
-    participantId: participantId,
-    ticketNumber: ticketNumber,
-    status: 'active',
-    sessionIds: JSON.stringify(session ? [sessionId] : []),
-    seatChoices: JSON.stringify(seatIds),
-    answers: storedAnswers,
-    createdAt: createdAt,
-    updatedAt: createdAt
+  var rows = sessions.map(function(session) {
+    var sessionId = session ? session.sessionId : '';
+    var seatIds = selectedSeats.filter(function(seat) {
+      return !sessionId || !seat.sessionId || seat.sessionId === sessionId;
+    }).map(function(seat) { return seat.seatId; });
+    return normalizeRow_('报名项目', {
+      registrationId: registrationId,
+      eventId: eventId,
+      participantId: participantId,
+      ticketNumber: ticketNumber,
+      status: 'active',
+      sessionIds: JSON.stringify(session ? [sessionId] : []),
+      seatChoices: JSON.stringify(seatIds),
+      answers: storedAnswers,
+      createdAt: createdAt,
+      updatedAt: createdAt
+    });
   });
   var rowNumber = sheet.getLastRow() + 1;
-  sheet.getRange(rowNumber, 1, 1, values.length).setValues([values]);
-  return { sheet: sheet, rowNumber: rowNumber, values: values };
+  sheet.getRange(rowNumber, 1, rows.length, rows[0].length).setValues(rows);
+  return { sheet: sheet, rowNumber: rowNumber, rowCount: rows.length };
 }
 
 function claimRegistrationSeats_(spreadsheet, seats, registrationId, updatedAt) {
@@ -409,6 +449,25 @@ function claimRegistrationSeats_(spreadsheet, seats, registrationId, updatedAt) 
   });
 }
 
+function clearExpiredSeatHolds_(spreadsheet, seats, updatedAt) {
+  if (!seats.length) return;
+  var sheet = getRequiredSheet_(spreadsheet, '座位');
+  seats.forEach(function(seat) {
+    var values = normalizeRow_('座位', {
+      seatId: seat.seatId,
+      eventId: seat.eventId,
+      sessionId: seat.sessionId,
+      label: seat.label,
+      zone: seat.zone,
+      status: 'available',
+      holderRegistrationId: '',
+      createdAt: seat.createdAt,
+      updatedAt: updatedAt
+    });
+    sheet.getRange(seat.rowNumber, 1, 1, values.length).setValues([values]);
+  });
+}
+
 function snapshotSeatRows_(spreadsheet, seats) {
   if (!seats.length) return [];
   var sheet = getRequiredSheet_(spreadsheet, '座位');
@@ -416,29 +475,51 @@ function snapshotSeatRows_(spreadsheet, seats) {
     return {
       sheet: sheet,
       rowNumber: seat.rowNumber,
-      values: normalizeRow_('座位', seat)
+      values: normalizeRow_('座位', seat.expiredHoldSnapshot || seat)
     };
   });
 }
 
 function restoreSeatSnapshots_(snapshots) {
+  var failures = [];
   snapshots.forEach(function(snapshot) {
     try {
       snapshot.sheet.getRange(snapshot.rowNumber, 1, 1, snapshot.values.length).setValues([snapshot.values]);
-    } catch (_ignored) {
-      // Best-effort compensation; the original safe error is returned.
+    } catch (error) {
+      failures.push(error);
     }
   });
+  return failures;
 }
 
 function rollbackRegistrationWrites_(appendedRows) {
+  var failures = [];
   appendedRows.slice().reverse().forEach(function(appended) {
     try {
-      appended.sheet.deleteRow(appended.rowNumber);
-    } catch (_ignored) {
-      // Best-effort compensation; subsequent rows are still attempted.
+      if (appended.rowCount > 1) appended.sheet.deleteRows(appended.rowNumber, appended.rowCount);
+      else appended.sheet.deleteRow(appended.rowNumber);
+    } catch (error) {
+      failures.push(error);
     }
   });
+  return failures;
+}
+
+function raiseRegistrationIntegrityError_(spreadsheet, registrationId, rollbackFailures) {
+  var auditFailure = null;
+  try {
+    appendRegistrationAudit_(spreadsheet, 'INTEGRITY_ALERT', registrationId, {
+      stage: 'CREATE_REGISTRATION',
+      restoreFailureCount: rollbackFailures.length
+    });
+  } catch (error) {
+    auditFailure = error;
+  }
+  var integrityError = new Error('INTEGRITY_ERROR');
+  integrityError.publicCode = 'INTEGRITY_ERROR';
+  integrityError.restoreFailures = rollbackFailures;
+  integrityError.auditFailure = auditFailure;
+  throw integrityError;
 }
 
 function appendRegistrationAudit_(spreadsheet, action, registrationId, details) {
@@ -459,7 +540,7 @@ function registrationTicketProjection_(event, registrationId, ticketNumber, toke
     eventTitle: event.title,
     status: status,
     participant: {
-      name: participantValues[1] || '',
+      name: maskRegistrationName_(participantValues[1] || ''),
       phone: maskRegistrationPrivateValue_(participantValues[2] || ''),
       email: maskRegistrationPrivateValue_(participantValues[3] || '')
     },
@@ -472,6 +553,12 @@ function registrationTicketProjection_(event, registrationId, ticketNumber, toke
     createdAt: createdAt,
     updatedAt: createdAt
   };
+}
+
+function maskRegistrationName_(value) {
+  var text = String(value || '').trim();
+  if (!text) return '';
+  return text.slice(0, 1) + new Array(Math.max(2, text.length)).join('*');
 }
 
 function maskRegistrationPrivateValue_(value) {
@@ -522,8 +609,20 @@ function parseStringArray_(serialized) {
 
 function parseRegistrationDate_(value) {
   if (value === '' || value === undefined || value === null) return null;
-  var timestamp = value instanceof Date ? value.getTime() : new Date(value).getTime();
+  if (value instanceof Date) return isFinite(value.getTime()) ? value.getTime() : null;
+  var text = String(value).trim();
+  var dateParts = /^(\d{4})-(\d{2})-(\d{2})(?:T.*)?$/.exec(text);
+  if (!dateParts) return null;
+  var year = Number(dateParts[1]);
+  var month = Number(dateParts[2]);
+  var day = Number(dateParts[3]);
+  if (month < 1 || month > 12 || day < 1 || day > new Date(Date.UTC(year, month, 0)).getUTCDate()) return null;
+  var timestamp = new Date(text).getTime();
   return isFinite(timestamp) ? timestamp : null;
+}
+
+function hasRegistrationValue_(value) {
+  return value !== '' && value !== undefined && value !== null;
 }
 
 function normalizeIdentityValue_(value) {

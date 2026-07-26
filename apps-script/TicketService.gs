@@ -5,8 +5,10 @@
  */
 function lookupTicket(payload) {
   return runTicketService_(function() {
-    var match = requireVerifiedTicket_(payload, readRows('报名项目'));
-    return ticketProjectionFromRecords_(match);
+    return withScriptLock(function() {
+      var match = requireVerifiedTicket_(payload, readRows('报名项目'));
+      return ticketProjectionFromRecords_(match);
+    });
   });
 }
 
@@ -43,8 +45,12 @@ function cancelRegistration(payload) {
         match.status = 'cancelled';
         return ticketProjectionFromRecords_(match);
       } catch (error) {
-        restoreTicketSnapshots_(registrationSnapshots.concat(seatSnapshots));
-        rollbackTicketAudit_(auditSnapshot);
+        var restoreFailures = restoreTicketSnapshots_(registrationSnapshots.concat(seatSnapshots));
+        var auditRollbackFailure = rollbackTicketAudit_(auditSnapshot);
+        if (auditRollbackFailure) restoreFailures.push(auditRollbackFailure);
+        if (restoreFailures.length) {
+          raiseTicketIntegrityError_(spreadsheet, match.registrationId, 'CANCEL_REGISTRATION', restoreFailures);
+        }
         throw error;
       }
     });
@@ -78,8 +84,10 @@ function exchangeSeat(payload) {
         return (seat.seatId === payload.newSeatId || seat.label === payload.newSeatId) &&
           (!oldSeat.sessionId || !seat.sessionId || seat.sessionId === oldSeat.sessionId);
       })[0];
+      var exchangeNow = new Date();
+      if (newSeat) expireSeatHold_(newSeat, policy, exchangeNow);
       if (!newSeat || newSeat.seatId === oldSeat.seatId ||
-          !isSeatAvailableForRegistration_(newSeat, policy, String(payload.seatHoldOwner || ''), new Date())) {
+          !isSeatAvailableForRegistration_(newSeat, policy, String(payload.seatHoldOwner || ''), exchangeNow)) {
         ticketError_('SEAT_UNAVAILABLE');
       }
 
@@ -104,8 +112,12 @@ function exchangeSeat(payload) {
         match.seats.push(newSeat);
         return ticketProjectionFromRecords_(match);
       } catch (error) {
-        restoreExchangeSnapshots_(registrationSnapshots.concat(seatSnapshots));
-        rollbackTicketAudit_(auditSnapshot);
+        var restoreFailures = restoreExchangeSnapshots_(registrationSnapshots.concat(seatSnapshots));
+        var auditRollbackFailure = rollbackTicketAudit_(auditSnapshot);
+        if (auditRollbackFailure) restoreFailures.push(auditRollbackFailure);
+        if (restoreFailures.length) {
+          raiseTicketIntegrityError_(spreadsheet, match.registrationId, 'EXCHANGE_SEAT', restoreFailures);
+        }
         throw error;
       }
     });
@@ -128,6 +140,7 @@ function ticketFailure_(code) {
     TICKET_VERIFICATION_FAILED: '验证信息不匹配。',
     SEAT_EXCHANGE_DISABLED: '该活动不允许更换座位。',
     SEAT_UNAVAILABLE: '所选座位不可用。',
+    INTEGRITY_ERROR: '数据一致性检查失败，请联系管理员。',
     INTERNAL: '请求未能完成，请稍后重试。'
   };
   var safeCode = Object.prototype.hasOwnProperty.call(messages, code) ? code : 'INTERNAL';
@@ -210,7 +223,7 @@ function ticketProjectionFromRecords_(match) {
     eventTitle: match.event.title,
     status: match.status,
     participant: {
-      name: match.participant.name || '',
+      name: maskName_(match.participant.name),
       phone: maskPrivateValue_(match.participant.phone),
       email: maskPrivateValue_(match.participant.email)
     },
@@ -228,6 +241,12 @@ function ticketProjectionFromRecords_(match) {
     createdAt: createdAt,
     updatedAt: updatedAt
   };
+}
+
+function maskName_(value) {
+  var text = String(value || '').trim();
+  if (!text) return '';
+  return text.slice(0, 1) + new Array(Math.max(2, text.length)).join('*');
 }
 
 function maskPrivateValue_(value) {
@@ -252,17 +271,19 @@ function snapshotTicketRows_(spreadsheet, sheetName, rows) {
 }
 
 function restoreTicketSnapshots_(snapshots) {
+  var failures = [];
   snapshots.forEach(function(snapshot) {
     try {
       snapshot.sheet.getRange(snapshot.row, 1, 1, snapshot.values.length).setValues([snapshot.values]);
-    } catch (_ignored) {
-      // Continue restoring the remaining snapshots.
+    } catch (error) {
+      failures.push(error);
     }
   });
+  return failures;
 }
 
 function restoreExchangeSnapshots_(snapshots) {
-  restoreTicketSnapshots_(snapshots);
+  return restoreTicketSnapshots_(snapshots);
 }
 
 function updateTicketRegistrationRows_(spreadsheet, records, transform) {
@@ -347,10 +368,28 @@ function appendTicketAudit_(spreadsheet, action, registrationId, details) {
 }
 
 function rollbackTicketAudit_(snapshot) {
-  if (!snapshot) return;
+  if (!snapshot) return null;
   try {
     snapshot.sheet.deleteRow(snapshot.row);
-  } catch (_ignored) {
-    // The primary transaction failure remains the public result.
+    return null;
+  } catch (error) {
+    return error;
   }
+}
+
+function raiseTicketIntegrityError_(spreadsheet, registrationId, stage, restoreFailures) {
+  var auditFailure = null;
+  try {
+    appendTicketAudit_(spreadsheet, 'INTEGRITY_ALERT', registrationId, {
+      stage: stage,
+      restoreFailureCount: restoreFailures.length
+    });
+  } catch (error) {
+    auditFailure = error;
+  }
+  var integrityError = new Error('INTEGRITY_ERROR');
+  integrityError.publicCode = 'INTEGRITY_ERROR';
+  integrityError.restoreFailures = restoreFailures;
+  integrityError.auditFailure = auditFailure;
+  throw integrityError;
 }

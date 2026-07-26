@@ -107,7 +107,8 @@ test("registration writes are atomic, append one item per selected session, and 
   const registration = await source("RegistrationService.gs");
   assert.match(registration, /selectedSessions\.map\s*\(/);
   assert.match(registration, /appendParticipantRow_/);
-  assert.match(registration, /appendRegistrationRow_/);
+  assert.match(registration, /appendRegistrationRows_/);
+  assert.match(registration, /getRange\(rowNumber,\s*1,\s*rows\.length,\s*rows\[0\]\.length\)\.setValues\(rows\)/);
   assert.match(registration, /catch\s*\([^)]*\)\s*\{[\s\S]*rollbackRegistrationWrites_/);
   assert.match(registration, /function\s+rollbackRegistrationWrites_\s*\(/);
   assert.match(registration, /deleteRow\s*\(/);
@@ -123,10 +124,13 @@ test("ticket lookup, cancellation, and exchange preserve privacy and historical 
   }
   assert.match(ticket, /verificationValue/);
   assert.match(ticket, /maskPrivateValue_/);
+  assert.match(ticket, /maskName_/);
   assert.match(ticket, /seatExchangeEnabled/);
   assert.match(ticket, /rotateTicketToken_/);
   assert.match(ticket, /restoreExchangeSnapshots_/);
   assert.match(ticket, /appendTicketAudit_/);
+  const lookupBody = ticket.match(/function\s+lookupTicket\s*\([^)]*\)\s*\{([\s\S]*?)\n\}/)?.[1] || "";
+  assert.match(lookupBody, /withScriptLock\s*\(\s*function\s*\(\s*\)/);
   assert.match(ticket, /status\s*=\s*['"]cancelled['"]/);
   const cancelBody = ticket.match(/function\s+cancelRegistration\s*\([^)]*\)\s*\{([\s\S]*?)\n\}/)?.[1] || "";
   assert.match(cancelBody, /withScriptLock\s*\(\s*function\s*\(\s*\)/);

@@ -114,6 +114,8 @@ test("registration writes use pending batches, activate last, and expose recover
   assert.match(registration, /activateRegistrationRows_/);
   assert.match(registration, /catch\s*\([^)]*\)\s*\{[\s\S]*cleanupPendingRegistration_/);
   assert.match(registration, /function\s+recoverPendingTransactions_\s*\(/);
+  assert.match(registration, /status\s*===\s*['"]pending['"]\)\s*return\s+false/);
+  assert.match(registration, /recoveryFailures\.length/);
   assert.match(registration, /deleteRow\s*\(/);
   assert.match(registration, /restoreSeatSnapshots_/);
   assert.match(registration, /EVT-\s*['"]?\s*\+\s*Utilities\.getUuid\(\)\.replace\(\/-\/g,\s*['"]{2}\)\.slice\(0,\s*10\)\.toUpperCase\(\)/);
@@ -132,6 +134,10 @@ test("ticket lookup, cancellation, and exchange preserve privacy and historical 
   assert.match(ticket, /rotateTicketToken_/);
   assert.match(ticket, /restoreExchangeSnapshots_/);
   assert.match(ticket, /appendTicketAudit_/);
+  assert.match(ticket, /cleanupStaleTicketSeats_/);
+  assert.match(ticket, /EXCHANGE_PENDING_CLEANUP/);
+  assert.match(ticket, /SEAT_RELEASE_RETRY/);
+  assert.match(ticket, /SEAT_RELEASE_RESOLVED/);
   const lookupBody = ticket.match(/function\s+lookupTicket\s*\([^)]*\)\s*\{([\s\S]*?)\n\}/)?.[1] || "";
   assert.match(lookupBody, /withScriptLock\s*\(\s*function\s*\(\s*\)/);
   assert.match(ticket, /status\s*=\s*['"]cancelled['"]/);

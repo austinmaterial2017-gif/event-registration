@@ -8,6 +8,7 @@ var PUBLIC_ERROR_MESSAGES = {
   SEAT_UNAVAILABLE: '所选座位不可用。',
   SEAT_EXCHANGE_DISABLED: '该活动不允许更换座位。',
   INTEGRITY_ERROR: '数据一致性检查失败，请联系管理员。',
+  EXCHANGE_PENDING_CLEANUP: '座位更换正在清理旧座位，请稍后重试。',
   TICKET_ALREADY_VERIFIED: '该凭证已完成验票。',
   TICKET_NOT_FOUND: '未找到对应凭证。',
   TICKET_VERIFICATION_FAILED: '验证信息不匹配。',

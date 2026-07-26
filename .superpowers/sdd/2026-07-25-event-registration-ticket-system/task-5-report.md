@@ -67,3 +67,21 @@ None.
 - Full `npm.cmd test`: 57 passed, 0 failed, 0 skipped.
 - Apps Script syntax compilation check: 3 files passed.
 - `git diff --check`: passed.
+
+## Fix round 3
+
+- Pending seat markers are now quarantined by default and can never be selected as available. Recovery resolves each marker against committed registration items: committed markers finalize as occupied, while pending/unknown markers clear only after recovery succeeds.
+- Registration, cancellation, and exchange mutations fail closed with `INTEGRITY_ERROR` when pending recovery cannot complete. Lookup may still return a committed ticket while its logically owned pending marker remains quarantined.
+- Added a double-book regression that repeatedly fails seat finalization/recovery and proves a second registration cannot claim the pending seat.
+- Added `cleanupStaleTicketSeats_` to every locked service entry point. It derives the current seat set from active registration choices and releases only known ticket-owned seats no longer present in those choices.
+- An old-seat release failure now returns non-success `EXCHANGE_PENDING_CLEANUP`, leaves both seats owned, and writes `SEAT_RELEASE_RETRY`. Subsequent exchanges for that ticket are blocked before another seat can be claimed.
+- Later service calls retry stale-seat cleanup idempotently. Success clears the stale ownership marker and records `SEAT_RELEASE_RESOLVED`, after which another exchange can proceed without seat or registration-capacity leakage.
+- Unknown holders and seat holds are not treated as stale ticket ownership.
+- Expanded VM failure injection to cover finalization double-book prevention and repeated exchange attempts across failed and recovered old-seat cleanup.
+
+### Fix-round 3 verification
+
+- Target VM suite: 24 passed, 0 failed.
+- Full `npm.cmd test`: 59 passed, 0 failed, 0 skipped.
+- Apps Script syntax compilation check: 3 files passed.
+- `git diff --check`: passed.

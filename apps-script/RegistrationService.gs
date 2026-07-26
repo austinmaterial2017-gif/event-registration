@@ -10,7 +10,9 @@ function createRegistration(payload) {
     return withScriptLock(function() {
       var request = requireRegistrationPayload_(payload);
       var spreadsheet = getConfiguredSpreadsheet();
-      recoverPendingTransactions_(spreadsheet);
+      var recoveryFailures = recoverPendingTransactions_(spreadsheet);
+      if (recoveryFailures.length) registrationError_('INTEGRITY_ERROR');
+      cleanupStaleTicketSeats_(spreadsheet);
       var now = new Date();
       var event = requireOpenEvent_(request.eventId, now);
       var settings = getAdminSettings();
@@ -360,7 +362,7 @@ function selectRegistrationSeats_(event, policy, selectedSessions, seats, submit
 
 function isSeatAvailableForRegistration_(seat, policy, holdOwner, now) {
   var status = String(seat.status || 'available').toLowerCase();
-  if (status === 'pending' && /^PENDING\|/.test(String(seat.holderRegistrationId || ''))) return true;
+  if (status === 'pending') return false;
   if ((status === 'available' || status === 'open') && !seat.holderRegistrationId) return true;
   if (status !== 'held' || !policy.seatHoldsEnabled) return false;
   var hold = parseSeatHold_(seat);
@@ -580,6 +582,7 @@ function cleanupPendingRegistration_(seatSnapshots, participant, registrationBat
 }
 
 function recoverPendingTransactions_(spreadsheet) {
+  var failures = [];
   var registrations = readRows('报名项目');
   var pending = registrations.filter(function(record) { return record.status === 'pending'; });
   var activeIds = {};
@@ -608,10 +611,11 @@ function recoverPendingTransactions_(spreadsheet) {
     try {
       seatSheet.getRange(seat.rowNumber, 1, 1, values.length).setValues([values]);
     } catch (error) {
+      failures.push({ registrationId: registrationId, error: error });
       appendRegistrationRecoveryAudit_(spreadsheet, 'PENDING_RECOVERY_RETRY', registrationId, 1);
     }
   });
-  if (!pending.length) return;
+  if (!pending.length) return failures;
 
   var pendingParticipants = {};
   var blockedRegistrationIds = {};
@@ -627,6 +631,10 @@ function recoverPendingTransactions_(spreadsheet) {
       participantSheet.deleteRow(participant.rowNumber);
     } catch (error) {
       blockedRegistrationIds[pendingParticipants[participant.participantId]] = true;
+      failures.push({
+        registrationId: pendingParticipants[participant.participantId],
+        error: error
+      });
       appendRegistrationRecoveryAudit_(
         spreadsheet,
         'PENDING_RECOVERY_RETRY',
@@ -641,10 +649,12 @@ function recoverPendingTransactions_(spreadsheet) {
     try {
       registrationSheet.deleteRow(record.rowNumber);
     } catch (error) {
+      failures.push({ registrationId: record.registrationId, error: error });
       appendRegistrationRecoveryAudit_(spreadsheet, 'PENDING_RECOVERY_RETRY', record.registrationId, 1);
     }
   });
   appendRegistrationRecoveryAudit_(spreadsheet, 'RECOVER_PENDING_REGISTRATION', 'batch', pending.length);
+  return failures;
 }
 
 function appendRegistrationRecoveryAudit_(spreadsheet, action, registrationId, failureCount) {

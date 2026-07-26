@@ -376,6 +376,41 @@ test("seat finalization failure stays logically owned and is finalized before lo
   assert.equal(sheetObjects(harness.sheets["座位"])[0].status, "registered");
 });
 
+test("failed finalization recovery quarantines the pending seat and prevents double booking", async () => {
+  let blockFinalization = true;
+  const harness = await createHarness({
+    rows: baseRows({
+      event: { seatMode: "self" },
+      seats: [{ seatId: "a1", eventId: "event-1", sessionId: "", label: "A1", zone: "front", status: "available" }]
+    }),
+    onWrite: ({ sheet, values }) => {
+      if (blockFinalization && sheet.name === "座位" && values[0]?.[5] === "registered") {
+        throw new Error("seat finalize failed");
+      }
+    }
+  });
+  const first = harness.context.createRegistration(registrationPayload({ seatChoices: ["A1"] }));
+  assert.equal(first.ok, true);
+  assert.equal(sheetObjects(harness.sheets["座位"])[0].status, "pending");
+
+  const second = harness.context.createRegistration(registrationPayload({
+    seatChoices: ["A1"],
+    answers: { name: "Bob", email: "bob@example.com", age: "", privateNote: "" }
+  }));
+  assert.equal(second.ok, false);
+  assert.equal(second.code, "INTEGRITY_ERROR");
+  assert.equal(sheetObjects(harness.sheets["报名项目"]).filter((row) => row.status === "active").length, 1);
+  assert.equal(sheetObjects(harness.sheets["座位"])[0].holderRegistrationId, `PENDING|${first.data.registrationId}`);
+
+  blockFinalization = false;
+  const recovered = harness.context.lookupTicket({
+    ticketNumber: first.data.ticketNumber,
+    verificationValue: "alice@example.com"
+  });
+  assert.equal(recovered.ok, true);
+  assert.equal(sheetObjects(harness.sheets["座位"])[0].holderRegistrationId, first.data.registrationId);
+});
+
 test("post-commit audit failure does not turn a complete active registration into a client failure", async () => {
   const harness = await createHarness({
     onWrite: ({ sheet, values }) => {
@@ -568,12 +603,64 @@ test("old-seat release failure keeps both seats owned and audits a release retry
     ticketNumber: created.data.ticketNumber, verificationValue: "alice@example.com",
     oldSeatId: "a1", newSeatId: "a2"
   });
-  assert.equal(exchanged.ok, true);
-  assert.notEqual(exchanged.data.token, created.data.token);
+  assert.equal(exchanged.ok, false);
+  assert.equal(exchanged.code, "EXCHANGE_PENDING_CLEANUP");
   const seats = sheetObjects(harness.sheets["座位"]);
   assert.equal(seats.find((seat) => seat.seatId === "a1").holderRegistrationId, created.data.registrationId);
   assert.equal(seats.find((seat) => seat.seatId === "a2").holderRegistrationId, created.data.registrationId);
   assert.ok(sheetObjects(harness.sheets["操作记录"]).some((row) => row.action === "SEAT_RELEASE_RETRY"));
+});
+
+test("unresolved old-seat cleanup blocks repeated exchanges, then resolves without seat leakage", async () => {
+  let failOldRelease = false;
+  const harness = await createHarness({
+    rows: baseRows({
+      event: { seatMode: "self" },
+      seats: [
+        { seatId: "a1", eventId: "event-1", sessionId: "", label: "A1", zone: "front", status: "available" },
+        { seatId: "a2", eventId: "event-1", sessionId: "", label: "A2", zone: "front", status: "available" },
+        { seatId: "a3", eventId: "event-1", sessionId: "", label: "A3", zone: "front", status: "available" }
+      ]
+    }),
+    onWrite: ({ sheet, values }) => {
+      if (failOldRelease && sheet.name === "座位" &&
+          values[0]?.[0] === "a1" && values[0]?.[5] === "available") {
+        throw new Error("old seat release failed");
+      }
+    }
+  });
+  const created = harness.context.createRegistration(registrationPayload({ seatChoices: ["A1"] }));
+  failOldRelease = true;
+  const firstExchange = harness.context.exchangeSeat({
+    ticketNumber: created.data.ticketNumber, verificationValue: "alice@example.com",
+    oldSeatId: "a1", newSeatId: "a2"
+  });
+  assert.equal(firstExchange.code, "EXCHANGE_PENDING_CLEANUP");
+
+  const blockedExchange = harness.context.exchangeSeat({
+    ticketNumber: created.data.ticketNumber, verificationValue: "alice@example.com",
+    oldSeatId: "a2", newSeatId: "a3"
+  });
+  assert.equal(blockedExchange.code, "EXCHANGE_PENDING_CLEANUP");
+  assert.equal(sheetObjects(harness.sheets["座位"]).find((seat) => seat.seatId === "a3").holderRegistrationId, "");
+
+  failOldRelease = false;
+  const recovered = harness.context.lookupTicket({
+    ticketNumber: created.data.ticketNumber,
+    verificationValue: "alice@example.com"
+  });
+  assert.equal(recovered.ok, true);
+  assert.equal(sheetObjects(harness.sheets["座位"]).find((seat) => seat.seatId === "a1").holderRegistrationId, "");
+  assert.ok(sheetObjects(harness.sheets["操作记录"]).some((row) => row.action === "SEAT_RELEASE_RESOLVED"));
+
+  const finalExchange = harness.context.exchangeSeat({
+    ticketNumber: created.data.ticketNumber, verificationValue: "alice@example.com",
+    oldSeatId: "a2", newSeatId: "a3"
+  });
+  assert.equal(finalExchange.ok, true);
+  const ownedSeats = sheetObjects(harness.sheets["座位"]).filter((seat) => seat.holderRegistrationId === created.data.registrationId);
+  assert.deepEqual(ownedSeats.map((seat) => seat.seatId), ["a3"]);
+  assert.equal(sheetObjects(harness.sheets["报名项目"]).filter((row) => row.status === "active").length, 1);
 });
 
 test("pre-release rollback failure returns integrity error while the old seat remains owned", async () => {

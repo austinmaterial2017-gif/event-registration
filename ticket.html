@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>电子凭证 · 微光现场</title>
+    <link rel="stylesheet" href="css/app.css">
+  </head>
+  <body>
+    <header class="site-header compact">
+      <a class="brand" href="index.html">微光<span>现场</span></a>
+      <a class="back-link" href="index.html">← 返回活动</a>
+    </header>
+    <main class="ticket-shell">
+      <section class="ticket-lookup" aria-labelledby="ticket-page-title">
+        <p class="eyebrow">YOUR PASS</p>
+        <h1 id="ticket-page-title">找回电子凭证</h1>
+        <p class="helper">请输入凭证编号，以及报名时指定的验证资料。</p>
+        <form id="ticket-lookup-form" class="ticket-lookup-form">
+          <label>凭证编号<input name="ticketNumber" autocomplete="off" required></label>
+          <label>验证资料<input name="verificationValue" autocomplete="off" required></label>
+          <button class="primary-button" type="submit">查看电子凭证</button>
+        </form>
+        <p id="ticket-message" class="helper" role="status" aria-live="polite"></p>
+      </section>
+      <section id="ticket-result" aria-live="polite"></section>
+      <button id="print-ticket" class="secondary-button ticket-print" type="button" onclick="window.print()">打印 / 保存凭证</button>
+    </main>
+    <script type="module" src="js/ticket-page.js"></script>
+  </body>
+</html>

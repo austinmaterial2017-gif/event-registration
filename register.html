@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>完成报名 · 微光现场</title>
+    <link rel="stylesheet" href="css/app.css">
+  </head>
+  <body>
+    <header class="site-header compact">
+      <a class="brand" href="index.html" aria-label="返回活动列表">微光<span>现场</span></a>
+      <a class="back-link" href="index.html">← 返回活动</a>
+    </header>
+    <main class="registration-shell">
+      <section id="registration-closed" class="notice" hidden aria-live="polite"></section>
+      <section id="registration-content" aria-labelledby="registration-title">
+        <p class="eyebrow">YOUR PASS</p>
+        <h1 id="registration-title">完成这次相遇</h1>
+        <p id="event-meta" class="event-meta" aria-live="polite"></p>
+        <ol class="steps" aria-label="报名步骤">
+          <li><span>01</span>选择活动</li>
+          <li><span>02</span>选择讲座</li>
+          <li><span>03</span>选择座位</li>
+          <li><span>04</span>填写资料</li>
+          <li><span>05</span>核对资料</li>
+          <li><span>06</span>提交报名</li>
+        </ol>
+        <div id="countdown" class="countdown" aria-live="polite"></div>
+        <div id="error-summary" class="error-summary" role="alert" tabindex="-1" hidden></div>
+        <form id="registration-form" novalidate>
+          <section class="form-card" aria-labelledby="sessions-title">
+            <div class="card-title"><p class="step-number">02</p><h2 id="sessions-title">选择讲座 / 讲师 / 时段</h2></div>
+            <p id="selection-note" class="helper"></p>
+            <fieldset id="session-options" class="choice-grid"></fieldset>
+          </section>
+          <section id="seat-section" class="form-card" aria-labelledby="seat-title">
+            <div class="card-title"><p class="step-number">03</p><h2 id="seat-title">选择座位</h2></div>
+            <div id="seat-options"></div>
+            <p id="seat-hold-status" class="helper" role="status" aria-live="polite"></p>
+          </section>
+          <section class="form-card" aria-labelledby="questions-title">
+            <div class="card-title"><p class="step-number">04</p><h2 id="questions-title">填写资料</h2></div>
+            <p class="helper">带 <span class="required-mark">*</span> 的项目为必填；其余均为选填。</p>
+            <div id="dynamic-questions" class="question-stack"></div>
+          </section>
+          <section id="confirmation" class="confirmation form-card" aria-labelledby="confirmation-title">
+            <div class="card-title"><p class="step-number">05</p><h2 id="confirmation-title">核对资料</h2></div>
+            <p>先核对你的场次、座位和填写资料，再进入最后提交。</p>
+            <button id="review-registration" class="primary-button" type="submit">查看并核对资料</button>
+          </section>
+        </form>
+        <section id="review-card" class="confirmation form-card" aria-labelledby="review-title" hidden tabindex="-1">
+          <div class="card-title"><p class="step-number">05</p><h2 id="review-title">请核对报名资料</h2></div>
+          <div id="review-details" class="review-details"></div>
+          <div class="review-actions">
+            <button id="edit-registration" class="secondary-button" type="button">返回修改</button>
+            <button id="final-submit" class="primary-button" type="button">06 · 确认提交报名</button>
+          </div>
+        </section>
+      </section>
+    </main>
+    <script type="module" src="js/register-page.js"></script>
+  </body>
+</html>

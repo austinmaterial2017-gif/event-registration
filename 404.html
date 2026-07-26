@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <!-- Set this to / for a user/org root site, or /repository/ for a project site. -->
+    <meta name="github-pages-base-path" content="/event-ticket-system/">
+    <title>页面未找到 · 微光现场</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, "Noto Sans SC", "Microsoft YaHei", sans-serif; }
+      body { max-width: 680px; margin: 0 auto; padding: 12vh 28px; background: #15131a; color: #f8f0df; line-height: 1.6; }
+      .eyebrow { color: #fd79bb; font-weight: 800; letter-spacing: .14em; }
+      h1 { font-size: clamp(2.5rem, 10vw, 5rem); line-height: 1; margin: 12px 0; }
+      p { color: #c8bdcf; } .brand { color: #f8f0df; font-weight: 800; text-decoration: none; }
+      .button { display: inline-block; margin-top: 18px; padding: 11px 16px; border-radius: 12px; background: #8755ff; color: white; font-weight: 800; text-decoration: none; }
+    </style>
+  </head>
+  <body>
+    <header><a id="home-link" class="brand" href="/event-ticket-system/" aria-label="微光现场首页">微光现场</a></header>
+    <main>
+      <p class="eyebrow">404 / PAGE NOT FOUND</p>
+      <h1>这个页面暂时不存在。</h1>
+      <p>链接可能已失效，或地址有误。请回到活动列表重新选择。</p>
+      <a id="home-action" class="button" href="/event-ticket-system/">返回活动首页</a>
+    </main>
+    <script>
+      (() => {
+        const configured = document.querySelector('meta[name="github-pages-base-path"]')?.content || "/";
+        const basePath = /^\/(?:[^/]+\/)?$/.test(configured) ? configured : "/";
+        document.getElementById("home-link").href = basePath;
+        document.getElementById("home-action").href = basePath;
+      })();
+    </script>
+  </body>
+</html>

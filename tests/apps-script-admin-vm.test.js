@@ -22,12 +22,27 @@ class FakeSheet {
     this.name = name;
     this.rows = [headers[name], ...records.map((record) => headers[name].map((key) => record[key] ?? ""))];
     this.writeCount = 0;
+    this.writeAttemptCount = 0;
+    this.writeErrorsByAttempt = new Map();
   }
 
+  failNextWrite(error = new Error(`injected ${this.name} write failure`)) {
+    this.failWriteOnAttempt(this.writeAttemptCount + 1, error);
+  }
+  failWriteOnAttempt(attempt, error = new Error(`injected ${this.name} write failure`)) {
+    this.writeErrorsByAttempt.set(attempt, error);
+  }
+  consumeWriteFailure() {
+    this.writeAttemptCount += 1;
+    const error = this.writeErrorsByAttempt.get(this.writeAttemptCount);
+    this.writeErrorsByAttempt.delete(this.writeAttemptCount);
+    if (error) throw error;
+  }
   getName() { return this.name; }
   getLastRow() { return this.rows.length; }
   getLastColumn() { return headers[this.name].length; }
   appendRow(values) {
+    this.consumeWriteFailure();
     this.writeCount += 1;
     this.rows.push([...values]);
   }
@@ -36,6 +51,7 @@ class FakeSheet {
       getValues: () => Array.from({ length: rowCount }, (_, y) =>
         Array.from({ length: columnCount }, (_, x) => this.rows[row - 1 + y]?.[column - 1 + x] ?? "")),
       setValues: (values) => {
+        this.consumeWriteFailure();
         this.writeCount += 1;
         values.forEach((source, y) => {
           const target = this.rows[row - 1 + y] || [];
@@ -129,24 +145,25 @@ function cloneRows(rows) {
 }
 
 async function createHarness(options = {}) {
+  const defaultAdminSettings = {
+    registration: {
+      identityFields: ["email"],
+      events: {
+        "event-1": {
+          seatExchangeEnabled: true,
+          cancellationEnabled: true,
+          showOpeningCountdown: true,
+          showClosingCountdown: true,
+          identityFields: ["email"],
+          showOnTicketFields: []
+        }
+      }
+    }
+  };
   const properties = {
     ACTIVE_SPREADSHEET_ID: "source-sheet-id",
     ADMIN_EMAIL_ALLOWLIST: JSON.stringify(options.adminAllowlist || ["admin@example.com"]),
-    ADMIN_SETTINGS: JSON.stringify({
-      registration: {
-        identityFields: ["email"],
-        events: {
-          "event-1": {
-            seatExchangeEnabled: true,
-            cancellationEnabled: true,
-            showOpeningCountdown: true,
-            showClosingCountdown: true,
-            identityFields: ["email"],
-            showOnTicketFields: []
-          }
-        }
-      }
-    })
+    ADMIN_SETTINGS: JSON.stringify(options.adminSettings || defaultAdminSettings)
   };
   const sourceSheets = Object.fromEntries(Object.entries(cloneRows(options.rows || baseRows()))
     .map(([name, values]) => [name, new FakeSheet(name, values)]));
@@ -167,6 +184,7 @@ async function createHarness(options = {}) {
   const locks = [];
   let lockDepth = 0;
   let uuid = 0;
+  let nextPropertyWriteError = null;
   const RealDate = Date;
   class ServerDate extends RealDate {
     constructor(value) { super(value === undefined ? "2026-07-26T04:00:00Z" : value); }
@@ -180,7 +198,12 @@ async function createHarness(options = {}) {
     PropertiesService: {
       getScriptProperties: () => ({
         getProperty: (key) => properties[key] ?? null,
-        setProperty: (key, value) => { properties[key] = value; }
+        setProperty: (key, value) => {
+          const error = nextPropertyWriteError;
+          nextPropertyWriteError = null;
+          if (error) throw error;
+          properties[key] = value;
+        }
       })
     },
     SpreadsheetApp: {
@@ -209,7 +232,16 @@ async function createHarness(options = {}) {
   for (const file of ["Repository.gs", "AdminService.gs"]) {
     vm.runInContext(await readFile(new URL(file, staffScriptRoot), "utf8"), context, { filename: file });
   }
-  return { context, properties, sourceSheets, targetSheets, locks };
+  return {
+    context,
+    properties,
+    sourceSheets,
+    targetSheets,
+    locks,
+    failNextPropertyWrite(error = new Error("injected property write failure")) {
+      nextPropertyWriteError = error;
+    }
+  };
 }
 
 test("event lifecycle changes preserve every related history row and save advanced policy", async () => {
@@ -301,7 +333,7 @@ test("event, session, and question CRUD validate supported values and retain ext
     eventId,
     label: "Meal",
     type: "select",
-    required: false,
+    required: true,
     options: ["Vegetarian", "Standard"],
     validation: { minLength: 2 },
     sortOrder: 3,
@@ -359,6 +391,332 @@ test("dashboard search masks participant fields and answers while returning atte
   assert.match(result.data.records[0].participantName, /\*/);
   assert.doesNotMatch(serialized, /Alice Chan|0123456789|alice@example\.com|secret answer|opaque-private-ticket-token/);
   assert.doesNotMatch(serialized, /source-sheet-id|rowNumber/);
+});
+
+test("dashboard masks boolean and collection values in every dynamic private answer", async () => {
+  const rows = baseRows();
+  rows["报名项目"].forEach((registration) => {
+    registration.answers = JSON.stringify({
+      values: {
+        email: "alice@example.com",
+        privateNote: "secret answer",
+        consent: true,
+        declined: false,
+        dietaryTags: ["nut allergy", "vegan"]
+      },
+      ticketToken: "opaque-private-ticket-token",
+      verificationField: "email"
+    });
+  });
+  const harness = await createHarness({ rows });
+
+  const result = harness.context.getAdminDashboard({});
+
+  assert.equal(result.ok, true);
+  const answers = JSON.parse(JSON.stringify(result.data.records[0].answers));
+  assert.equal(answers.consent, "****");
+  assert.equal(answers.declined, "****");
+  assert.ok(Object.values(answers).every((value) =>
+    typeof value === "string" || (Array.isArray(value) && value.every((item) => typeof item === "string"))));
+  assert.doesNotMatch(JSON.stringify(answers), /secret answer|nut allergy|vegan|true|false/);
+});
+
+test("dashboard aggregates sessions and seats from every row of one registration", async () => {
+  const rows = baseRows();
+  rows["场次"].push({
+    sessionId: "session-2", eventId: "event-1", title: "Workshop", speaker: "Dr Tan",
+    startsAt: "2026-08-16T11:00:00Z", endsAt: "2026-08-16T12:00:00Z",
+    required: false, capacity: 30, status: "open",
+    createdAt: "2026-07-01T00:00:00Z", updatedAt: "2026-07-01T00:00:00Z"
+  });
+  rows["座位"].push({
+    seatId: "seat-second", eventId: "event-1", sessionId: "session-2", label: "B-01",
+    zone: "B", status: "registered", holderRegistrationId: "registration-1",
+    createdAt: "2026-07-01T00:00:00Z", updatedAt: "2026-07-01T00:00:00Z"
+  });
+  rows["报名项目"][1].sessionIds = JSON.stringify(["session-2"]);
+  rows["报名项目"][1].seatChoices = JSON.stringify(["seat-second"]);
+  const harness = await createHarness({ rows });
+
+  const result = harness.context.getAdminDashboard({});
+
+  assert.equal(result.ok, true);
+  assert.equal(result.data.records.length, 1);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(result.data.records[0].sessionIds)),
+    ["session-1", "session-2"]
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(result.data.records[0].seatChoices)),
+    ["seat-old", "seat-second"]
+  );
+});
+
+test("seat adjustment rejects a seat from another event before changing any row", async () => {
+  const rows = baseRows();
+  rows["座位"].push({
+    seatId: "seat-other-event", eventId: "event-2", sessionId: "", label: "X-01",
+    zone: "X", status: "available", holderRegistrationId: "",
+    createdAt: "2026-07-01T00:00:00Z", updatedAt: "2026-07-01T00:00:00Z"
+  });
+  const harness = await createHarness({ rows });
+  const beforeSeats = JSON.stringify(records(harness.sourceSheets["座位"]));
+  const beforeRegistrations = JSON.stringify(records(harness.sourceSheets["报名项目"]));
+
+  const result = harness.context.adminRecordAction({
+    action: "adjust_seat",
+    registrationId: "registration-1",
+    seatId: "seat-other-event",
+    confirm: true
+  });
+
+  assert.equal(result.code, "CONFLICT");
+  assert.equal(JSON.stringify(records(harness.sourceSheets["座位"])), beforeSeats);
+  assert.equal(JSON.stringify(records(harness.sourceSheets["报名项目"])), beforeRegistrations);
+  assert.equal(harness.sourceSheets["座位"].writeCount, 0);
+  assert.equal(harness.sourceSheets["报名项目"].writeCount, 0);
+  assert.equal(harness.sourceSheets["操作记录"].writeCount, 0);
+});
+
+test("seat adjustment rejects an unselected session before releasing the current seat", async () => {
+  const rows = baseRows();
+  rows["场次"].push({
+    sessionId: "session-2", eventId: "event-1", title: "Workshop", speaker: "Dr Tan",
+    startsAt: "2026-08-16T11:00:00Z", endsAt: "2026-08-16T12:00:00Z",
+    required: false, capacity: 30, status: "open",
+    createdAt: "2026-07-01T00:00:00Z", updatedAt: "2026-07-01T00:00:00Z"
+  });
+  rows["座位"].push({
+    seatId: "seat-unselected", eventId: "event-1", sessionId: "session-2", label: "B-01",
+    zone: "B", status: "available", holderRegistrationId: "",
+    createdAt: "2026-07-01T00:00:00Z", updatedAt: "2026-07-01T00:00:00Z"
+  });
+  const harness = await createHarness({ rows });
+  const beforeSeats = JSON.stringify(records(harness.sourceSheets["座位"]));
+  const beforeRegistrations = JSON.stringify(records(harness.sourceSheets["报名项目"]));
+
+  const result = harness.context.adminRecordAction({
+    action: "adjust_seat",
+    registrationId: "registration-1",
+    seatId: "seat-unselected",
+    confirm: true
+  });
+
+  assert.equal(result.code, "CONFLICT");
+  assert.equal(JSON.stringify(records(harness.sourceSheets["座位"])), beforeSeats);
+  assert.equal(JSON.stringify(records(harness.sourceSheets["报名项目"])), beforeRegistrations);
+  assert.equal(harness.sourceSheets["座位"].writeCount, 0);
+  assert.equal(harness.sourceSheets["报名项目"].writeCount, 0);
+  assert.equal(harness.sourceSheets["操作记录"].writeCount, 0);
+});
+
+test("seat adjustment restores every seat and registration row when a later write fails", async () => {
+  for (const failureStage of ["registration update", "old-seat release"]) {
+    const harness = await createHarness();
+    const beforeSeats = JSON.stringify(records(harness.sourceSheets["座位"]));
+    const beforeRegistrations = JSON.stringify(records(harness.sourceSheets["报名项目"]));
+    const beforeAudits = JSON.stringify(records(harness.sourceSheets["操作记录"]));
+    if (failureStage === "registration update") {
+      harness.sourceSheets["报名项目"].failNextWrite();
+    } else {
+      harness.sourceSheets["座位"].failWriteOnAttempt(2);
+    }
+
+    const result = harness.context.adminRecordAction({
+      action: "adjust_seat",
+      registrationId: "registration-1",
+      seatId: "seat-new",
+      confirm: true
+    });
+
+    assert.equal(result.code, "INTERNAL", failureStage);
+    assert.equal(JSON.stringify(records(harness.sourceSheets["座位"])), beforeSeats, failureStage);
+    assert.equal(
+      JSON.stringify(records(harness.sourceSheets["报名项目"])),
+      beforeRegistrations,
+      failureStage
+    );
+    assert.equal(
+      JSON.stringify(records(harness.sourceSheets["操作记录"])),
+      beforeAudits,
+      failureStage
+    );
+  }
+});
+
+test("seat adjustment keeps the old seat and journals recovery when target rollback fails", async () => {
+  const harness = await createHarness();
+  harness.sourceSheets["报名项目"].failNextWrite();
+  harness.sourceSheets["座位"].failWriteOnAttempt(2);
+
+  const result = harness.context.adminRecordAction({
+    action: "adjust_seat",
+    registrationId: "registration-1",
+    seatId: "seat-new",
+    confirm: true
+  });
+
+  assert.equal(result.code, "INTEGRITY_ERROR");
+  const seats = records(harness.sourceSheets["座位"]);
+  assert.equal(seats.find((seat) => seat.seatId === "seat-old").status, "registered");
+  assert.equal(
+    seats.find((seat) => seat.seatId === "seat-old").holderRegistrationId,
+    "registration-1"
+  );
+  assert.ok(records(harness.sourceSheets["操作记录"])
+    .some((row) => row.action === "ADMIN_SEAT_ADJUSTMENT_RECOVERY"));
+});
+
+test("identity questions cannot become optional or hidden while policy still depends on them", async () => {
+  for (const change of [
+    { required: false },
+    { action: "hide" }
+  ]) {
+    const harness = await createHarness();
+    const beforeQuestions = JSON.stringify(records(harness.sourceSheets["报名问题"]));
+    const beforeSettings = harness.properties.ADMIN_SETTINGS;
+    const result = harness.context.saveAdminQuestion({
+      eventId: "event-1",
+      questionId: "email",
+      ...change
+    });
+
+    assert.equal(result.code, "CONFLICT");
+    assert.equal(JSON.stringify(records(harness.sourceSheets["报名问题"])), beforeQuestions);
+    assert.equal(harness.properties.ADMIN_SETTINGS, beforeSettings);
+    assert.equal(harness.sourceSheets["报名问题"].writeCount, 0);
+    assert.equal(harness.sourceSheets["操作记录"].writeCount, 0);
+  }
+});
+
+test("event question edits preserve the effective global identity policy invariant", async () => {
+  const adminSettings = {
+    registration: {
+      identityFields: ["email"],
+      events: {
+        "event-1": {
+          seatExchangeEnabled: true,
+          cancellationEnabled: true,
+          showOnTicketFields: []
+        }
+      }
+    }
+  };
+  const harness = await createHarness({ adminSettings });
+  const beforeQuestions = JSON.stringify(records(harness.sourceSheets["报名问题"]));
+  const beforeSettings = harness.properties.ADMIN_SETTINGS;
+  const dashboard = harness.context.getAdminDashboard({});
+
+  const result = harness.context.saveAdminQuestion({
+    eventId: "event-1",
+    questionId: "email",
+    action: "hide"
+  });
+
+  assert.equal(
+    dashboard.data.questions.find((question) => question.questionId === "email").duplicateIdentity,
+    true
+  );
+  assert.equal(result.code, "CONFLICT");
+  assert.equal(JSON.stringify(records(harness.sourceSheets["报名问题"])), beforeQuestions);
+  assert.equal(harness.properties.ADMIN_SETTINGS, beforeSettings);
+  assert.equal(harness.sourceSheets["报名问题"].writeCount, 0);
+});
+
+test("an identity question cannot be moved to another event around the policy invariant", async () => {
+  const rows = baseRows();
+  rows["活动"].push({
+    eventId: "event-2", title: "Second Event", description: "", status: "draft",
+    opensAt: "", closesAt: "", location: "", selectionMode: "free",
+    minChoices: 0, maxChoices: 1, seatMode: "none", seatZones: "[]",
+    createdAt: "2026-07-01T00:00:00Z", updatedAt: "2026-07-01T00:00:00Z"
+  });
+  const harness = await createHarness({ rows });
+  const beforeQuestions = JSON.stringify(records(harness.sourceSheets["报名问题"]));
+  const beforeSettings = harness.properties.ADMIN_SETTINGS;
+
+  const result = harness.context.saveAdminQuestion({
+    eventId: "event-2",
+    questionId: "email"
+  });
+
+  assert.equal(result.code, "CONFLICT");
+  assert.equal(JSON.stringify(records(harness.sourceSheets["报名问题"])), beforeQuestions);
+  assert.equal(harness.properties.ADMIN_SETTINGS, beforeSettings);
+  assert.equal(harness.sourceSheets["报名问题"].writeCount, 0);
+});
+
+test("identity question can be hidden when the same mutation leaves another active required identity field", async () => {
+  const rows = baseRows();
+  rows["报名问题"].push({
+    questionId: "phone", eventId: "event-1", label: "Phone", type: "tel", required: true,
+    options: "{}", sortOrder: 2, status: "active",
+    createdAt: "2026-07-01T00:00:00Z", updatedAt: "2026-07-01T00:00:00Z"
+  });
+  const adminSettings = {
+    registration: {
+      identityFields: ["email"],
+      events: {
+        "event-1": {
+          seatExchangeEnabled: true,
+          cancellationEnabled: true,
+          identityFields: ["email", "phone"],
+          showOnTicketFields: []
+        }
+      }
+    }
+  };
+  const harness = await createHarness({ rows, adminSettings });
+
+  const result = harness.context.saveAdminQuestion({
+    eventId: "event-1",
+    questionId: "email",
+    action: "hide",
+    duplicateIdentity: false
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.data.status, "inactive");
+  assert.deepEqual(
+    JSON.parse(harness.properties.ADMIN_SETTINGS).registration.events["event-1"].identityFields,
+    ["phone"]
+  );
+});
+
+test("identity removal persists policy first so a property failure cannot invalidate the question", async () => {
+  const rows = baseRows();
+  rows["报名问题"].push({
+    questionId: "phone", eventId: "event-1", label: "Phone", type: "tel", required: true,
+    options: "{}", sortOrder: 2, status: "active",
+    createdAt: "2026-07-01T00:00:00Z", updatedAt: "2026-07-01T00:00:00Z"
+  });
+  const adminSettings = {
+    registration: {
+      identityFields: ["email"],
+      events: {
+        "event-1": {
+          identityFields: ["email", "phone"],
+          showOnTicketFields: []
+        }
+      }
+    }
+  };
+  const harness = await createHarness({ rows, adminSettings });
+  const beforeQuestions = JSON.stringify(records(harness.sourceSheets["报名问题"]));
+  const beforeSettings = harness.properties.ADMIN_SETTINGS;
+  harness.failNextPropertyWrite();
+
+  const result = harness.context.saveAdminQuestion({
+    eventId: "event-1",
+    questionId: "email",
+    action: "hide",
+    duplicateIdentity: false
+  });
+
+  assert.equal(result.code, "INTERNAL");
+  assert.equal(JSON.stringify(records(harness.sourceSheets["报名问题"])), beforeQuestions);
+  assert.equal(harness.properties.ADMIN_SETTINGS, beforeSettings);
+  assert.equal(harness.sourceSheets["操作记录"].writeCount, 0);
 });
 
 test("record cancellation and seat adjustment preserve rows and append auditable state changes", async () => {

@@ -19,6 +19,7 @@ const staffFiles = [
   "staff-apps-script/AttendanceService.gs",
   "staff-apps-script/AdminService.gs",
   "staff-apps-script/Code.gs",
+  "staff-apps-script/StaffCheckIn.html",
   "staff-apps-script/Admin.html",
   "staff-apps-script/AdminScript.html"
 ];

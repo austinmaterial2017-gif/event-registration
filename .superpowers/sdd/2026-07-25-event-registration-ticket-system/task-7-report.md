@@ -147,3 +147,49 @@ node scripts/build-admin-source-bundles.mjs --check
   - no staff/admin delete API found
   - no administrator surface found in anonymous or public code
   - generated source bundles current
+
+## Fix round 1
+
+Addressed all five findings from the first Task 7 review:
+
+- The paste-ready staff/administrator bundle now includes
+  `StaffCheckIn.html`. The bundle test discovers every literal HTML template
+  loaded by the bundled runtime, requires its section, and compares that
+  section byte-for-byte with the current tracked template.
+- Administrator records mask boolean answers as a uniform `****` value and
+  apply masking to every dynamic answer value, including collection items.
+- Seat adjustment validates the target seat against the registration event
+  and the union of all selected sessions before writing any seat,
+  registration, or audit row. Rejected event/session mismatches leave the
+  existing seat assignment untouched. The transfer keeps the old seat
+  untouched through target/registration precommit, permits at most one old
+  seat in the target scope, and makes its release the final critical state
+  write. Precommit or release failures restore target/registration snapshots;
+  even a failed rollback leaves the old seat owned and records an
+  `ADMIN_SEAT_ADJUSTMENT_RECOVERY` integrity journal.
+- Question updates prospectively validate the effective per-event/global
+  `identityFields` list before any write. Every retained identity question
+  must belong to the event and remain active and required. The last valid
+  identity cannot be made optional, hidden, removed, or moved to another
+  event; replacement is allowed when the same locked mutation leaves another
+  valid identity question. Identity removal persists the replacement policy
+  first, so a Script Property failure cannot leave the old policy pointing at
+  a newly invalid question row.
+- Dashboard records now group all rows for one registration and return the
+  union of their session IDs and seat choices rather than discarding rows
+  after the first.
+
+Regression coverage includes exact no-write assertions for incompatible seat
+targets and rejected identity-policy changes, injected registration/release
+write failures with exact seat rollback, an injected target-rollback failure
+that proves the old seat and recovery journal survive, an injected
+identity-policy property failure, global-policy fallback, the cross-event
+identity bypass, boolean/collection masking, and two-session record
+aggregation.
+
+Fresh verification after the fixes:
+
+- Focused administrator/security suite: 34 passed, 0 failed.
+- Full `npm.cmd test` suite: 111 passed, 0 failed.
+- `node scripts/build-admin-source-bundles.mjs --check`: passed.
+- `git diff --check`: passed.

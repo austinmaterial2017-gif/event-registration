@@ -22,6 +22,7 @@ const staffFiles = [
   "staff-apps-script/AttendanceService.gs",
   "staff-apps-script/AdminService.gs",
   "staff-apps-script/Code.gs",
+  "staff-apps-script/StaffCheckIn.html",
   "staff-apps-script/Admin.html",
   "staff-apps-script/AdminScript.html"
 ];
@@ -49,6 +50,17 @@ async function expectedStaffBundle() {
   const staffCoreBundle = await expectedBundle(staffFiles);
   const copiedSource = generatedSourceFor(publicBundle, staffCoreBundle);
   return `${staffCoreBundle}\n===== staff-apps-script/SourceBundles.gs =====\n${copiedSource}`;
+}
+
+function bundleSections(bundle) {
+  const matches = [...bundle.matchAll(/^===== ([^\r\n]+) =====\r?\n/gm)];
+  const sections = new Map();
+  matches.forEach((match, index) => {
+    const start = match.index + match[0].length;
+    const end = index + 1 < matches.length ? matches[index + 1].index : bundle.length;
+    sections.set(match[1], bundle.slice(start, end).replace(/\r?\n$/, "").trimEnd());
+  });
+  return sections;
 }
 
 test("development-time source bundle generation is deterministic and current", async () => {
@@ -101,4 +113,34 @@ test("source bundle plumbing stays protected and out of the anonymous project", 
   assert.match(adminService, /PUBLIC_BACKEND_SOURCE_BUNDLE_/);
   assert.match(adminService, /STAFF_ADMIN_SOURCE_BUNDLE_/);
   assert.doesNotMatch(`${publicCode}\n${publicFilesText.join("\n")}`, /AdminSourceBundles|SourceBundles|ADMIN_EMAIL_ALLOWLIST/);
+});
+
+test("the paste-ready staff bundle contains every HTML template referenced by bundled runtime code", async () => {
+  const staffBundle = await readFile(new URL("../source-bundles/staff-admin.txt", import.meta.url), "utf8");
+  const sections = bundleSections(staffBundle);
+  const runtimeSources = [...sections.entries()]
+    .filter(([name]) => /\.(?:gs|html)$/.test(name) && name !== "staff-apps-script/SourceBundles.gs");
+  const references = runtimeSources.flatMap(([sourceName, source]) =>
+    [...source.matchAll(/HtmlService\.create(?:HtmlOutput|Template)FromFile\(\s*["']([^"']+)["']\s*\)/g)]
+      .map((match) => ({ sourceName, templateName: match[1] })));
+
+  assert.ok(references.some(({ templateName }) => templateName === "StaffCheckIn"));
+  assert.ok(references.some(({ templateName }) => templateName === "Admin"));
+  assert.ok(references.some(({ templateName }) => templateName === "AdminScript"));
+  for (const { sourceName, templateName } of references) {
+    const templatePath = `staff-apps-script/${templateName}.html`;
+    assert.equal(
+      sections.has(templatePath),
+      true,
+      `${sourceName} references missing ${templateName}.html`
+    );
+    const trackedTemplate = (await readFile(new URL(`../${templatePath}`, import.meta.url), "utf8"))
+      .replace(/\r\n/g, "\n")
+      .trimEnd();
+    assert.equal(
+      sections.get(templatePath),
+      trackedTemplate,
+      `${templateName}.html in the paste-ready bundle is stale`
+    );
+  }
 });

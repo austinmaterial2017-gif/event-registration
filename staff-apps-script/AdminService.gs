@@ -88,6 +88,7 @@ function adminFailure_(code) {
     CONFLICT: '当前数据状态不允许此操作。',
     CONFIRMATION_REQUIRED: '此操作需要明确确认。',
     SHEET_CONNECTION_FAILED: '无法连接到指定的数据表。',
+    INTEGRITY_ERROR: '数据一致性检查失败，请联系管理员。',
     INTERNAL: '请求未能完成，请稍后重试。'
   };
   var safeCode = Object.prototype.hasOwnProperty.call(messages, code) ? code : 'INTERNAL';
@@ -161,16 +162,43 @@ function getAdminDashboard_(payload) {
     participants.forEach(function(participant) {
       participantById[participant.participantId] = participant;
     });
-    var seenRegistrations = {};
-    var records = [];
+    var registrationGroupsById = {};
+    var registrationGroups = [];
     registrations.forEach(function(registration) {
-      if (seenRegistrations[registration.registrationId]) return;
-      seenRegistrations[registration.registrationId] = true;
+      var registrationId = String(registration.registrationId || '');
+      var groupKey = registrationId || 'row:' + registration.rowNumber;
+      var group = registrationGroupsById[groupKey];
+      if (!group) {
+        group = {
+          registration: registration,
+          sessionIds: [],
+          seatChoices: [],
+          answers: {}
+        };
+        registrationGroupsById[groupKey] = group;
+        registrationGroups.push(group);
+      }
+      parseAdminStringArray_(registration.sessionIds).forEach(function(sessionId) {
+        if (group.sessionIds.indexOf(sessionId) === -1) group.sessionIds.push(sessionId);
+      });
+      parseAdminStringArray_(registration.seatChoices).forEach(function(seatId) {
+        if (group.seatChoices.indexOf(seatId) === -1) group.seatChoices.push(seatId);
+      });
+      var rowAnswers = parseAdminAnswers_(registration.answers).values;
+      Object.keys(rowAnswers).forEach(function(key) { group.answers[key] = rowAnswers[key]; });
+      if (String(registration.updatedAt || '') >
+          String(group.registration.updatedAt || '')) {
+        group.registration.updatedAt = registration.updatedAt;
+      }
+    });
+    var records = [];
+    registrationGroups.forEach(function(group) {
+      var registration = group.registration;
       var participant = participantById[registration.participantId] || {};
-      var stored = parseAdminAnswers_(registration.answers);
       var haystack = [
         registration.registrationId, registration.ticketNumber, registration.eventId,
-        participant.name, participant.phone, participant.email, JSON.stringify(stored.values)
+        participant.name, participant.phone, participant.email,
+        group.sessionIds.join(' '), group.seatChoices.join(' '), JSON.stringify(group.answers)
       ].join(' ').toLowerCase();
       if (search && haystack.indexOf(search) === -1) return;
       records.push({
@@ -181,9 +209,9 @@ function getAdminDashboard_(payload) {
         participantName: maskAdminName_(participant.name),
         phone: maskAdminValue_(participant.phone),
         email: maskAdminValue_(participant.email),
-        answers: maskAdminAnswers_(stored.values),
-        sessionIds: parseAdminStringArray_(registration.sessionIds),
-        seatChoices: parseAdminStringArray_(registration.seatChoices),
+        answers: maskAdminAnswers_(group.answers),
+        sessionIds: group.sessionIds,
+        seatChoices: group.seatChoices,
         createdAt: String(registration.createdAt || ''),
         updatedAt: String(registration.updatedAt || '')
       });
@@ -380,6 +408,7 @@ function saveAdminQuestion_(payload, actor) {
       ? findAdminRow_(spreadsheet, '报名问题', 'questionId', request.questionId)
       : null;
     if (request.questionId && !existing) adminError_('NOT_FOUND');
+    if (existing && existing.eventId !== request.eventId.trim()) adminError_('CONFLICT');
     var now = new Date().toISOString();
     var questionId = existing ? existing.questionId : Utilities.getUuid();
     var type = String(adminField_(request, 'type', existing && existing.type, 'text')).toLowerCase();
@@ -412,18 +441,47 @@ function saveAdminQuestion_(payload, actor) {
       createdAt: existing ? existing.createdAt : now,
       updatedAt: now
     };
-    writeAdminRow_(spreadsheet, '报名问题', existing && existing.rowNumber, row);
     var settings = getAdminSettings_();
     var policy = ensureAdminEventPolicy_(settings, row.eventId);
-    policy.identityFields = updateAdminFlagList_(
-      policy.identityFields, questionId,
-      adminBooleanField_(request, 'duplicateIdentity', adminListHas_(policy.identityFields, questionId), false)
+    var inheritedIdentityFields = settings.registration &&
+      Array.isArray(settings.registration.identityFields) ? settings.registration.identityFields : [];
+    var eventQuestions = readAdminRows_(spreadsheet, '报名问题');
+    var existingQuestionIds = {};
+    eventQuestions.forEach(function(question) {
+      if (question.eventId === row.eventId) existingQuestionIds[question.questionId] = true;
+    });
+    var configuredIdentityFields = (Array.isArray(policy.identityFields)
+      ? policy.identityFields : inheritedIdentityFields).filter(function(identityQuestionId) {
+      return existingQuestionIds[identityQuestionId] === true;
+    });
+    var hadIdentityFields = configuredIdentityFields.length > 0;
+    var identityFields = updateAdminFlagList_(
+      configuredIdentityFields, questionId,
+      adminBooleanField_(
+        request, 'duplicateIdentity', adminListHas_(configuredIdentityFields, questionId), false
+      )
     );
+    if (hadIdentityFields || identityFields.length) {
+      validateAdminIdentityFields_(
+        identityFields,
+        eventQuestions,
+        row
+      );
+    }
+    policy.identityFields = identityFields;
     policy.showOnTicketFields = updateAdminFlagList_(
       policy.showOnTicketFields, questionId,
       adminBooleanField_(request, 'showOnTicket', adminListHas_(policy.showOnTicketFields, questionId), false)
     );
-    setAdminSettings_(settings);
+    var removesIdentity = adminListHas_(configuredIdentityFields, questionId) &&
+      !adminListHas_(identityFields, questionId);
+    if (removesIdentity) {
+      setAdminSettings_(settings);
+      writeAdminRow_(spreadsheet, '报名问题', existing && existing.rowNumber, row);
+    } else {
+      writeAdminRow_(spreadsheet, '报名问题', existing && existing.rowNumber, row);
+      setAdminSettings_(settings);
+    }
     appendAdminAudit_(
       spreadsheet, existing ? 'UPDATE_QUESTION' : 'CREATE_QUESTION',
       'question', questionId, actor, { eventId: row.eventId, status: status }
@@ -548,29 +606,88 @@ function adminRecordAction_(payload, actor) {
           (targetStatus !== 'available' && targetStatus !== 'open' && targetStatus !== 'reserved')) {
         adminError_('CONFLICT');
       }
-      seats.filter(function(seat) {
-        return seat.holderRegistrationId === request.registrationId.trim() &&
-          (!target.sessionId || seat.sessionId === target.sessionId);
-      }).forEach(function(seat) {
-        seat.status = 'available';
-        seat.holderRegistrationId = '';
-        seat.updatedAt = now;
-        writeAdminRow_(spreadsheet, '座位', seat.rowNumber, seat);
-      });
-      target.status = 'registered';
-      target.holderRegistrationId = request.registrationId.trim();
-      target.updatedAt = now;
-      writeAdminRow_(spreadsheet, '座位', target.rowNumber, target);
+      var registrationEventId = String(registrations[0].eventId || '');
+      var selectedSessionIds = {};
       registrations.forEach(function(record) {
-        var choices = parseAdminStringArray_(record.seatChoices).filter(function(seatId) {
-          var oldSeat = seats.filter(function(seat) { return seat.seatId === seatId; })[0];
-          return !oldSeat || !target.sessionId || oldSeat.sessionId !== target.sessionId;
+        if (String(record.eventId || '') !== registrationEventId) adminError_('CONFLICT');
+        parseAdminStringArray_(record.sessionIds).forEach(function(sessionId) {
+          selectedSessionIds[sessionId] = true;
         });
-        if (choices.indexOf(target.seatId) === -1) choices.push(target.seatId);
-        record.seatChoices = JSON.stringify(choices);
-        record.updatedAt = now;
-        writeAdminRow_(spreadsheet, '报名项目', record.rowNumber, record);
       });
+      if (!registrationEventId || String(target.eventId || '') !== registrationEventId ||
+          (target.sessionId && !selectedSessionIds[target.sessionId])) {
+        adminError_('CONFLICT');
+      }
+      var oldSeats = seats.filter(function(seat) {
+        return seat.holderRegistrationId === request.registrationId.trim() &&
+          (target.sessionId ? seat.sessionId === target.sessionId : !seat.sessionId);
+      });
+      if (oldSeats.length > 1) adminError_('CONFLICT');
+      var affectedRegistrations = registrations.filter(function(record) {
+        var recordSessionIds = parseAdminStringArray_(record.sessionIds);
+        return !target.sessionId || recordSessionIds.indexOf(target.sessionId) !== -1;
+      });
+      var snapshots = snapshotAdminRows_(
+        spreadsheet, '座位', [target]
+      ).concat(snapshotAdminRows_(
+        spreadsheet, '报名项目', affectedRegistrations
+      ));
+      try {
+        target.status = 'registered';
+        target.holderRegistrationId = request.registrationId.trim();
+        target.updatedAt = now;
+        writeAdminRow_(spreadsheet, '座位', target.rowNumber, target);
+        affectedRegistrations.forEach(function(record) {
+          var choices = parseAdminStringArray_(record.seatChoices).filter(function(seatId) {
+            var oldSeat = seats.filter(function(seat) { return seat.seatId === seatId; })[0];
+            return !oldSeat ||
+              (target.sessionId ? oldSeat.sessionId !== target.sessionId : !!oldSeat.sessionId);
+          });
+          if (choices.indexOf(target.seatId) === -1) choices.push(target.seatId);
+          record.seatChoices = JSON.stringify(choices);
+          record.updatedAt = now;
+          writeAdminRow_(spreadsheet, '报名项目', record.rowNumber, record);
+        });
+      } catch (error) {
+        var precommitRestoreFailures = restoreAdminSnapshots_(snapshots);
+        if (precommitRestoreFailures.length) {
+          appendAdminAuditSafely_(
+            spreadsheet, 'ADMIN_SEAT_ADJUSTMENT_RECOVERY', 'registration',
+            request.registrationId.trim(), actor,
+            { seatId: String(request.seatId || ''), stage: 'precommit' }
+          );
+          adminError_('INTEGRITY_ERROR');
+        }
+        throw error;
+      }
+      try {
+        oldSeats.forEach(function(seat) {
+          seat.status = 'available';
+          seat.holderRegistrationId = '';
+          seat.updatedAt = now;
+          writeAdminRow_(spreadsheet, '座位', seat.rowNumber, seat);
+        });
+      } catch (releaseError) {
+        var releaseRestoreFailures = restoreAdminSnapshots_(snapshots);
+        if (releaseRestoreFailures.length) {
+          appendAdminAuditSafely_(
+            spreadsheet, 'ADMIN_SEAT_ADJUSTMENT_RECOVERY', 'registration',
+            request.registrationId.trim(), actor,
+            { seatId: String(request.seatId || ''), stage: 'release' }
+          );
+          adminError_('INTEGRITY_ERROR');
+        }
+        throw releaseError;
+      }
+      appendAdminAuditSafely_(
+        spreadsheet, action.toUpperCase(), 'registration', request.registrationId.trim(),
+        actor, { seatId: String(request.seatId || '') }
+      );
+      return {
+        registrationId: request.registrationId.trim(),
+        action: action,
+        status: 'completed'
+      };
     } else {
       adminError_('INVALID_REQUEST');
     }
@@ -680,6 +797,31 @@ function writeAdminRow_(spreadsheet, sheetName, rowNumber, row) {
   return targetRow;
 }
 
+function snapshotAdminRows_(spreadsheet, sheetName, rows) {
+  var sheet = getRequiredSheet_(spreadsheet, sheetName);
+  return rows.map(function(row) {
+    return {
+      sheet: sheet,
+      rowNumber: row.rowNumber,
+      values: normalizeRow_(sheetName, row)
+    };
+  });
+}
+
+function restoreAdminSnapshots_(snapshots) {
+  var failures = [];
+  snapshots.forEach(function(snapshot) {
+    try {
+      snapshot.sheet.getRange(
+        snapshot.rowNumber, 1, 1, snapshot.values.length
+      ).setValues([snapshot.values]);
+    } catch (error) {
+      failures.push(error);
+    }
+  });
+  return failures;
+}
+
 function appendAdminAudit_(spreadsheet, action, entityType, entityId, actor, details) {
   writeAdminRow_(spreadsheet, '操作记录', null, {
     auditId: Utilities.getUuid(),
@@ -690,6 +832,15 @@ function appendAdminAudit_(spreadsheet, action, entityType, entityId, actor, det
     details: JSON.stringify(details || {}),
     createdAt: new Date().toISOString()
   });
+}
+
+function appendAdminAuditSafely_(spreadsheet, action, entityType, entityId, actor, details) {
+  try {
+    appendAdminAudit_(spreadsheet, action, entityType, entityId, actor, details);
+    return null;
+  } catch (error) {
+    return error;
+  }
 }
 
 function adminField_(source, key, existing, fallback) {
@@ -826,6 +977,9 @@ function adminSeatProjection_(seat) {
 
 function adminQuestionProjection_(question, settings) {
   var policy = ensureAdminEventPolicy_(settings || {}, question.eventId);
+  var identityFields = Array.isArray(policy.identityFields) ? policy.identityFields :
+    (settings && settings.registration && Array.isArray(settings.registration.identityFields)
+      ? settings.registration.identityFields : []);
   var parsed = parseAdminQuestionOptions_(question.options);
   return {
     questionId: String(question.questionId || ''),
@@ -838,7 +992,7 @@ function adminQuestionProjection_(question, settings) {
     sortOrder: Number(question.sortOrder || 0),
     status: String(question.status || ''),
     showOnTicket: adminListHas_(policy.showOnTicketFields, question.questionId),
-    duplicateIdentity: adminListHas_(policy.identityFields, question.questionId),
+    duplicateIdentity: adminListHas_(identityFields, question.questionId),
     createdAt: String(question.createdAt || ''),
     updatedAt: String(question.updatedAt || '')
   };
@@ -893,6 +1047,7 @@ function maskAdminName_(value) {
 }
 
 function maskAdminValue_(value) {
+  if (typeof value === 'boolean') return '****';
   var text = String(value === undefined || value === null ? '' : value).trim();
   if (!text) return '';
   if (text.indexOf('@') !== -1) {
@@ -908,8 +1063,6 @@ function maskAdminAnswers_(answers) {
     var value = answers[key];
     if (Array.isArray(value)) {
       masked[key] = value.map(maskAdminValue_);
-    } else if (typeof value === 'boolean') {
-      masked[key] = value;
     } else {
       masked[key] = maskAdminValue_(value);
     }
@@ -927,4 +1080,25 @@ function updateAdminFlagList_(values, value, enabled) {
   }) : [];
   if (enabled) list.push(value);
   return list;
+}
+
+function validateAdminIdentityFields_(identityFields, questions, candidate) {
+  if (!Array.isArray(identityFields) || !identityFields.length) adminError_('CONFLICT');
+  var questionsById = {};
+  questions.forEach(function(question) {
+    if (question.eventId === candidate.eventId) questionsById[question.questionId] = question;
+  });
+  questionsById[candidate.questionId] = candidate;
+  var seen = {};
+  identityFields.forEach(function(questionId) {
+    if (typeof questionId !== 'string' || !questionId || seen[questionId]) {
+      adminError_('CONFLICT');
+    }
+    seen[questionId] = true;
+    var question = questionsById[questionId];
+    if (!question || String(question.status || '').toLowerCase() !== 'active' ||
+        !adminTruthy_(question.required)) {
+      adminError_('CONFLICT');
+    }
+  });
 }

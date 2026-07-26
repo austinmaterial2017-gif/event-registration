@@ -12,15 +12,20 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const checker = join(root, "scripts", "check-public-package.mjs");
 const publicSource = join(root, "public");
 const publicEndpoint = "https://script.google.com/macros/s/public-deployment/exec";
+const staffEndpoint = "https://script.google.com/macros/s/staff-deployment/exec";
 
-async function withPublicFixture(mutator, approvedEndpoint = publicEndpoint) {
+async function withPublicFixture(mutator, endpoints = { publicEndpoint, staffEndpoint }) {
   const directory = await mkdtemp(join(tmpdir(), "event-ticket-public-"));
   const publicRoot = join(directory, "public");
   await cp(publicSource, publicRoot, { recursive: true });
   try {
     await mutator(publicRoot);
     return await execFileAsync(process.execPath, [checker, "--public-dir", publicRoot], {
-      env: { ...process.env, PUBLIC_APPS_SCRIPT_WEB_APP_URL: approvedEndpoint }
+      env: {
+        ...process.env,
+        PUBLIC_APPS_SCRIPT_WEB_APP_URL: endpoints.publicEndpoint,
+        STAFF_APPS_SCRIPT_WEB_APP_URL: endpoints.staffEndpoint
+      }
     });
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -43,9 +48,28 @@ test("public package checker rejects a config endpoint that differs from the sep
   await assert.rejects(
     withPublicFixture(
       (publicRoot) => writeFile(join(publicRoot, "js", "config.js"), `export const APPS_SCRIPT_WEB_APP_URL = "${publicEndpoint}";\n`, "utf8"),
-      "https://script.google.com/macros/s/different-public-deployment/exec"
+      { publicEndpoint: "https://script.google.com/macros/s/different-public-deployment/exec", staffEndpoint }
     ),
     /Public package check failed:.*approved exact Apps Script endpoint/i
+  );
+});
+
+test("public package checker requires manually attested distinct public and staff deployment URLs", async () => {
+  const configurePublic = (publicRoot) => writeFile(join(publicRoot, "js", "config.js"), `export const APPS_SCRIPT_WEB_APP_URL = "${publicEndpoint}";\n`, "utf8");
+  await assert.rejects(
+    withPublicFixture(configurePublic, { publicEndpoint, staffEndpoint: "" }),
+    /Public package check failed:.*staff.*attested/i
+  );
+  await assert.rejects(
+    withPublicFixture(configurePublic, { publicEndpoint, staffEndpoint: publicEndpoint }),
+    /Public package check failed:.*must differ/i
+  );
+});
+
+test("public package checker rejects the manually attested staff URL anywhere in public files", async () => {
+  await assert.rejects(
+    withPublicFixture((publicRoot) => appendFixtureFile(publicRoot, "index.html", staffEndpoint)),
+    /Public package check failed:.*staff.*endpoint/i
   );
 });
 

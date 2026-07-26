@@ -55,7 +55,8 @@
 
 1. `setupSystem()` 已在永久注册表的「系统设置」页中首次写入一个有效、保守的 `ADMIN_SETTINGS` JSON（空的报名/签到策略，所有可选权限默认关闭）。使用已授权管理员打开工作人员项目的 `?view=admin` 后再按需要更新活动策略。此行是两个项目共同信任的唯一策略来源；若后来被删除、清空或改成错误格式，系统会安全地拒绝服务，不能以脚本属性替代。
 2. 配置活动、场次、座位和报名问题后，确认公开活动流程可用。
-3. GitHub Pages **仅**发布本仓库的 `public/` 目录。不要发布仓库根目录、`apps-script/`、`staff-apps-script/`、`source-bundles/`、测试或管理 HTML。
+3. 在发布 GitHub Pages 前，按实际站点修改 `public/404.html` 的 `github-pages-base-path`：用户/组织根站点填 `/`，项目站点填 `/仓库名/`（本仓库默认 `/event-ticket-system/`）。404 页不依赖相对 CSS 路径，并会使用这个明确配置返回活动首页。
+4. GitHub Pages **仅**发布本仓库的 `public/` 目录。不要发布仓库根目录、`apps-script/`、`staff-apps-script/`、`source-bundles/`、测试或管理 HTML。
 
 公开 Pages URL 用于参与者报名；工作人员 Web App URL 用于签到；附带 `?view=admin` 的工作人员 URL 用于管理。三者用途不同，后两者始终私下分发。
 
@@ -95,15 +96,17 @@ node scripts/build-admin-source-bundles.mjs --check
 
 前者会重新生成 `source-bundles/*.txt` 和 `staff-apps-script/SourceBundles.gs`；后者只验证是否同步。然后把更新后的相应源码包重新复制到两个独立 Apps Script 项目，保存并建立新部署版本。前端改动也需重新发布 `public/` 到 GitHub Pages。
 
-若 `public/js/config.js` 已由占位符改成真实公开 `/exec` URL，运行完整检查时还必须在命令外显式提供同一个 URL，防止误把工作人员 URL 放入公开包：
+若 `public/js/config.js` 已由占位符改成真实公开 `/exec` URL，操作人员必须从两个**独立命名的部署**分别取得公开与工作人员 URL，并在命令外做人工确认后提供两者：
 
 ```powershell
 $env:PUBLIC_APPS_SCRIPT_WEB_APP_URL = "https://script.google.com/macros/s/你的公开部署ID/exec"
+$env:STAFF_APPS_SCRIPT_WEB_APP_URL = "https://script.google.com/macros/s/你的工作人员部署ID/exec"
 npm.cmd run check
 Remove-Item Env:PUBLIC_APPS_SCRIPT_WEB_APP_URL
+Remove-Item Env:STAFF_APPS_SCRIPT_WEB_APP_URL
 ```
 
-占位符配置不需要这个环境变量。无论哪种模式，公开包都只能有这一个公开 `/exec` URL。
+占位符配置不需要这些环境变量。检查会确认配置值等于人工提供的公开 URL、公开与工作人员 URL 不相同，并确认公开包不含工作人员 URL 或第二个 Apps Script URL。它**不能**从 URL 本身加密或可靠地证明哪个部署是公开/工作人员项目；部署来源、执行身份与访问策略仍须由操作人员在 Google Apps Script 中人工核对。
 
 ## 常见问题
 
@@ -130,5 +133,5 @@ Remove-Item Env:PUBLIC_APPS_SCRIPT_WEB_APP_URL
 
 - 创建私有 Google Sheets，设置脚本属性、允许名单与 Sheet 分享。
 - 在 Apps Script 中授权、初始化、部署两个独立 Web App，并填写管理员设置。
-- 仅把公开 URL 写入 `public/js/config.js`，在浏览器用真实帐号验证公开报名与员工签到。
+- 从分别命名的公开与工作人员部署取得 URL，人工确认其执行身份与访问策略；仅把公开 URL 写入 `public/js/config.js`，在浏览器用真实帐号验证公开报名与员工签到。
 - 只发布 `public/` 到 GitHub Pages，并通过受保护渠道分发工作人员/管理员 URL。

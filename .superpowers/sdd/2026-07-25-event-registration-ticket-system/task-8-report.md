@@ -41,3 +41,11 @@ The automated public scan intentionally allows code references needed for partic
 - The GitHub Pages 404 resolver now computes the correct project base for nested `*.github.io/<repository>/…` routes, with tests for project, user-site, and custom-domain paths.
 
 Fresh follow-up verification on 2026-07-26: `npm.cmd run check` passed with 151 tests, 0 failures; generated source bundles were current; and the public package check passed with 17 approved participant files and 11 parsed JavaScript files.
+
+## Review round 2 follow-up
+
+- Privacy validation now requires a manually attested `PUBLIC_APPS_SCRIPT_WEB_APP_URL` and `STAFF_APPS_SCRIPT_WEB_APP_URL` when a real public endpoint is configured. It enforces that the public config equals the attested public URL, that the two URLs differ, and that the staff URL/any second Apps Script URL is absent from public files. This is structural separation only: URL text cannot prove cryptographically or reliably which deployment has which Google Apps Script execution/access policy, so that remains an explicit operator check documented in the README.
+- Successful registration now stores a validated, minimized ticket projection in `sessionStorage` and navigates to `ticket.html`; the ticket page consumes that one-time result before retaining its lookup fallback. The integrated test now executes the exported final-submit controller instead of fabricating a post-submit ticket render.
+- The 404 page now has an explicit `github-pages-base-path` configuration (default `/event-ticket-system/`), inline styles, and absolute home links. README documents changing it to `/` for a root Pages site or `/repo/` for a project site.
+
+Fresh round-2 verification on 2026-07-26: `npm.cmd run check` passed with 154 tests, 0 failures; generated source bundles were current; and the public package check passed with 18 approved participant files and 12 parsed JavaScript files.

@@ -1,7 +1,8 @@
 import { createRegistration, getEvent } from "./api.js";
 import { applyRegistrationGate, getFieldControlSpec, getSeatModeState, validateRegistrationDraft } from "./registration-flow.js";
+import { transitionToTicket } from "./registration-success.js";
 
-const form = document.querySelector("#registration-form");
+const form = typeof document === "undefined" ? null : document.querySelector("#registration-form");
 const state = { selectedSessions: new Set(), seatChoices: [], review: null, event: null, serverOffset: Number.NaN };
 
 function node(tag, className, content) {
@@ -89,8 +90,22 @@ function showReview(event, request) {
   state.review = request; form.hidden = true; const card = document.querySelector("#review-card"); card.hidden = false; card.focus();
 }
 
-function renderSuccess(result) {
-  const section = node("section", "success-card form-card"); section.append(node("p", "eyebrow", "REGISTRATION COMPLETE"), node("h2", "", result.demo ? "演示提交已完成。" : "你的位置已经留好。"), node("p", "", result.demo ? "演示模式：报名没有保存或发送。" : `报名编号：${result.data?.registrationId || ""}。电子凭证将发送到你的邮箱。`)); const link = node("a", "primary-button", "查看其他活动"); link.href = "index.html"; section.append(link); document.querySelector("#review-card").replaceWith(section);
+export function createFinalSubmitHandler({ getReview, validateReview, submitRegistration, showErrors, editReview, setSubmitting, transition }) {
+  return async () => {
+    const review = getReview();
+    if (!review) return;
+    const validation = validateReview(review);
+    showErrors(validation.errors || []);
+    if (!validation.valid) {
+      editReview();
+      return;
+    }
+    setSubmitting(true);
+    const result = await submitRegistration(review);
+    if (result.ok && transition(result)) return;
+    showErrors([result.ok ? "凭证暂时无法打开，请重试。" : result.message]);
+    setSubmitting(false);
+  };
 }
 
 function setRegistrationEnabled(event) {
@@ -110,7 +125,19 @@ async function initialise() {
   document.querySelector("#event-meta").textContent = state.event.title; renderSessionChoices(state.event); renderSeatOptions(state.event); renderQuestions(state.event); setRegistrationEnabled(state.event);
   form.addEventListener("submit", (submitEvent) => { submitEvent.preventDefault(); const request = { eventId: state.event.id, sessionIds: [...state.selectedSessions], seatChoices: [...state.seatChoices], answers: collectAnswers(state.event) }; const validation = validateReview(state.event, request); showErrors(validation.errors); if (validation.valid) showReview(state.event, request); });
   document.querySelector("#edit-registration").addEventListener("click", () => { state.review = null; document.querySelector("#review-card").hidden = true; form.hidden = false; form.querySelector("input, textarea, select")?.focus(); });
-  document.querySelector("#final-submit").addEventListener("click", async () => { if (!state.review) return; const validation = validateReview(state.event, state.review); showErrors(validation.errors); if (!validation.valid) { document.querySelector("#edit-registration").click(); return; } const button = document.querySelector("#final-submit"); button.disabled = true; button.textContent = "正在提交…"; const result = await createRegistration(state.review); if (result.ok) renderSuccess(result); else { showErrors([result.message]); button.disabled = false; button.textContent = "06 · 确认提交报名"; } });
+  const finalSubmit = document.querySelector("#final-submit");
+  finalSubmit.addEventListener("click", createFinalSubmitHandler({
+    getReview: () => state.review,
+    validateReview: (review) => validateReview(state.event, review),
+    submitRegistration: createRegistration,
+    showErrors,
+    editReview: () => document.querySelector("#edit-registration").click(),
+    setSubmitting: (submitting) => {
+      finalSubmit.disabled = submitting;
+      finalSubmit.textContent = submitting ? "正在提交…" : "06 · 确认提交报名";
+    },
+    transition: (result) => transitionToTicket(result)
+  }));
 }
 
-initialise();
+if (form) initialise();

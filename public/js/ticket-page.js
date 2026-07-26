@@ -1,5 +1,6 @@
 import { lookupTicket } from "./api.js";
 import { renderQrSvg } from "./qr.js";
+import { consumeStoredTicketResult } from "./registration-success.js";
 
 const STATUS = {
   active: { code: "active", label: "有效凭证" },
@@ -79,11 +80,27 @@ export function renderTicketMarkup(view) {
     </article>`;
 }
 
+export function renderTicketProjection(resultHolder, ticket, documentRef = document) {
+  const template = documentRef.createElement("template");
+  template.innerHTML = renderTicketMarkup(createTicketViewModel(ticket));
+  resultHolder.replaceChildren(template.content);
+}
+
+export function consumeInitialTicketResult(storage = globalThis.sessionStorage) {
+  return consumeStoredTicketResult(storage);
+}
+
 async function initialiseTicketPage() {
   const form = document.querySelector("#ticket-lookup-form");
   if (!form) return;
   const resultHolder = document.querySelector("#ticket-result");
   const message = document.querySelector("#ticket-message");
+  const storedTicket = consumeInitialTicketResult();
+  if (storedTicket) {
+    message.textContent = "报名成功，以下是你的电子凭证。";
+    renderTicketProjection(resultHolder, storedTicket);
+    return;
+  }
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const button = form.querySelector("button");
@@ -100,9 +117,7 @@ async function initialiseTicketPage() {
       return;
     }
     message.textContent = "";
-    const template = document.createElement("template");
-    template.innerHTML = renderTicketMarkup(createTicketViewModel(result.data));
-    resultHolder.replaceChildren(template.content);
+    renderTicketProjection(resultHolder, result.data);
   });
 }
 

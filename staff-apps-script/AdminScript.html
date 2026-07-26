@@ -1,0 +1,375 @@
+<script>
+  (() => {
+    "use strict";
+
+    const state = { dashboard: null, bundles: null };
+    const statusNode = document.querySelector("#admin-status");
+
+    function setStatus(message, kind = "success") {
+      statusNode.textContent = message;
+      statusNode.style.color = kind === "error" ? "var(--danger)" : "var(--green)";
+    }
+
+    function adminRunner_(success) {
+      return google.script.run
+        .withSuccessHandler((result) => {
+          if (!result || result.ok !== true) {
+            setStatus(result && result.message ? result.message : "管理员功能不可用。", "error");
+            return;
+          }
+          success(result.data);
+        })
+        .withFailureHandler(() => setStatus("管理员功能不可用。", "error"));
+    }
+
+    function element(tag, text, className) {
+      const node = document.createElement(tag);
+      if (text !== undefined && text !== null) node.textContent = String(text);
+      if (className) node.className = className;
+      return node;
+    }
+
+    function replaceList(selector, items, render) {
+      const container = document.querySelector(selector);
+      container.replaceChildren();
+      if (!items || items.length === 0) {
+        container.append(element("p", "暂无记录。", "empty"));
+        return;
+      }
+      items.forEach((item) => container.append(render(item)));
+    }
+
+    function dataRow(title, status, details) {
+      const row = element("article", null, "data-row");
+      row.append(element("span", status || "record", "pill"));
+      row.append(element("strong", title || "未命名"));
+      (details || []).filter(Boolean).forEach((detail) => row.append(element("small", detail)));
+      return row;
+    }
+
+    function editButton(label, handler) {
+      const button = element("button", label);
+      button.type = "button";
+      button.className = "secondary";
+      button.addEventListener("click", handler);
+      return button;
+    }
+
+    function renderDashboard(data) {
+      state.dashboard = data;
+      document.querySelector("#connection-status").textContent = data.connection && data.connection.connected
+        ? `已连接：${data.connection.sheetName || "Google Sheet"}`
+        : "未连接到数据表。";
+      replaceList("#event-list", data.events, (item) => {
+        const row = dataRow(item.title, item.status, [
+          item.location, `${item.selectionMode} · ${item.seatMode}`,
+          `场次选择 ${item.minChoices}–${item.maxChoices}`
+        ]);
+        row.append(editButton("编辑活动", () => editAdminEvent(item)));
+        return row;
+      });
+      replaceList("#session-list", data.sessions, (item) => {
+        const row = dataRow(item.title, item.status, [
+          item.speaker, item.location, `${item.startsAt || "未定"} → ${item.endsAt || "未定"}`,
+          `容量 ${item.capacity}${item.required ? " · 必选" : ""}${item.groupRule ? ` · ${item.groupRule}` : ""}`
+        ]);
+        row.append(editButton("编辑场次", () => editAdminSession(item)));
+        return row;
+      });
+      replaceList("#seat-list", data.seats, (item) => {
+        const row = dataRow(item.label, item.status, [item.zone, item.sessionId]);
+        const actions = element("div", null, "actions");
+        ["reserve", "close", "reopen"].forEach((action) => {
+          const button = element("button", action === "reserve" ? "保留" : action === "close" ? "关闭" : "重新开放");
+          button.type = "button";
+          button.className = "secondary";
+          button.dataset.action = action;
+          button.addEventListener("click", () => saveSeatAction(action, item.seatId));
+          actions.append(button);
+        });
+        row.append(actions);
+        return row;
+      });
+      replaceList("#question-list", data.questions, (item) => {
+        const row = dataRow(item.label, item.status, [
+          `${item.type}${item.required ? " · 必填" : ""}`,
+          `排序 ${item.sortOrder}${item.showOnTicket ? " · 票面显示" : ""}${item.duplicateIdentity ? " · 身份判断" : ""}`
+        ]);
+        row.append(editButton("编辑问题", () => editAdminQuestion(item)));
+        return row;
+      });
+      replaceList("#record-list", data.records, (item) =>
+        dataRow(`${item.ticketNumber} · ${item.participantName}`, item.status, [
+          item.registrationId, item.email || item.phone,
+          `场次 ${item.sessionIds.join(", ") || "无"} · 座位 ${item.seatChoices.join(", ") || "无"}`
+        ]));
+      replaceList("#attendance-list", data.attendance, (item) =>
+        dataRow(item.registrationId, item.status, [
+          `场次 ${item.sessionId}`, item.checkedInAt, item.checkedInBy
+        ]));
+      setStatus("管理数据已更新。");
+    }
+
+    function loadDashboard(search = "") {
+      setStatus("正在读取管理数据…");
+      adminRunner_(renderDashboard).getAdminDashboard({ search });
+    }
+
+    function formObject(form) {
+      return Object.fromEntries(new FormData(form).entries());
+    }
+
+    function checked(form, name) {
+      return form.elements[name].checked === true;
+    }
+
+    function localDateValue(value) {
+      return value ? new Date(value).toISOString() : "";
+    }
+
+    function localDateInput(value) {
+      if (!value) return "";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return "";
+      const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+      return local.toISOString().slice(0, 16);
+    }
+
+    function focusEditor(form) {
+      form.scrollIntoView({ behavior: "smooth", block: "center" });
+      const firstVisible = form.querySelector("input:not([type=hidden]), select, textarea");
+      if (firstVisible) firstVisible.focus();
+    }
+
+    function editAdminEvent(item) {
+      const form = document.querySelector("#event-form");
+      form.elements.eventId.value = item.eventId;
+      form.elements.title.value = item.title;
+      form.elements.description.value = item.description;
+      form.elements.status.value = item.status;
+      form.elements.opensAt.value = localDateInput(item.opensAt);
+      form.elements.closesAt.value = localDateInput(item.closesAt);
+      form.elements.location.value = item.location;
+      form.elements.selectionMode.value = item.selectionMode;
+      form.elements.minChoices.value = item.minChoices;
+      form.elements.maxChoices.value = item.maxChoices;
+      form.elements.seatMode.value = item.seatMode;
+      form.elements.seatZones.value = (item.seatZones || []).join("\n");
+      form.elements.showOpeningCountdown.checked = item.showOpeningCountdown === true;
+      form.elements.showClosingCountdown.checked = item.showClosingCountdown === true;
+      form.elements.cancellationEnabled.checked = item.cancellationEnabled === true;
+      form.elements.seatExchangeEnabled.checked = item.seatExchangeEnabled === true;
+      focusEditor(form);
+    }
+
+    function editAdminSession(item) {
+      const form = document.querySelector("#session-form");
+      form.elements.sessionId.value = item.sessionId;
+      form.elements.eventId.value = item.eventId;
+      form.elements.title.value = item.title;
+      form.elements.speaker.value = item.speaker;
+      form.elements.startsAt.value = localDateInput(item.startsAt);
+      form.elements.endsAt.value = localDateInput(item.endsAt);
+      form.elements.location.value = item.location;
+      form.elements.capacity.value = item.capacity;
+      form.elements.required.checked = item.required === true;
+      form.elements.groupRule.value = item.groupRule;
+      form.elements.status.value = item.status;
+      focusEditor(form);
+    }
+
+    function editAdminQuestion(item) {
+      const form = document.querySelector("#question-form");
+      form.elements.questionId.value = item.questionId;
+      form.elements.eventId.value = item.eventId;
+      form.elements.label.value = item.label;
+      form.elements.type.value = item.type;
+      form.elements.options.value = (item.options || []).join("\n");
+      form.elements.validation.value = JSON.stringify(item.validation || {}, null, 2);
+      form.elements.sortOrder.value = item.sortOrder;
+      form.elements.status.value = item.status;
+      form.elements.required.checked = item.required === true;
+      form.elements.showOnTicket.checked = item.showOnTicket === true;
+      form.elements.duplicateIdentity.checked = item.duplicateIdentity === true;
+      focusEditor(form);
+    }
+
+    function eventPayload(action) {
+      const form = document.querySelector("#event-form");
+      const values = formObject(form);
+      return {
+        ...values,
+        eventId: values.eventId || undefined,
+        action,
+        opensAt: localDateValue(values.opensAt),
+        closesAt: localDateValue(values.closesAt),
+        minChoices: Number(values.minChoices),
+        maxChoices: Number(values.maxChoices),
+        seatZones: values.seatZones.split(/\r?\n/).map((value) => value.trim()).filter(Boolean),
+        showOpeningCountdown: checked(form, "showOpeningCountdown"),
+        showClosingCountdown: checked(form, "showClosingCountdown"),
+        cancellationEnabled: checked(form, "cancellationEnabled"),
+        seatExchangeEnabled: checked(form, "seatExchangeEnabled")
+      };
+    }
+
+    function saveEvent(action) {
+      const payload = eventPayload(action);
+      if (action === "reopen") {
+        const count = state.dashboard && state.dashboard.records
+          ? new Set(state.dashboard.records.filter((record) => record.eventId === payload.eventId)
+            .map((record) => record.registrationId)).size : 0;
+        if (!window.confirm(`此活动已有 ${count} 个报名。确认重新开放？`)) return;
+        payload.confirm = true;
+      }
+      setStatus("正在保存活动…");
+      adminRunner_(() => loadDashboard()).saveAdminEvent(payload);
+    }
+
+    document.querySelector("#event-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      saveEvent("");
+    });
+    document.querySelectorAll("#event-form [data-action]").forEach((button) => {
+      button.addEventListener("click", () => saveEvent(button.dataset.action));
+    });
+
+    document.querySelector("#session-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const values = formObject(form);
+      const payload = {
+        ...values,
+        sessionId: values.sessionId || undefined,
+        startsAt: localDateValue(values.startsAt),
+        endsAt: localDateValue(values.endsAt),
+        capacity: Number(values.capacity),
+        required: checked(form, "required")
+      };
+      setStatus("正在保存场次…");
+      adminRunner_(() => loadDashboard()).saveAdminSession(payload);
+    });
+
+    document.querySelector("#seat-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const values = formObject(event.currentTarget);
+      const mode = values.mode;
+      const payload = {
+        eventId: values.eventId,
+        sessionId: values.sessionId,
+        action: "generate",
+        mode,
+        zones: mode === "none" ? [] : [{
+          name: values.zoneName,
+          rows: Number(values.rows),
+          seatsPerRow: Number(values.seatsPerRow)
+        }]
+      };
+      setStatus("正在保存座位方案…");
+      adminRunner_(() => loadDashboard()).saveAdminSeatPlan(payload);
+    });
+
+    function saveSeatAction(action, seatId) {
+      setStatus("正在更新座位…");
+      adminRunner_(() => loadDashboard()).saveAdminSeatPlan({ action, seatId });
+    }
+
+    document.querySelector("#question-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const values = formObject(form);
+      let validation;
+      try {
+        validation = JSON.parse(values.validation || "{}");
+      } catch (_ignored) {
+        setStatus("验证规则必须是有效 JSON。", "error");
+        return;
+      }
+      const payload = {
+        ...values,
+        questionId: values.questionId || undefined,
+        options: values.options.split(/\r?\n/).map((value) => value.trim()).filter(Boolean),
+        validation,
+        sortOrder: Number(values.sortOrder),
+        required: checked(form, "required"),
+        showOnTicket: checked(form, "showOnTicket"),
+        duplicateIdentity: checked(form, "duplicateIdentity")
+      };
+      setStatus("正在保存问题…");
+      adminRunner_(() => loadDashboard()).saveAdminQuestion(payload);
+    });
+
+    document.querySelector("#record-search-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      loadDashboard(event.currentTarget.elements.search.value.trim());
+    });
+    document.querySelector("#clear-search").addEventListener("click", () => {
+      document.querySelector("#record-search-form").reset();
+      loadDashboard();
+    });
+    document.querySelectorAll("#record-action-form [data-action]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const form = document.querySelector("#record-action-form");
+        const values = formObject(form);
+        if (!window.confirm("确认执行此操作并保留完整历史记录？")) return;
+        const payload = {
+          action: button.dataset.action,
+          registrationId: values.registrationId,
+          seatId: values.seatId,
+          confirm: true
+        };
+        setStatus("正在更新报名记录…");
+        adminRunner_(() => loadDashboard()).adminRecordAction(payload);
+      });
+    });
+
+    document.querySelector("#test-sheet").addEventListener("click", () => {
+      const spreadsheetId = document.querySelector("#sheet-form").elements.spreadsheetId.value.trim();
+      setStatus("正在测试数据表连接…");
+      adminRunner_((data) => {
+        document.querySelector("#connection-status").textContent = `测试成功：${data.sheetName}`;
+        setStatus("目标数据表连接正常。");
+      }).testAdminSheetConnection({ spreadsheetId });
+    });
+    document.querySelector("#switch-sheet").addEventListener("click", () => {
+      const spreadsheetId = document.querySelector("#sheet-form").elements.spreadsheetId.value.trim();
+      if (!window.confirm("确认切换？旧数据会保留，系统不会自动迁移。")) return;
+      setStatus("正在切换数据表…");
+      adminRunner_((data) => {
+        setStatus(data.warning);
+        document.querySelector("#sheet-form").reset();
+        loadDashboard();
+      }).switchAdminSheet({ spreadsheetId, confirm: true });
+    });
+
+    function loadBundles(onReady) {
+      if (state.bundles) {
+        onReady(state.bundles);
+        return;
+      }
+      setStatus("正在准备部署源码…");
+      adminRunner_((bundles) => {
+        state.bundles = bundles;
+        onReady(bundles);
+      }).getAdminSourceBundles({});
+    }
+
+    document.querySelectorAll("[data-copy-bundle]").forEach((button) => {
+      button.addEventListener("click", () => {
+        loadBundles((bundles) => {
+          const key = button.dataset.copyBundle;
+          const source = bundles && typeof bundles[key] === "string" ? bundles[key] : "";
+          if (!source) {
+            setStatus("源码包不可用。", "error");
+            return;
+          }
+          navigator.clipboard.writeText(source)
+            .then(() => setStatus("源码已复制；请按文件分隔标记建立独立 Apps Script 项目。"))
+            .catch(() => setStatus("无法写入剪贴板，请检查浏览器权限。", "error"));
+        });
+      });
+    });
+
+    loadDashboard();
+  })();
+</script>

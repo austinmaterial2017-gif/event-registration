@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <base target="_top">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+      :root {
+        --charcoal: #18131d;
+        --panel: #261d2b;
+        --panel-deep: #100d13;
+        --ivory: #f8f0df;
+        --muted: #c8b9ca;
+        --line: #594463;
+        --magenta: #ff4fa3;
+        --purple: #8755ff;
+        --green: #77e4aa;
+        --danger: #ff7f91;
+        --radius: 18px;
+      }
+      * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
+      body {
+        margin: 0;
+        background:
+          radial-gradient(circle at 84% 8%, rgba(135, 85, 255, .16), transparent 28rem),
+          var(--charcoal);
+        color: var(--ivory);
+        font: 15px/1.5 "Aptos", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+      }
+      button, input, select, textarea { font: inherit; }
+      button, a, input, select, textarea { outline: none; }
+      :focus-visible { box-shadow: 0 0 0 3px var(--charcoal), 0 0 0 6px var(--magenta); }
+      .shell { min-height: 100vh; display: grid; grid-template-columns: 250px minmax(0, 1fr); }
+      .sidebar {
+        position: sticky; top: 0; height: 100vh; padding: 28px 22px;
+        border-right: 1px solid var(--line); background: rgba(16, 13, 19, .9);
+        backdrop-filter: blur(18px);
+      }
+      .eyebrow { margin: 0; color: var(--magenta); font: 700 11px/1.2 "Consolas", monospace; letter-spacing: .16em; text-transform: uppercase; }
+      .brand { margin: 8px 0 6px; font: 700 29px/1.05 "Iowan Old Style", "Noto Serif SC", Georgia, serif; }
+      .sidebar-copy { margin: 0 0 24px; color: var(--muted); font-size: 13px; }
+      nav { display: grid; gap: 7px; }
+      nav a { padding: 9px 11px; border-left: 2px solid transparent; color: var(--muted); text-decoration: none; }
+      nav a:hover { color: var(--ivory); border-color: var(--magenta); background: rgba(255, 79, 163, .07); }
+      .workspace { min-width: 0; padding: 34px clamp(18px, 4vw, 54px) 64px; }
+      .masthead { display: grid; gap: 22px; margin: 0 auto 28px; max-width: 1420px; }
+      .masthead h1 { max-width: 850px; margin: 4px 0 0; font: 650 clamp(34px, 5vw, 68px)/.98 "Iowan Old Style", "Noto Serif SC", Georgia, serif; letter-spacing: -.035em; }
+      .masthead p { max-width: 760px; margin: 0; color: var(--muted); }
+      .lifecycle-rail {
+        display: grid; grid-template-columns: repeat(8, minmax(92px, 1fr)); overflow: auto;
+        border: 1px solid var(--line); border-radius: 999px; background: var(--panel-deep);
+      }
+      .lifecycle-rail span { position: relative; padding: 10px 15px; color: var(--muted); font: 700 11px/1 "Consolas", monospace; text-align: center; text-transform: uppercase; }
+      .lifecycle-rail span + span::before { content: ""; position: absolute; inset: 7px auto 7px 0; width: 1px; background: var(--line); }
+      .lifecycle-rail [data-public="true"] { color: var(--ivory); }
+      .lifecycle-rail [data-live="true"] { color: var(--green); }
+      .status-line { min-height: 28px; margin: 0 auto 14px; max-width: 1420px; color: var(--green); }
+      .stack { display: grid; gap: 22px; max-width: 1420px; margin: auto; }
+      .panel { scroll-margin-top: 18px; border: 1px solid var(--line); border-radius: var(--radius); background: rgba(38, 29, 43, .96); box-shadow: 0 20px 70px rgba(0, 0, 0, .18); }
+      .panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 20px 22px; border-bottom: 1px solid var(--line); }
+      .panel-head h2 { margin: 2px 0 0; font: 650 25px/1.1 "Iowan Old Style", "Noto Serif SC", Georgia, serif; }
+      .panel-head p { max-width: 640px; margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+      .panel-body { display: grid; gap: 18px; padding: 22px; }
+      .split { display: grid; grid-template-columns: minmax(320px, .85fr) minmax(420px, 1.15fr); gap: 18px; }
+      form, .form-grid { display: grid; gap: 13px; }
+      .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+      .wide { grid-column: 1 / -1; }
+      label { display: grid; align-content: start; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .025em; }
+      input, select, textarea {
+        width: 100%; min-height: 42px; padding: 9px 11px; border: 1px solid #6b5874;
+        border-radius: 10px; background: #171219; color: var(--ivory);
+      }
+      textarea { min-height: 86px; resize: vertical; }
+      .checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; }
+      .check { display: flex; align-items: flex-start; gap: 8px; color: var(--ivory); font-weight: 500; }
+      .check input { width: auto; min-height: auto; margin: 4px 0 0; accent-color: var(--magenta); }
+      .actions { display: flex; flex-wrap: wrap; gap: 9px; }
+      button {
+        min-height: 42px; padding: 9px 14px; border: 1px solid transparent; border-radius: 10px;
+        background: linear-gradient(115deg, var(--magenta), var(--purple)); color: white; font-weight: 800; cursor: pointer;
+      }
+      button.secondary { border-color: var(--line); background: transparent; color: var(--ivory); }
+      button.danger { border-color: rgba(255, 127, 145, .55); background: rgba(255, 127, 145, .1); color: #ffd5dc; }
+      button:disabled { opacity: .45; cursor: not-allowed; }
+      .data-list { display: grid; gap: 9px; align-content: start; max-height: 540px; overflow: auto; }
+      .data-row { display: grid; gap: 6px; padding: 13px 14px; border: 1px solid rgba(89, 68, 99, .8); border-radius: 12px; background: rgba(16, 13, 19, .48); }
+      .data-row strong { color: var(--ivory); }
+      .data-row small, .empty { color: var(--muted); }
+      .pill { display: inline-flex; width: fit-content; padding: 3px 8px; border: 1px solid var(--line); border-radius: 999px; color: var(--green); font: 700 10px/1.3 "Consolas", monospace; text-transform: uppercase; }
+      .warning { margin: 0; padding: 13px 15px; border-left: 3px solid var(--magenta); background: rgba(255, 79, 163, .07); color: var(--ivory); }
+      .source-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+      .source-card { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-deep); }
+      .source-card h3 { margin: 0; }
+      code { color: #e6d9ff; font-family: "Consolas", monospace; }
+      [hidden] { display: none !important; }
+      @media (max-width: 1050px) {
+        .shell { grid-template-columns: 1fr; }
+        .sidebar { z-index: 4; height: auto; padding: 14px 18px; border: 0; border-bottom: 1px solid var(--line); }
+        .sidebar .brand, .sidebar-copy { display: none; }
+        nav { display: flex; gap: 2px; overflow: auto; }
+        nav a { flex: 0 0 auto; border-left: 0; border-bottom: 2px solid transparent; }
+        .split { grid-template-columns: 1fr; }
+      }
+      @media (max-width: 680px) {
+        .workspace { padding-inline: 13px; }
+        .fields, .checks, .source-grid { grid-template-columns: 1fr; }
+        .panel-head, .panel-body { padding-inline: 15px; }
+        .masthead h1 { font-size: 38px; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        html { scroll-behavior: auto; }
+        *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <p class="eyebrow">Protected staff project</p>
+        <p class="brand">Event control room</p>
+        <p class="sidebar-copy">管理活动、场次、座位、问题与历史记录。身份来自当前 Google 登录会话。</p>
+        <nav aria-label="管理区导航">
+          <a href="#events">活动</a><a href="#sessions">场次</a><a href="#seats">座位</a>
+          <a href="#questions">问题</a><a href="#records">记录</a><a href="#attendance">签到</a>
+          <a href="#sheet-settings">数据表</a><a href="#source-bundles">部署源码</a>
+        </nav>
+      </aside>
+
+      <main class="workspace">
+        <header class="masthead">
+          <p class="eyebrow">Administrator application</p>
+          <h1>从草稿到归档，保持每一条历史记录可追溯。</h1>
+          <p>关闭活动默认设为已结束。归档只隐藏公开显示，不删除活动、报名、座位或签到记录。</p>
+          <div class="lifecycle-rail" aria-label="活动生命周期">
+            <span>draft</span><span data-public="true">upcoming</span><span data-public="true">open</span>
+            <span data-public="true">closed</span><span data-live="true">live</span>
+            <span data-public="true">ended</span><span data-public="true">cancelled</span><span>archived</span>
+          </div>
+        </header>
+        <p id="admin-status" class="status-line" role="status" aria-live="polite">正在读取管理数据…</p>
+
+        <div class="stack">
+          <section id="events" class="panel">
+            <div class="panel-head"><div><p class="eyebrow">Lifecycle</p><h2>活动</h2><p>设定状态、开放时间、倒数显示、场次选择与取消／换座政策。</p></div></div>
+            <div class="panel-body split">
+              <form id="event-form">
+                <input name="eventId" type="hidden">
+                <div class="fields">
+                  <label class="wide">活动名称<input name="title" required maxlength="200"></label>
+                  <label class="wide">说明<textarea name="description" maxlength="5000"></textarea></label>
+                  <label>状态<select name="status">
+                    <option value="draft">草稿 draft</option><option value="upcoming">即将开放 upcoming</option>
+                    <option value="open">报名开放 open</option><option value="closed">报名关闭 closed</option>
+                    <option value="live">进行中 live</option><option value="ended">已结束 ended</option>
+                    <option value="cancelled">已取消 cancelled</option><option value="archived">已归档 archived</option>
+                  </select></label>
+                  <label>地点<input name="location" maxlength="300"></label>
+                  <label>开放时间<input name="opensAt" type="datetime-local"></label>
+                  <label>截止时间<input name="closesAt" type="datetime-local"></label>
+                  <label>场次选择规则<select name="selectionMode">
+                    <option value="none">无需选择</option><option value="single">单选</option><option value="all">全部</option>
+                    <option value="free">自由多选</option><option value="mixed">必选＋自选</option><option value="multiple">多选</option>
+                  </select></label>
+                  <label>座位模式<select name="seatMode">
+                    <option value="none">none 自由入座</option><option value="self">self 自行选座</option>
+                    <option value="auto">auto 系统分配</option><option value="zone">zone 选择区域</option>
+                  </select></label>
+                  <label>最少场次<input name="minChoices" type="number" min="0" step="1" value="0"></label>
+                  <label>最多场次<input name="maxChoices" type="number" min="0" step="1" value="0"></label>
+                  <label class="wide">座位区域（每行一个）<textarea name="seatZones"></textarea></label>
+                </div>
+                <div class="checks">
+                  <label class="check"><input name="showOpeningCountdown" type="checkbox">显示开放倒数</label>
+                  <label class="check"><input name="showClosingCountdown" type="checkbox">显示截止倒数</label>
+                  <label class="check"><input name="cancellationEnabled" type="checkbox">允许参加者取消</label>
+                  <label class="check"><input name="seatExchangeEnabled" type="checkbox">允许参加者换座</label>
+                </div>
+                <div class="actions">
+                  <button type="submit">保存活动</button>
+                  <button class="secondary" type="button" data-action="close">关闭为已结束</button>
+                  <button class="secondary" type="button" data-action="reopen">重新开放</button>
+                  <button class="danger" type="button" data-action="archive">归档</button>
+                </div>
+                <p class="warning">重新开放前会显示现有报名人数，并要求明确确认。</p>
+              </form>
+              <div id="event-list" class="data-list" aria-label="活动列表"></div>
+            </div>
+          </section>
+
+          <section id="sessions" class="panel">
+            <div class="panel-head"><div><p class="eyebrow">Programme</p><h2>场次</h2><p>编辑讲题、讲师、时间、地点、容量、必选和分组规则。</p></div></div>
+            <div class="panel-body split">
+              <form id="session-form">
+                <input name="sessionId" type="hidden">
+                <div class="fields">
+                  <label>所属活动 ID<input name="eventId" required></label>
+                  <label>场次状态<select name="status">
+                    <option value="draft">draft</option><option value="upcoming">upcoming</option><option value="open">open</option>
+                    <option value="closed">closed</option><option value="live">live</option><option value="ended">ended</option>
+                    <option value="cancelled">cancelled</option><option value="archived">archived</option>
+                  </select></label>
+                  <label class="wide">标题<input name="title" required></label>
+                  <label>讲师<input name="speaker"></label><label>地点<input name="location"></label>
+                  <label>开始时间<input name="startsAt" type="datetime-local"></label>
+                  <label>结束时间<input name="endsAt" type="datetime-local"></label>
+                  <label>容量<input name="capacity" type="number" min="0" step="1" value="0"></label>
+                  <label>分组规则<input name="groupRule"></label>
+                </div>
+                <label class="check"><input name="required" type="checkbox">这是必选场次</label>
+                <button type="submit">保存场次</button>
+              </form>
+              <div id="session-list" class="data-list" aria-label="场次列表"></div>
+            </div>
+          </section>
+
+          <section id="seats" class="panel">
+            <div class="panel-head"><div><p class="eyebrow">Floor plan</p><h2>座位</h2><p>按活动／场次生成座位；已有座位只会保留或改变状态。</p></div></div>
+            <div class="panel-body split">
+              <form id="seat-form">
+                <div class="fields">
+                  <label>活动 ID<input name="eventId" required></label><label>场次 ID<input name="sessionId"></label>
+                  <label>模式<select name="mode">
+                    <option value="none">none 自由入座</option><option value="self">self 自行选座</option>
+                    <option value="auto">auto 系统分配</option><option value="zone">zone 区域选择</option>
+                  </select></label>
+                  <label>区域名称<input name="zoneName"></label>
+                  <label>行数<input name="rows" type="number" min="0" step="1" value="1"></label>
+                  <label>每行座位<input name="seatsPerRow" type="number" min="0" step="1" value="1"></label>
+                </div>
+                <button type="submit">生成／更新座位方案</button>
+                <p class="warning">保留、关闭与重新开放只改变座位状态，不会删除座位行。</p>
+              </form>
+              <div id="seat-list" class="data-list" aria-label="座位列表"></div>
+            </div>
+          </section>
+
+          <section id="questions" class="panel">
+            <div class="panel-head"><div><p class="eyebrow">Registration form</p><h2>报名问题</h2><p>支持排序、显示／隐藏、必填、选项、验证、票面显示和重复身份判断。</p></div></div>
+            <div class="panel-body split">
+              <form id="question-form">
+                <input name="questionId" type="hidden">
+                <div class="fields">
+                  <label>活动 ID<input name="eventId" required></label>
+                  <label>字段类型<select name="type">
+                    <option value="text">text</option><option value="textarea">textarea</option><option value="number">number</option>
+                    <option value="tel">tel</option><option value="email">email</option><option value="date">date</option>
+                    <option value="radio">radio</option><option value="checkbox">checkbox</option><option value="select">select</option>
+                    <option value="boolean">boolean</option>
+                  </select></label>
+                  <label class="wide">问题文字<input name="label" required></label>
+                  <label class="wide">选项（每行一个）<textarea name="options"></textarea></label>
+                  <label class="wide">验证规则（JSON，例如 {"minLength":2}）<textarea name="validation">{}</textarea></label>
+                  <label>排序<input name="sortOrder" type="number" min="0" step="1" value="0"></label>
+                  <label>显示状态<select name="status"><option value="active">显示</option><option value="inactive">隐藏</option></select></label>
+                </div>
+                <div class="checks">
+                  <label class="check"><input name="required" type="checkbox">必填</label>
+                  <label class="check"><input name="showOnTicket" type="checkbox">显示在电子票</label>
+                  <label class="check"><input name="duplicateIdentity" type="checkbox">用于重复身份判断</label>
+                </div>
+                <button type="submit">保存问题</button>
+              </form>
+              <div id="question-list" class="data-list" aria-label="报名问题列表"></div>
+            </div>
+          </section>
+
+          <section id="records" class="panel">
+            <div class="panel-head"><div><p class="eyebrow">History</p><h2>报名记录</h2><p>列表与搜索只显示脱敏资料；取消和调整座位保留全部历史。</p></div></div>
+            <div class="panel-body">
+              <form id="record-search-form" class="actions">
+                <label>搜索报名号／票号／姓名／联系方式<input name="search"></label>
+                <button type="submit">搜索</button><button class="secondary" type="button" id="clear-search">清除</button>
+              </form>
+              <form id="record-action-form">
+                <div class="fields">
+                  <label>报名 ID<input name="registrationId" required></label>
+                  <label>新座位 ID<input name="seatId"></label>
+                </div>
+                <div class="actions">
+                  <button class="danger" type="button" data-action="cancel_registration">确认取消报名</button>
+                  <button class="secondary" type="button" data-action="adjust_seat">确认调整座位</button>
+                </div>
+              </form>
+              <div id="record-list" class="data-list" aria-label="脱敏报名记录"></div>
+            </div>
+          </section>
+
+          <section id="attendance" class="panel">
+            <div class="panel-head"><div><p class="eyebrow">Door log</p><h2>签到记录</h2><p>按场次查看服务器时间签到历史。</p></div></div>
+            <div class="panel-body"><div id="attendance-list" class="data-list" aria-label="签到记录"></div></div>
+          </section>
+
+          <section id="sheet-settings" class="panel">
+            <div class="panel-head"><div><p class="eyebrow">Connection</p><h2>数据表连接</h2><p id="connection-status">尚未读取连接状态。</p></div></div>
+            <div class="panel-body">
+              <form id="sheet-form">
+                <label>目标 Google Sheet ID<input name="spreadsheetId" type="password" autocomplete="off" required></label>
+                <div class="actions"><button type="button" id="test-sheet">测试连接</button><button class="danger" type="button" id="switch-sheet">确认切换数据表</button></div>
+              </form>
+              <p class="warning">切换是非破坏性的：旧数据仍保留在原数据表中，系统不会自动迁移任何数据。</p>
+            </div>
+          </section>
+
+          <section id="source-bundles" class="panel">
+            <div class="panel-head"><div><p class="eyebrow">Two deployments</p><h2>Apps Script 部署源码</h2><p>分别建立公开后端项目与员工／管理员项目；不可合并为同一个部署。</p></div></div>
+            <div class="panel-body">
+              <div class="source-grid">
+                <article class="source-card"><h3>公开后端</h3><p>部署为执行者本人，允许匿名访问。只把此项目的 <code>/exec</code> URL 放进公开网页设置。</p><button type="button" data-copy-bundle="publicBackend">复制公开后端源码</button></article>
+                <article class="source-card"><h3>员工／管理员</h3><p>部署为访问者本人，必须 Google 登录，并配置独立员工与管理员许可名单。</p><button type="button" data-copy-bundle="staffAdmin">复制员工／管理员源码</button></article>
+              </div>
+              <p class="warning">源码包不会包含密码、许可名单值、当前数据表 ID、参加者资料或私人答案。</p>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+    <?!= HtmlService.createHtmlOutputFromFile('AdminScript').getContent(); ?>
+  </body>
+</html>

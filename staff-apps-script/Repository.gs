@@ -2,12 +2,15 @@ var ACTIVE_SPREADSHEET_ID = 'ACTIVE_SPREADSHEET_ID';
 var ADMIN_SETTINGS = 'ADMIN_SETTINGS';
 
 var STAFF_SHEET_DEFINITIONS = {
+  '系统设置': ['key', 'value', 'updatedAt'],
   '活动': ['eventId', 'title', 'description', 'status', 'opensAt', 'closesAt', 'location', 'selectionMode', 'minChoices', 'maxChoices', 'seatMode', 'seatZones', 'createdAt', 'updatedAt'],
   '场次': ['sessionId', 'eventId', 'title', 'speaker', 'startsAt', 'endsAt', 'required', 'capacity', 'status', 'createdAt', 'updatedAt'],
   '座位': ['seatId', 'eventId', 'sessionId', 'label', 'zone', 'status', 'holderRegistrationId', 'createdAt', 'updatedAt'],
+  '报名问题': ['questionId', 'eventId', 'label', 'type', 'required', 'options', 'sortOrder', 'status', 'createdAt', 'updatedAt'],
   '参加者': ['participantId', 'name', 'phone', 'email', 'createdAt', 'updatedAt'],
   '报名项目': ['registrationId', 'eventId', 'participantId', 'ticketNumber', 'status', 'sessionIds', 'seatChoices', 'answers', 'createdAt', 'updatedAt'],
-  '签到记录': ['checkInId', 'registrationId', 'eventId', 'sessionId', 'checkedInAt', 'checkedInBy', 'status']
+  '签到记录': ['checkInId', 'registrationId', 'eventId', 'sessionId', 'checkedInAt', 'checkedInBy', 'status'],
+  '操作记录': ['auditId', 'action', 'entityType', 'entityId', 'actor', 'details', 'createdAt']
 };
 
 function getConfiguredSpreadsheet_() {
@@ -24,6 +27,21 @@ function getAdminSettings_() {
   } catch (_ignored) {
     return {};
   }
+}
+
+function setAdminSettings_(settings) {
+  PropertiesService.getScriptProperties().setProperty(ADMIN_SETTINGS, JSON.stringify(settings || {}));
+}
+
+function openSpreadsheetById_(spreadsheetId) {
+  if (typeof spreadsheetId !== 'string' || !spreadsheetId.trim() || spreadsheetId.length > 256) {
+    throw new Error('Invalid spreadsheet selection.');
+  }
+  return SpreadsheetApp.openById(spreadsheetId.trim());
+}
+
+function setActiveSpreadsheetId_(spreadsheetId) {
+  PropertiesService.getScriptProperties().setProperty(ACTIVE_SPREADSHEET_ID, spreadsheetId);
 }
 
 function withScriptLock_(callback) {

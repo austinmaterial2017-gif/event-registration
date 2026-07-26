@@ -1,0 +1,930 @@
+var ADMIN_EMAIL_ALLOWLIST = 'ADMIN_EMAIL_ALLOWLIST';
+
+/** Returns the administrator dashboard for the authenticated Google session. */
+function getAdminDashboard(payload) {
+  return runAdminService_(function() {
+    var actor = requireAuthorizedAdminSession_();
+    return getAdminDashboard_(payload, actor);
+  });
+}
+
+/** Creates or updates one event without deleting its related history. */
+function saveAdminEvent(payload) {
+  return runAdminService_(function() {
+    var actor = requireAuthorizedAdminSession_();
+    return saveAdminEvent_(payload, actor);
+  });
+}
+
+/** Creates or updates one event session. */
+function saveAdminSession(payload) {
+  return runAdminService_(function() {
+    var actor = requireAuthorizedAdminSession_();
+    return saveAdminSession_(payload, actor);
+  });
+}
+
+/** Creates seats or changes one seat's operational state. */
+function saveAdminSeatPlan(payload) {
+  return runAdminService_(function() {
+    var actor = requireAuthorizedAdminSession_();
+    return saveAdminSeatPlan_(payload, actor);
+  });
+}
+
+/** Creates or updates one registration question. */
+function saveAdminQuestion(payload) {
+  return runAdminService_(function() {
+    var actor = requireAuthorizedAdminSession_();
+    return saveAdminQuestion_(payload, actor);
+  });
+}
+
+/** Cancels a registration or adjusts its assigned seat while preserving history. */
+function adminRecordAction(payload) {
+  return runAdminService_(function() {
+    var actor = requireAuthorizedAdminSession_();
+    return adminRecordAction_(payload, actor);
+  });
+}
+
+/** Tests a submitted target Sheet without changing the active connection. */
+function testAdminSheetConnection(payload) {
+  return runAdminService_(function() {
+    var actor = requireAuthorizedAdminSession_();
+    return testAdminSheetConnection_(payload, actor);
+  });
+}
+
+/** Switches the active Sheet only after an explicit administrator confirmation. */
+function switchAdminSheet(payload) {
+  return runAdminService_(function() {
+    var actor = requireAuthorizedAdminSession_();
+    return switchAdminSheet_(payload, actor);
+  });
+}
+
+/** Returns paste-ready, redacted source snapshots to an authenticated administrator. */
+function getAdminSourceBundles(payload) {
+  return runAdminService_(function() {
+    requireAuthorizedAdminSession_();
+    return getAdminSourceBundles_(payload);
+  });
+}
+
+function runAdminService_(callback) {
+  try {
+    return { ok: true, data: callback() };
+  } catch (error) {
+    return adminFailure_(error && error.publicCode ? error.publicCode : 'INTERNAL');
+  }
+}
+
+function adminFailure_(code) {
+  var messages = {
+    ADMIN_ACTION_DENIED: '管理员功能不可用。',
+    INVALID_REQUEST: '提交信息无效，请检查后重试。',
+    NOT_FOUND: '未找到对应记录。',
+    CONFLICT: '当前数据状态不允许此操作。',
+    CONFIRMATION_REQUIRED: '此操作需要明确确认。',
+    SHEET_CONNECTION_FAILED: '无法连接到指定的数据表。',
+    INTERNAL: '请求未能完成，请稍后重试。'
+  };
+  var safeCode = Object.prototype.hasOwnProperty.call(messages, code) ? code : 'INTERNAL';
+  return { ok: false, code: safeCode, message: messages[safeCode] };
+}
+
+function adminError_(code) {
+  var error = new Error(code);
+  error.publicCode = code;
+  throw error;
+}
+
+function requireAuthorizedAdminSession_() {
+  var identity = normalizedAdminSessionIdentity_();
+  if (!identity || !isAllowlistedAdminIdentity_(identity)) {
+    adminError_('ADMIN_ACTION_DENIED');
+  }
+  return identity;
+}
+
+function normalizedAdminSessionIdentity_() {
+  try {
+    return String(Session.getActiveUser().getEmail() || '').trim().toLowerCase();
+  } catch (_ignored) {
+    return '';
+  }
+}
+
+function isAllowlistedAdminIdentity_(identity) {
+  var serialized = PropertiesService.getScriptProperties().getProperty(ADMIN_EMAIL_ALLOWLIST);
+  if (!serialized) return false;
+  var values;
+  try {
+    values = JSON.parse(serialized);
+  } catch (_ignored) {
+    values = String(serialized).split(',');
+  }
+  if (!Array.isArray(values)) return false;
+  return values.some(function(candidate) {
+    return typeof candidate === 'string' && candidate.trim().toLowerCase() === identity;
+  });
+}
+
+var ADMIN_EVENT_STATUSES_ = {
+  draft: true, upcoming: true, open: true, closed: true,
+  live: true, ended: true, cancelled: true, archived: true
+};
+var ADMIN_SELECTION_MODES_ = {
+  none: true, single: true, all: true, free: true, mixed: true, multiple: true
+};
+var ADMIN_SEAT_MODES_ = { none: true, self: true, auto: true, zone: true };
+var ADMIN_QUESTION_TYPES_ = {
+  text: true, textarea: true, number: true, tel: true, email: true,
+  date: true, radio: true, checkbox: true, select: true, boolean: true
+};
+
+function getAdminDashboard_(payload) {
+  var request = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
+  var search = typeof request.search === 'string' ? request.search.trim().toLowerCase() : '';
+  return withScriptLock_(function() {
+    var spreadsheet = getConfiguredSpreadsheet_();
+    var settings = getAdminSettings_();
+    var events = readAdminRows_(spreadsheet, '活动');
+    var sessions = readAdminRows_(spreadsheet, '场次');
+    var seats = readAdminRows_(spreadsheet, '座位');
+    var questions = readAdminRows_(spreadsheet, '报名问题');
+    var participants = readAdminRows_(spreadsheet, '参加者');
+    var registrations = readAdminRows_(spreadsheet, '报名项目');
+    var attendance = readAdminRows_(spreadsheet, '签到记录');
+    var participantById = {};
+    participants.forEach(function(participant) {
+      participantById[participant.participantId] = participant;
+    });
+    var seenRegistrations = {};
+    var records = [];
+    registrations.forEach(function(registration) {
+      if (seenRegistrations[registration.registrationId]) return;
+      seenRegistrations[registration.registrationId] = true;
+      var participant = participantById[registration.participantId] || {};
+      var stored = parseAdminAnswers_(registration.answers);
+      var haystack = [
+        registration.registrationId, registration.ticketNumber, registration.eventId,
+        participant.name, participant.phone, participant.email, JSON.stringify(stored.values)
+      ].join(' ').toLowerCase();
+      if (search && haystack.indexOf(search) === -1) return;
+      records.push({
+        registrationId: String(registration.registrationId || ''),
+        eventId: String(registration.eventId || ''),
+        ticketNumber: String(registration.ticketNumber || ''),
+        status: String(registration.status || ''),
+        participantName: maskAdminName_(participant.name),
+        phone: maskAdminValue_(participant.phone),
+        email: maskAdminValue_(participant.email),
+        answers: maskAdminAnswers_(stored.values),
+        sessionIds: parseAdminStringArray_(registration.sessionIds),
+        seatChoices: parseAdminStringArray_(registration.seatChoices),
+        createdAt: String(registration.createdAt || ''),
+        updatedAt: String(registration.updatedAt || '')
+      });
+    });
+    return {
+      connection: {
+        connected: true,
+        sheetName: String(spreadsheet.getName ? spreadsheet.getName() : 'Connected')
+      },
+      events: events.map(function(event) { return adminEventProjection_(event, settings); }),
+      sessions: sessions.map(function(session) { return adminSessionProjection_(session, settings); }),
+      seats: seats.map(adminSeatProjection_),
+      questions: questions.map(function(question) { return adminQuestionProjection_(question, settings); }),
+      records: records,
+      attendance: attendance.map(function(record) {
+        return {
+          checkInId: String(record.checkInId || ''),
+          registrationId: String(record.registrationId || ''),
+          eventId: String(record.eventId || ''),
+          sessionId: String(record.sessionId || ''),
+          checkedInAt: String(record.checkedInAt || ''),
+          checkedInBy: maskAdminValue_(record.checkedInBy),
+          status: String(record.status || '')
+        };
+      })
+    };
+  });
+}
+
+function saveAdminEvent_(payload, actor) {
+  var request = requireAdminObject_(payload);
+  return withScriptLock_(function() {
+    var spreadsheet = getConfiguredSpreadsheet_();
+    var existing = request.eventId
+      ? findAdminRow_(spreadsheet, '活动', 'eventId', request.eventId)
+      : null;
+    if (request.eventId && !existing) adminError_('NOT_FOUND');
+    if (request.action === 'reopen' && request.confirm !== true) {
+      adminError_('CONFIRMATION_REQUIRED');
+    }
+    var now = new Date().toISOString();
+    var eventId = existing ? existing.eventId : Utilities.getUuid();
+    var status = adminField_(request, 'status', existing && existing.status, 'draft');
+    if (request.action === 'archive') status = 'archived';
+    if (request.action === 'close') status = request.closeStatus || 'ended';
+    if (request.action === 'reopen') status = request.reopenStatus || 'open';
+    status = String(status || '').toLowerCase();
+    if (!ADMIN_EVENT_STATUSES_[status]) adminError_('INVALID_REQUEST');
+
+    var title = adminTextField_(request, 'title', existing && existing.title, '');
+    if (!title) adminError_('INVALID_REQUEST');
+    var selectionMode = String(adminField_(
+      request, 'selectionMode', existing && existing.selectionMode, 'free'
+    )).toLowerCase();
+    var seatMode = String(adminField_(
+      request, 'seatMode', existing && existing.seatMode, 'none'
+    )).toLowerCase();
+    if (!ADMIN_SELECTION_MODES_[selectionMode] || !ADMIN_SEAT_MODES_[seatMode]) {
+      adminError_('INVALID_REQUEST');
+    }
+    var minChoices = adminNonNegativeInteger_(
+      adminField_(request, 'minChoices', existing && existing.minChoices, 0)
+    );
+    var maxChoices = adminNonNegativeInteger_(
+      adminField_(request, 'maxChoices', existing && existing.maxChoices, 0)
+    );
+    if (maxChoices < minChoices) adminError_('INVALID_REQUEST');
+    var opensAt = adminDateField_(adminField_(request, 'opensAt', existing && existing.opensAt, ''));
+    var closesAt = adminDateField_(adminField_(request, 'closesAt', existing && existing.closesAt, ''));
+    if (opensAt && closesAt && Date.parse(closesAt) <= Date.parse(opensAt)) {
+      adminError_('INVALID_REQUEST');
+    }
+    var seatZonesValue = adminField_(request, 'seatZones', existing && existing.seatZones, []);
+    var seatZones = parseAdminStringArray_(seatZonesValue);
+    if (Array.isArray(seatZonesValue)) {
+      seatZones = seatZonesValue.filter(function(zone) {
+        return typeof zone === 'string' && zone.trim();
+      }).map(function(zone) { return zone.trim(); });
+    }
+    var row = {
+      eventId: eventId,
+      title: title,
+      description: adminTextField_(request, 'description', existing && existing.description, ''),
+      status: status,
+      opensAt: opensAt,
+      closesAt: closesAt,
+      location: adminTextField_(request, 'location', existing && existing.location, ''),
+      selectionMode: selectionMode,
+      minChoices: minChoices,
+      maxChoices: maxChoices,
+      seatMode: seatMode,
+      seatZones: JSON.stringify(seatZones),
+      createdAt: existing ? existing.createdAt : now,
+      updatedAt: now
+    };
+    writeAdminRow_(spreadsheet, '活动', existing && existing.rowNumber, row);
+    var settings = getAdminSettings_();
+    var policy = ensureAdminEventPolicy_(settings, eventId);
+    copyAdminBooleanField_(request, policy, 'showOpeningCountdown');
+    copyAdminBooleanField_(request, policy, 'showClosingCountdown');
+    copyAdminBooleanField_(request, policy, 'cancellationEnabled');
+    copyAdminBooleanField_(request, policy, 'seatExchangeEnabled');
+    setAdminSettings_(settings);
+    appendAdminAudit_(
+      spreadsheet,
+      request.action ? String(request.action).toUpperCase() + '_EVENT' : (existing ? 'UPDATE_EVENT' : 'CREATE_EVENT'),
+      'event',
+      eventId,
+      actor,
+      { status: status }
+    );
+    var result = adminEventProjection_(row, settings);
+    if (request.action === 'reopen') {
+      var registrationIds = {};
+      readAdminRows_(spreadsheet, '报名项目').forEach(function(registration) {
+        if (registration.eventId === eventId && String(registration.status || '').toLowerCase() !== 'pending') {
+          registrationIds[registration.registrationId] = true;
+        }
+      });
+      result.registrationCount = Object.keys(registrationIds).length;
+    }
+    return result;
+  });
+}
+
+function saveAdminSession_(payload, actor) {
+  var request = requireAdminObject_(payload);
+  if (typeof request.eventId !== 'string' || !request.eventId.trim()) {
+    adminError_('INVALID_REQUEST');
+  }
+  return withScriptLock_(function() {
+    var spreadsheet = getConfiguredSpreadsheet_();
+    if (!findAdminRow_(spreadsheet, '活动', 'eventId', request.eventId.trim())) {
+      adminError_('NOT_FOUND');
+    }
+    var existing = request.sessionId
+      ? findAdminRow_(spreadsheet, '场次', 'sessionId', request.sessionId)
+      : null;
+    if (request.sessionId && !existing) adminError_('NOT_FOUND');
+    var now = new Date().toISOString();
+    var sessionId = existing ? existing.sessionId : Utilities.getUuid();
+    var title = adminTextField_(request, 'title', existing && existing.title, '');
+    var status = String(adminField_(request, 'status', existing && existing.status, 'draft')).toLowerCase();
+    if (!title || (!ADMIN_EVENT_STATUSES_[status] && status !== 'inactive')) {
+      adminError_('INVALID_REQUEST');
+    }
+    var startsAt = adminDateField_(adminField_(request, 'startsAt', existing && existing.startsAt, ''));
+    var endsAt = adminDateField_(adminField_(request, 'endsAt', existing && existing.endsAt, ''));
+    if ((startsAt || endsAt) && (!startsAt || !endsAt || Date.parse(endsAt) <= Date.parse(startsAt))) {
+      adminError_('INVALID_REQUEST');
+    }
+    var row = {
+      sessionId: sessionId,
+      eventId: request.eventId.trim(),
+      title: title,
+      speaker: adminTextField_(request, 'speaker', existing && existing.speaker, ''),
+      startsAt: startsAt,
+      endsAt: endsAt,
+      required: adminBooleanField_(request, 'required', existing && adminTruthy_(existing.required), false),
+      capacity: adminNonNegativeInteger_(adminField_(request, 'capacity', existing && existing.capacity, 0)),
+      status: status,
+      createdAt: existing ? existing.createdAt : now,
+      updatedAt: now
+    };
+    writeAdminRow_(spreadsheet, '场次', existing && existing.rowNumber, row);
+    var settings = getAdminSettings_();
+    var sessionPolicy = ensureAdminSessionPolicy_(settings, row.eventId, sessionId);
+    sessionPolicy.location = adminTextField_(
+      request, 'location', sessionPolicy.location, ''
+    );
+    sessionPolicy.groupRule = adminTextField_(
+      request, 'groupRule', sessionPolicy.groupRule, ''
+    );
+    setAdminSettings_(settings);
+    appendAdminAudit_(
+      spreadsheet, existing ? 'UPDATE_SESSION' : 'CREATE_SESSION',
+      'session', sessionId, actor, { eventId: row.eventId }
+    );
+    return adminSessionProjection_(row, settings);
+  });
+}
+
+function saveAdminQuestion_(payload, actor) {
+  var request = requireAdminObject_(payload);
+  if (typeof request.eventId !== 'string' || !request.eventId.trim()) {
+    adminError_('INVALID_REQUEST');
+  }
+  return withScriptLock_(function() {
+    var spreadsheet = getConfiguredSpreadsheet_();
+    if (!findAdminRow_(spreadsheet, '活动', 'eventId', request.eventId.trim())) {
+      adminError_('NOT_FOUND');
+    }
+    var existing = request.questionId
+      ? findAdminRow_(spreadsheet, '报名问题', 'questionId', request.questionId)
+      : null;
+    if (request.questionId && !existing) adminError_('NOT_FOUND');
+    var now = new Date().toISOString();
+    var questionId = existing ? existing.questionId : Utilities.getUuid();
+    var type = String(adminField_(request, 'type', existing && existing.type, 'text')).toLowerCase();
+    var label = adminTextField_(request, 'label', existing && existing.label, '');
+    if (!label || !ADMIN_QUESTION_TYPES_[type]) adminError_('INVALID_REQUEST');
+    var status = String(adminField_(request, 'status', existing && existing.status, 'active')).toLowerCase();
+    if (request.action === 'hide') status = 'inactive';
+    if (request.action === 'show') status = 'active';
+    if (status !== 'active' && status !== 'inactive') adminError_('INVALID_REQUEST');
+    var choices = Array.isArray(request.options)
+      ? request.options.filter(function(option) {
+        return typeof option === 'string' && option.trim();
+      }).map(function(option) { return option.trim(); })
+      : parseAdminQuestionOptions_(existing && existing.options).choices;
+    if ((type === 'select' || type === 'radio' || type === 'checkbox') && !choices.length) {
+      adminError_('INVALID_REQUEST');
+    }
+    var validation = request.validation && typeof request.validation === 'object' &&
+      !Array.isArray(request.validation) ? request.validation :
+      parseAdminQuestionOptions_(existing && existing.options).validation;
+    var row = {
+      questionId: questionId,
+      eventId: request.eventId.trim(),
+      label: label,
+      type: type,
+      required: adminBooleanField_(request, 'required', existing && adminTruthy_(existing.required), false),
+      options: JSON.stringify({ choices: choices, validation: validation || {} }),
+      sortOrder: adminNonNegativeInteger_(adminField_(request, 'sortOrder', existing && existing.sortOrder, 0)),
+      status: status,
+      createdAt: existing ? existing.createdAt : now,
+      updatedAt: now
+    };
+    writeAdminRow_(spreadsheet, '报名问题', existing && existing.rowNumber, row);
+    var settings = getAdminSettings_();
+    var policy = ensureAdminEventPolicy_(settings, row.eventId);
+    policy.identityFields = updateAdminFlagList_(
+      policy.identityFields, questionId,
+      adminBooleanField_(request, 'duplicateIdentity', adminListHas_(policy.identityFields, questionId), false)
+    );
+    policy.showOnTicketFields = updateAdminFlagList_(
+      policy.showOnTicketFields, questionId,
+      adminBooleanField_(request, 'showOnTicket', adminListHas_(policy.showOnTicketFields, questionId), false)
+    );
+    setAdminSettings_(settings);
+    appendAdminAudit_(
+      spreadsheet, existing ? 'UPDATE_QUESTION' : 'CREATE_QUESTION',
+      'question', questionId, actor, { eventId: row.eventId, status: status }
+    );
+    return adminQuestionProjection_(row, settings);
+  });
+}
+
+function saveAdminSeatPlan_(payload, actor) {
+  var request = requireAdminObject_(payload);
+  var action = String(request.action || 'generate').toLowerCase();
+  return withScriptLock_(function() {
+    var spreadsheet = getConfiguredSpreadsheet_();
+    if (action === 'reserve' || action === 'close' || action === 'reopen') {
+      var seat = findAdminRow_(spreadsheet, '座位', 'seatId', request.seatId);
+      if (!seat) adminError_('NOT_FOUND');
+      if (seat.holderRegistrationId && seat.status === 'registered') adminError_('CONFLICT');
+      seat.status = action === 'reserve' ? 'reserved' : action === 'close' ? 'closed' : 'available';
+      seat.updatedAt = new Date().toISOString();
+      writeAdminRow_(spreadsheet, '座位', seat.rowNumber, seat);
+      appendAdminAudit_(
+        spreadsheet, action.toUpperCase() + '_SEAT', 'seat', seat.seatId, actor,
+        { status: seat.status }
+      );
+      return adminSeatProjection_(seat);
+    }
+    if (action !== 'generate' || typeof request.eventId !== 'string' || !request.eventId.trim()) {
+      adminError_('INVALID_REQUEST');
+    }
+    var event = findAdminRow_(spreadsheet, '活动', 'eventId', request.eventId.trim());
+    if (!event) adminError_('NOT_FOUND');
+    var mode = String(request.mode || '').toLowerCase();
+    if (!ADMIN_SEAT_MODES_[mode]) adminError_('INVALID_REQUEST');
+    var zones = Array.isArray(request.zones) ? request.zones : [];
+    if (mode !== 'none' && !zones.length) adminError_('INVALID_REQUEST');
+    var now = new Date().toISOString();
+    var existingSeats = readAdminRows_(spreadsheet, '座位');
+    var knownLabels = {};
+    existingSeats.forEach(function(seat) {
+      knownLabels[[seat.eventId, seat.sessionId, seat.label].join('|')] = true;
+    });
+    var created = [];
+    var zoneNames = [];
+    if (mode !== 'none') {
+      zones.forEach(function(zone) {
+        if (!zone || typeof zone !== 'object' || Array.isArray(zone)) adminError_('INVALID_REQUEST');
+        var name = typeof zone.name === 'string' ? zone.name.trim() : '';
+        var rowCount = adminPositiveInteger_(zone.rows);
+        var seatCount = adminPositiveInteger_(zone.seatsPerRow);
+        if (mode === 'zone' && !name) adminError_('INVALID_REQUEST');
+        if (name && zoneNames.indexOf(name) === -1) zoneNames.push(name);
+        for (var rowIndex = 1; rowIndex <= rowCount; rowIndex += 1) {
+          for (var seatIndex = 1; seatIndex <= seatCount; seatIndex += 1) {
+            var label = (name ? name + '-' : '') + rowIndex + '-' + seatIndex;
+            var key = [event.eventId, request.sessionId || '', label].join('|');
+            if (knownLabels[key]) continue;
+            var createdSeat = {
+              seatId: Utilities.getUuid(),
+              eventId: event.eventId,
+              sessionId: typeof request.sessionId === 'string' ? request.sessionId : '',
+              label: label,
+              zone: name,
+              status: 'available',
+              holderRegistrationId: '',
+              createdAt: now,
+              updatedAt: now
+            };
+            writeAdminRow_(spreadsheet, '座位', null, createdSeat);
+            knownLabels[key] = true;
+            created.push(createdSeat);
+          }
+        }
+      });
+    }
+    event.seatMode = mode;
+    event.seatZones = JSON.stringify(zoneNames);
+    event.updatedAt = now;
+    writeAdminRow_(spreadsheet, '活动', event.rowNumber, event);
+    appendAdminAudit_(
+      spreadsheet, 'SAVE_SEAT_PLAN', 'event', event.eventId, actor,
+      { mode: mode, created: created.length }
+    );
+    return { eventId: event.eventId, mode: mode, createdCount: created.length };
+  });
+}
+
+function adminRecordAction_(payload, actor) {
+  var request = requireAdminObject_(payload);
+  if (request.confirm !== true) adminError_('CONFIRMATION_REQUIRED');
+  var action = String(request.action || '').toLowerCase();
+  if (typeof request.registrationId !== 'string' || !request.registrationId.trim()) {
+    adminError_('INVALID_REQUEST');
+  }
+  return withScriptLock_(function() {
+    var spreadsheet = getConfiguredSpreadsheet_();
+    var registrations = readAdminRows_(spreadsheet, '报名项目').filter(function(record) {
+      return record.registrationId === request.registrationId.trim();
+    });
+    if (!registrations.length) adminError_('NOT_FOUND');
+    var seats = readAdminRows_(spreadsheet, '座位');
+    var now = new Date().toISOString();
+    if (action === 'cancel_registration') {
+      registrations.forEach(function(record) {
+        record.status = 'cancelled';
+        record.updatedAt = now;
+        writeAdminRow_(spreadsheet, '报名项目', record.rowNumber, record);
+      });
+      seats.filter(function(seat) {
+        return seat.holderRegistrationId === request.registrationId.trim() ||
+          seat.holderRegistrationId === 'PENDING|' + request.registrationId.trim();
+      }).forEach(function(seat) {
+        seat.status = 'available';
+        seat.holderRegistrationId = '';
+        seat.updatedAt = now;
+        writeAdminRow_(spreadsheet, '座位', seat.rowNumber, seat);
+      });
+    } else if (action === 'adjust_seat') {
+      var target = seats.filter(function(seat) { return seat.seatId === request.seatId; })[0];
+      if (!target) adminError_('NOT_FOUND');
+      var targetStatus = String(target.status || '').toLowerCase();
+      if (target.holderRegistrationId ||
+          (targetStatus !== 'available' && targetStatus !== 'open' && targetStatus !== 'reserved')) {
+        adminError_('CONFLICT');
+      }
+      seats.filter(function(seat) {
+        return seat.holderRegistrationId === request.registrationId.trim() &&
+          (!target.sessionId || seat.sessionId === target.sessionId);
+      }).forEach(function(seat) {
+        seat.status = 'available';
+        seat.holderRegistrationId = '';
+        seat.updatedAt = now;
+        writeAdminRow_(spreadsheet, '座位', seat.rowNumber, seat);
+      });
+      target.status = 'registered';
+      target.holderRegistrationId = request.registrationId.trim();
+      target.updatedAt = now;
+      writeAdminRow_(spreadsheet, '座位', target.rowNumber, target);
+      registrations.forEach(function(record) {
+        var choices = parseAdminStringArray_(record.seatChoices).filter(function(seatId) {
+          var oldSeat = seats.filter(function(seat) { return seat.seatId === seatId; })[0];
+          return !oldSeat || !target.sessionId || oldSeat.sessionId !== target.sessionId;
+        });
+        if (choices.indexOf(target.seatId) === -1) choices.push(target.seatId);
+        record.seatChoices = JSON.stringify(choices);
+        record.updatedAt = now;
+        writeAdminRow_(spreadsheet, '报名项目', record.rowNumber, record);
+      });
+    } else {
+      adminError_('INVALID_REQUEST');
+    }
+    appendAdminAudit_(
+      spreadsheet, action.toUpperCase(), 'registration', request.registrationId.trim(),
+      actor, { seatId: action === 'adjust_seat' ? String(request.seatId || '') : '' }
+    );
+    return { registrationId: request.registrationId.trim(), action: action, status: 'completed' };
+  });
+}
+
+function testAdminSheetConnection_(payload) {
+  var request = requireAdminObject_(payload);
+  if (typeof request.spreadsheetId !== 'string' || !request.spreadsheetId.trim()) {
+    adminError_('INVALID_REQUEST');
+  }
+  try {
+    var spreadsheet = openSpreadsheetById_(request.spreadsheetId);
+    validateAdminSpreadsheet_(spreadsheet);
+    return {
+      connected: true,
+      sheetName: String(spreadsheet.getName ? spreadsheet.getName() : 'Connected')
+    };
+  } catch (error) {
+    if (error && error.publicCode) throw error;
+    adminError_('SHEET_CONNECTION_FAILED');
+  }
+}
+
+function switchAdminSheet_(payload) {
+  var request = requireAdminObject_(payload);
+  if (request.confirm !== true) adminError_('CONFIRMATION_REQUIRED');
+  if (typeof request.spreadsheetId !== 'string' || !request.spreadsheetId.trim()) {
+    adminError_('INVALID_REQUEST');
+  }
+  return withScriptLock_(function() {
+    var spreadsheet;
+    try {
+      spreadsheet = openSpreadsheetById_(request.spreadsheetId);
+      validateAdminSpreadsheet_(spreadsheet);
+    } catch (error) {
+      if (error && error.publicCode) throw error;
+      adminError_('SHEET_CONNECTION_FAILED');
+    }
+    setActiveSpreadsheetId_(request.spreadsheetId.trim());
+    return {
+      connected: true,
+      sheetName: String(spreadsheet.getName ? spreadsheet.getName() : 'Connected'),
+      warning: '旧数据仍保留在原数据表中；系统不会自动迁移任何数据。'
+    };
+  });
+}
+
+function getAdminSourceBundles_(payload) {
+  if (payload !== undefined && payload !== null &&
+      (typeof payload !== 'object' || Array.isArray(payload))) {
+    adminError_('INVALID_REQUEST');
+  }
+  return {
+    publicBackend: PUBLIC_BACKEND_SOURCE_BUNDLE_,
+    staffAdmin: STAFF_ADMIN_SOURCE_BUNDLE_
+  };
+}
+
+function validateAdminSpreadsheet_(spreadsheet) {
+  Object.keys(STAFF_SHEET_DEFINITIONS).forEach(function(sheetName) {
+    var sheet = spreadsheet.getSheetByName(sheetName);
+    if (!sheet || sheet.getLastRow() < 1) adminError_('SHEET_CONNECTION_FAILED');
+    var expected = STAFF_SHEET_DEFINITIONS[sheetName];
+    var actual = sheet.getRange(1, 1, 1, expected.length).getValues()[0];
+    if (!expected.every(function(header, index) { return actual[index] === header; })) {
+      adminError_('SHEET_CONNECTION_FAILED');
+    }
+  });
+  return true;
+}
+
+function requireAdminObject_(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    adminError_('INVALID_REQUEST');
+  }
+  return payload;
+}
+
+function readAdminRows_(spreadsheet, sheetName) {
+  var sheet = getRequiredSheet_(spreadsheet, sheetName);
+  if (sheet.getLastRow() <= 1) return [];
+  var headers = STAFF_SHEET_DEFINITIONS[sheetName];
+  return sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues().map(function(values, index) {
+    var row = { rowNumber: index + 2 };
+    headers.forEach(function(header, column) { row[header] = values[column]; });
+    return row;
+  });
+}
+
+function findAdminRow_(spreadsheet, sheetName, key, value) {
+  return readAdminRows_(spreadsheet, sheetName).filter(function(row) {
+    return row[key] === value;
+  })[0] || null;
+}
+
+function writeAdminRow_(spreadsheet, sheetName, rowNumber, row) {
+  var sheet = getRequiredSheet_(spreadsheet, sheetName);
+  var values = normalizeRow_(sheetName, row);
+  var targetRow = rowNumber || sheet.getLastRow() + 1;
+  sheet.getRange(targetRow, 1, 1, values.length).setValues([values]);
+  return targetRow;
+}
+
+function appendAdminAudit_(spreadsheet, action, entityType, entityId, actor, details) {
+  writeAdminRow_(spreadsheet, '操作记录', null, {
+    auditId: Utilities.getUuid(),
+    action: action,
+    entityType: entityType,
+    entityId: entityId,
+    actor: actor,
+    details: JSON.stringify(details || {}),
+    createdAt: new Date().toISOString()
+  });
+}
+
+function adminField_(source, key, existing, fallback) {
+  if (Object.prototype.hasOwnProperty.call(source, key)) return source[key];
+  if (existing !== undefined && existing !== null && existing !== '') return existing;
+  return fallback;
+}
+
+function adminTextField_(source, key, existing, fallback) {
+  var value = adminField_(source, key, existing, fallback);
+  if (value === undefined || value === null) return '';
+  if (typeof value !== 'string' || value.length > 5000) adminError_('INVALID_REQUEST');
+  return value.trim();
+}
+
+function adminBooleanField_(source, key, existing, fallback) {
+  if (!Object.prototype.hasOwnProperty.call(source, key)) {
+    return existing === undefined || existing === null ? fallback : existing === true;
+  }
+  if (typeof source[key] !== 'boolean') adminError_('INVALID_REQUEST');
+  return source[key];
+}
+
+function copyAdminBooleanField_(source, target, key) {
+  if (!Object.prototype.hasOwnProperty.call(source, key)) return;
+  if (typeof source[key] !== 'boolean') adminError_('INVALID_REQUEST');
+  target[key] = source[key];
+}
+
+function adminDateField_(value) {
+  if (value === '' || value === undefined || value === null) return '';
+  var text = String(value).trim();
+  if (!text || !isFinite(Date.parse(text))) adminError_('INVALID_REQUEST');
+  return text;
+}
+
+function adminNonNegativeInteger_(value) {
+  var number = Number(value);
+  if (!isFinite(number) || number < 0 || Math.floor(number) !== number) {
+    adminError_('INVALID_REQUEST');
+  }
+  return number;
+}
+
+function adminPositiveInteger_(value) {
+  var number = adminNonNegativeInteger_(value);
+  if (number < 1) adminError_('INVALID_REQUEST');
+  return number;
+}
+
+function adminTruthy_(value) {
+  return value === true || value === 1 || String(value).toLowerCase() === 'true' || String(value) === '1';
+}
+
+function ensureAdminEventPolicy_(settings, eventId) {
+  if (!settings.registration || typeof settings.registration !== 'object' ||
+      Array.isArray(settings.registration)) settings.registration = {};
+  if (!settings.registration.events || typeof settings.registration.events !== 'object' ||
+      Array.isArray(settings.registration.events)) settings.registration.events = {};
+  if (!settings.registration.events[eventId] ||
+      typeof settings.registration.events[eventId] !== 'object' ||
+      Array.isArray(settings.registration.events[eventId])) {
+    settings.registration.events[eventId] = {};
+  }
+  return settings.registration.events[eventId];
+}
+
+function ensureAdminSessionPolicy_(settings, eventId, sessionId) {
+  var eventPolicy = ensureAdminEventPolicy_(settings, eventId);
+  if (!eventPolicy.sessions || typeof eventPolicy.sessions !== 'object' ||
+      Array.isArray(eventPolicy.sessions)) eventPolicy.sessions = {};
+  if (!eventPolicy.sessions[sessionId] || typeof eventPolicy.sessions[sessionId] !== 'object' ||
+      Array.isArray(eventPolicy.sessions[sessionId])) eventPolicy.sessions[sessionId] = {};
+  return eventPolicy.sessions[sessionId];
+}
+
+function adminEventProjection_(event, settings) {
+  var policy = ensureAdminEventPolicy_(settings || {}, event.eventId);
+  return {
+    eventId: String(event.eventId || ''),
+    title: String(event.title || ''),
+    description: String(event.description || ''),
+    status: String(event.status || ''),
+    opensAt: String(event.opensAt || ''),
+    closesAt: String(event.closesAt || ''),
+    location: String(event.location || ''),
+    selectionMode: String(event.selectionMode || ''),
+    minChoices: Number(event.minChoices || 0),
+    maxChoices: Number(event.maxChoices || 0),
+    seatMode: String(event.seatMode || 'none'),
+    seatZones: parseAdminStringArray_(event.seatZones),
+    showOpeningCountdown: policy.showOpeningCountdown === true,
+    showClosingCountdown: policy.showClosingCountdown === true,
+    cancellationEnabled: policy.cancellationEnabled === true,
+    seatExchangeEnabled: policy.seatExchangeEnabled === true,
+    createdAt: String(event.createdAt || ''),
+    updatedAt: String(event.updatedAt || '')
+  };
+}
+
+function adminSessionProjection_(session, settings) {
+  var eventPolicy = ensureAdminEventPolicy_(settings || {}, session.eventId);
+  var policy = eventPolicy.sessions && eventPolicy.sessions[session.sessionId] || {};
+  return {
+    sessionId: String(session.sessionId || ''),
+    eventId: String(session.eventId || ''),
+    title: String(session.title || ''),
+    speaker: String(session.speaker || ''),
+    startsAt: String(session.startsAt || ''),
+    endsAt: String(session.endsAt || ''),
+    location: String(policy.location || ''),
+    capacity: Number(session.capacity || 0),
+    required: adminTruthy_(session.required),
+    groupRule: String(policy.groupRule || ''),
+    status: String(session.status || ''),
+    createdAt: String(session.createdAt || ''),
+    updatedAt: String(session.updatedAt || '')
+  };
+}
+
+function adminSeatProjection_(seat) {
+  return {
+    seatId: String(seat.seatId || ''),
+    eventId: String(seat.eventId || ''),
+    sessionId: String(seat.sessionId || ''),
+    label: String(seat.label || ''),
+    zone: String(seat.zone || ''),
+    status: String(seat.status || ''),
+    holderRegistrationId: seat.holderRegistrationId ? 'assigned' : '',
+    createdAt: String(seat.createdAt || ''),
+    updatedAt: String(seat.updatedAt || '')
+  };
+}
+
+function adminQuestionProjection_(question, settings) {
+  var policy = ensureAdminEventPolicy_(settings || {}, question.eventId);
+  var parsed = parseAdminQuestionOptions_(question.options);
+  return {
+    questionId: String(question.questionId || ''),
+    eventId: String(question.eventId || ''),
+    label: String(question.label || ''),
+    type: String(question.type || ''),
+    required: adminTruthy_(question.required),
+    options: parsed.choices,
+    validation: parsed.validation,
+    sortOrder: Number(question.sortOrder || 0),
+    status: String(question.status || ''),
+    showOnTicket: adminListHas_(policy.showOnTicketFields, question.questionId),
+    duplicateIdentity: adminListHas_(policy.identityFields, question.questionId),
+    createdAt: String(question.createdAt || ''),
+    updatedAt: String(question.updatedAt || '')
+  };
+}
+
+function parseAdminQuestionOptions_(serialized) {
+  if (!serialized) return { choices: [], validation: {} };
+  try {
+    var parsed = typeof serialized === 'string' ? JSON.parse(serialized) : serialized;
+    if (Array.isArray(parsed)) return { choices: parsed, validation: {} };
+    if (!parsed || typeof parsed !== 'object') return { choices: [], validation: {} };
+    return {
+      choices: Array.isArray(parsed.choices) ? parsed.choices :
+        (Array.isArray(parsed.options) ? parsed.options : []),
+      validation: parsed.validation && typeof parsed.validation === 'object' &&
+        !Array.isArray(parsed.validation) ? parsed.validation : {}
+    };
+  } catch (_ignored) {
+    return { choices: [], validation: {} };
+  }
+}
+
+function parseAdminStringArray_(serialized) {
+  if (Array.isArray(serialized)) {
+    return serialized.filter(function(value) { return typeof value === 'string'; });
+  }
+  try {
+    var parsed = JSON.parse(serialized || '[]');
+    return Array.isArray(parsed)
+      ? parsed.filter(function(value) { return typeof value === 'string'; })
+      : [];
+  } catch (_ignored) {
+    return [];
+  }
+}
+
+function parseAdminAnswers_(serialized) {
+  try {
+    var parsed = typeof serialized === 'string' ? JSON.parse(serialized) : serialized;
+    if (parsed && typeof parsed === 'object' && parsed.values &&
+        typeof parsed.values === 'object' && !Array.isArray(parsed.values)) return parsed;
+    return { values: parsed && typeof parsed === 'object' ? parsed : {} };
+  } catch (_ignored) {
+    return { values: {} };
+  }
+}
+
+function maskAdminName_(value) {
+  var text = String(value || '').trim();
+  if (!text) return '';
+  return text.slice(0, 1) + new Array(Math.max(2, text.length)).join('*');
+}
+
+function maskAdminValue_(value) {
+  var text = String(value === undefined || value === null ? '' : value).trim();
+  if (!text) return '';
+  if (text.indexOf('@') !== -1) {
+    var parts = text.split('@');
+    return parts[0].slice(0, 1) + '***@' + parts.slice(1).join('@');
+  }
+  return text.length <= 4 ? '****' : text.slice(0, 2) + '****' + text.slice(-2);
+}
+
+function maskAdminAnswers_(answers) {
+  var masked = {};
+  Object.keys(answers || {}).forEach(function(key) {
+    var value = answers[key];
+    if (Array.isArray(value)) {
+      masked[key] = value.map(maskAdminValue_);
+    } else if (typeof value === 'boolean') {
+      masked[key] = value;
+    } else {
+      masked[key] = maskAdminValue_(value);
+    }
+  });
+  return masked;
+}
+
+function adminListHas_(values, value) {
+  return Array.isArray(values) && values.indexOf(value) !== -1;
+}
+
+function updateAdminFlagList_(values, value, enabled) {
+  var list = Array.isArray(values) ? values.filter(function(item) {
+    return typeof item === 'string' && item !== value;
+  }) : [];
+  if (enabled) list.push(value);
+  return list;
+}

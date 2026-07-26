@@ -33,8 +33,7 @@ test("every public method sends its documented JSON POST envelope", async () => 
     ["getEvent", { eventId: "event-1" }, () => client.getEvent("event-1")],
     ["createRegistration", { eventId: "event-1", sessionIds: ["s1"], seatChoices: ["A-01"], answers: { name: "陈晓明" } }, () => client.createRegistration({ eventId: "event-1", sessionIds: ["s1"], seatChoices: ["A-01"], answers: { name: "陈晓明" } })],
     ["lookupTicket", { ticketNumber: "T-01", verificationValue: "13800000000" }, () => client.lookupTicket("T-01", "13800000000")],
-    ["verifyTicket", { token: "signed-token" }, () => client.verifyTicket("signed-token")],
-    ["checkIn", { token: "signed-token", sessionId: "s1", staffIdentity: "staff@example.com" }, () => client.checkIn("signed-token", "s1", "staff@example.com")]
+    ["verifyTicket", { token: "signed-token" }, () => client.verifyTicket("signed-token")]
   ];
 
   for (const [action, payload, invoke] of expected) {
@@ -139,4 +138,9 @@ test("participant controllers use the public client instead of temporary registr
   assert.match(registerPage, /import\s*\{\s*createRegistration\s*,\s*getEvent\s*\}\s*from\s*["']\.\/api\.js["']/);
   assert.doesNotMatch(registerPage, /demoRegistrationAdapter|registrationApi/);
   assert.doesNotMatch(`${indexPage}\n${registerPage}`, /const\s+serverNow\s*=/);
+});
+
+test("the public browser client exposes no attendance mutation", () => {
+  const client = createApiClient({ endpoint, fetchImpl: async () => jsonResponse({ ok: true, data: {} }) });
+  assert.equal("checkIn" in client, false);
 });

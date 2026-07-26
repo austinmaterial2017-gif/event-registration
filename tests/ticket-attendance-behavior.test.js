@@ -84,16 +84,21 @@ test("verification view offers separate sessions and never treats scanning as ch
   assert.equal(view.checkedIn, false);
 });
 
-test("ticket and verification pages provide lookup, print, and confirmed staff controls", async () => {
-  const [ticketHtml, verifyHtml] = await Promise.all([
+test("public ticket and verification pages are read-only while staff mutation stays in Apps Script HTML", async () => {
+  const [ticketHtml, verifyHtml, verifyPage, staffHtml] = await Promise.all([
     readFile(new URL("../public/ticket.html", import.meta.url), "utf8"),
-    readFile(new URL("../public/verify.html", import.meta.url), "utf8")
+    readFile(new URL("../public/verify.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/js/verify-page.js", import.meta.url), "utf8"),
+    readFile(new URL("../apps-script/StaffCheckIn.html", import.meta.url), "utf8")
   ]);
   assert.match(ticketHtml, /ticket-lookup-form/);
   assert.match(ticketHtml, /ticketNumber/);
   assert.match(ticketHtml, /verificationValue/);
   assert.match(ticketHtml, /print-ticket/);
-  assert.match(verifyHtml, /staff-check-in-form/);
-  assert.match(verifyHtml, /confirmCheckIn/);
-  assert.match(verifyHtml, /sessionId/);
+  assert.doesNotMatch(verifyHtml, /staff-check-in-form|confirmCheckIn|staffIdentity/);
+  assert.doesNotMatch(verifyPage, /\bcheckIn\b|google\.script\.run/);
+  assert.match(staffHtml, /google\.script\.run/);
+  assert.match(staffHtml, /confirmCheckIn/);
+  assert.match(staffHtml, /sessionId/);
+  assert.doesNotMatch(staffHtml, /staffIdentity/);
 });

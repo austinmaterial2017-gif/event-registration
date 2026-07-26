@@ -753,4 +753,10 @@ test("router rejects non-exact and inherited action names with the fixed public 
       ok: false, code: "NOT_IMPLEMENTED", message: "请求暂不可用。"
     });
   }
+  const checkInResponse = context.doPost({
+    postData: { contents: JSON.stringify({ action: "checkIn", payload: { token: "secret", sessionId: "s1" } }) }
+  });
+  assert.deepEqual(JSON.parse(checkInResponse.text), {
+    ok: false, code: "NOT_IMPLEMENTED", message: "请求暂不可用。"
+  });
 });

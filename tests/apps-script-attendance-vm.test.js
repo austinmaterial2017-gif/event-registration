@@ -102,6 +102,9 @@ async function createHarness(options = {}) {
           : null
       })
     },
+    Session: {
+      getActiveUser: () => ({ getEmail: () => options.sessionEmail || "" })
+    },
     getConfiguredSpreadsheet: () => spreadsheet,
     getRequiredSheet_: (_spreadsheet, name) => sheets[name],
     normalizeRow_: (name, row) => headers[name].map((key) => row[key] ?? ""),
@@ -149,17 +152,41 @@ test("public verification reports cancellation and event-ended states without mu
   assert.equal(cancelled.writes.length + ended.writes.length, 0);
 });
 
-test("check-in rejects identities outside the protected allowlist", async () => {
-  const { context, writes } = await createHarness();
-  const result = context.checkIn({ token: "opaque-token", sessionId: "s1", staffIdentity: "stranger@example.com" });
+test("blank and non-allowlisted Google sessions receive the same generic rejection", async () => {
+  const blank = await createHarness();
+  const stranger = await createHarness({ sessionEmail: "stranger@example.com" });
+  const submitted = { token: "opaque-token", sessionId: "s1", staffIdentity: "staff@example.com" };
+  const blankResult = blank.context.checkIn(submitted);
+  const strangerResult = stranger.context.checkIn(submitted);
+  assert.deepEqual({ ...blankResult }, { ...strangerResult });
+  assert.equal(blankResult.ok, false);
+  assert.equal(blankResult.code, "STAFF_ACTION_DENIED");
+  assert.equal(blank.writes.length + stranger.writes.length, 0);
+});
+
+test("a submitted staff email is ignored and the allowlisted Google session identity is stored", async () => {
+  const { context, writes, sheets } = await createHarness({ sessionEmail: " Staff@Example.com " });
+  const result = context.checkIn({
+    token: "opaque-token",
+    sessionId: "s1",
+    staffIdentity: "attacker@example.com"
+  });
+  assert.equal(result.ok, true);
+  assert.equal(writes.length, 1);
+  assert.equal(rows(sheets["签到记录"])[0].checkedInBy, "staff@example.com");
+});
+
+test("check-in rejects a Google session outside the protected allowlist", async () => {
+  const { context, writes } = await createHarness({ sessionEmail: "stranger@example.com" });
+  const result = context.checkIn({ token: "opaque-token", sessionId: "s1" });
   assert.equal(result.ok, false);
-  assert.equal(result.code, "STAFF_NOT_AUTHORIZED");
+  assert.equal(result.code, "STAFF_ACTION_DENIED");
   assert.equal(writes.length, 0);
 });
 
 test("valid check-in writes server time once, duplicates only that session, and permits another registered session", async () => {
-  const harness = await createHarness();
-  const request = { token: "opaque-token", sessionId: "s1", staffIdentity: "STAFF@example.com" };
+  const harness = await createHarness({ sessionEmail: "STAFF@example.com" });
+  const request = { token: "opaque-token", sessionId: "s1" };
 
   const first = harness.context.checkIn(request);
   const duplicate = harness.context.checkIn(request);
@@ -177,8 +204,8 @@ test("valid check-in writes server time once, duplicates only that session, and 
 });
 
 test("serialized check-ins make a concurrent duplicate observe the first committed row", async () => {
-  const harness = await createHarness();
-  const request = { token: "opaque-token", sessionId: "s1", staffIdentity: "staff@example.com" };
+  const harness = await createHarness({ sessionEmail: "staff@example.com" });
+  const request = { token: "opaque-token", sessionId: "s1" };
   const results = [harness.context.checkIn(request), harness.context.checkIn(request)];
 
   assert.deepEqual(results.map((result) => result.ok), [true, false]);
@@ -188,13 +215,13 @@ test("serialized check-ins make a concurrent duplicate observe the first committ
 });
 
 test("check-in rejects inactive tickets, unregistered sessions, invalid status, and outside time policy", async () => {
-  const cancelled = await createHarness({ data: fixture({ ticketStatus: "cancelled" }) });
-  const invalidEvent = await createHarness({ data: fixture({ eventStatus: "open" }) });
-  const outsideWindow = await createHarness({ now: "2026-08-16T12:00:00Z" });
-  const request = { token: "opaque-token", sessionId: "s1", staffIdentity: "staff@example.com" };
+  const cancelled = await createHarness({ data: fixture({ ticketStatus: "cancelled" }), sessionEmail: "staff@example.com" });
+  const invalidEvent = await createHarness({ data: fixture({ eventStatus: "open" }), sessionEmail: "staff@example.com" });
+  const outsideWindow = await createHarness({ now: "2026-08-16T12:00:00Z", sessionEmail: "staff@example.com" });
+  const request = { token: "opaque-token", sessionId: "s1" };
 
   assert.equal(cancelled.context.checkIn(request).code, "TICKET_INACTIVE");
   assert.equal(invalidEvent.context.checkIn(request).code, "CHECK_IN_CLOSED");
   assert.equal(outsideWindow.context.checkIn(request).code, "CHECK_IN_CLOSED");
-  assert.equal((await createHarness()).context.checkIn({ ...request, sessionId: "missing" }).code, "SESSION_NOT_REGISTERED");
+  assert.equal((await createHarness({ sessionEmail: "staff@example.com" })).context.checkIn({ ...request, sessionId: "missing" }).code, "SESSION_NOT_REGISTERED");
 });

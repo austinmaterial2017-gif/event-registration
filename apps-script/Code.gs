@@ -13,11 +13,6 @@ var PUBLIC_ERROR_MESSAGES = {
   TICKET_NOT_FOUND: '未找到对应凭证。',
   TICKET_VERIFICATION_FAILED: '验证信息不匹配。',
   TOKEN_INVALID: '凭证无效或已过期。',
-  STAFF_NOT_AUTHORIZED: '当前员工身份无权签到。',
-  TICKET_INACTIVE: '该凭证当前不可签到。',
-  SESSION_NOT_REGISTERED: '该凭证未报名此场讲座。',
-  CHECK_IN_CLOSED: '当前不在此场讲座的签到时间内。',
-  ALREADY_CHECKED_IN: '此场讲座已完成签到。',
   NOT_IMPLEMENTED: '请求暂不可用。',
   INTERNAL: '请求未能完成，请稍后重试。'
 };
@@ -28,7 +23,6 @@ var PUBLIC_ROUTES = {
   'createRegistration': function(payload) { return createRegistration(payload); },
   'lookupTicket': function(payload) { return lookupTicket(payload); },
   'verifyTicket': function(payload) { return verifyTicket(payload); },
-  'checkIn': function(payload) { return checkIn(payload); },
   'cancelRegistration': function(payload) { return cancelRegistration(payload); },
   'exchangeSeat': function(payload) { return exchangeSeat(payload); }
 };

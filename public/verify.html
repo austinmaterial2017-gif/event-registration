@@ -14,22 +14,6 @@
     <main class="verification-shell">
       <p id="verification-message" class="notice" role="status" aria-live="polite"></p>
       <section id="verification-result" aria-live="polite"></section>
-      <form id="staff-check-in-form" class="staff-check-in form-card" hidden>
-        <p class="eyebrow">STAFF ACTION</p>
-        <h2>员工确认签到</h2>
-        <p class="helper">扫码验证只读取凭证，不会签到。请当面核对后，再执行以下独立操作。</p>
-        <label>员工身份<input name="staffIdentity" type="text" autocomplete="off" required></label>
-        <label>签到场次
-          <select name="sessionId" required>
-            <option value="">请选择本次签到场次</option>
-          </select>
-        </label>
-        <label class="staff-confirm">
-          <input name="confirmCheckIn" type="checkbox" required>
-          我已当面核对参与者与本场讲座
-        </label>
-        <button class="primary-button" type="submit">确认本场签到</button>
-      </form>
     </main>
     <script type="module" src="js/verify-page.js"></script>
   </body>

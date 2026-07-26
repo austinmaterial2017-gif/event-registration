@@ -12,12 +12,7 @@ const PUBLIC_ERROR_MESSAGES = {
   TICKET_ALREADY_VERIFIED: "该凭证已完成验票。",
   TICKET_NOT_FOUND: "未找到对应凭证。",
   TICKET_VERIFICATION_FAILED: "验证信息不匹配。",
-  TOKEN_INVALID: "凭证无效或已过期。",
-  STAFF_NOT_AUTHORIZED: "当前员工身份无权签到。",
-  TICKET_INACTIVE: "该凭证当前不可签到。",
-  SESSION_NOT_REGISTERED: "该凭证未报名此场讲座。",
-  CHECK_IN_CLOSED: "当前不在此场讲座的签到时间内。",
-  ALREADY_CHECKED_IN: "此场讲座已完成签到。"
+  TOKEN_INVALID: "凭证无效或已过期。"
 };
 
 function failure(code, message) {
@@ -125,8 +120,7 @@ export function createApiClient({ endpoint = APPS_SCRIPT_WEB_APP_URL, fetchImpl 
       answers: requestData?.answers
     }),
     lookupTicket: (ticketNumber, verificationValue) => request("lookupTicket", { ticketNumber, verificationValue }),
-    verifyTicket: (token) => request("verifyTicket", { token }),
-    checkIn: (token, sessionId, staffIdentity) => request("checkIn", { token, sessionId, staffIdentity })
+    verifyTicket: (token) => request("verifyTicket", { token })
   };
 }
 
@@ -137,4 +131,3 @@ export const getEvent = (eventId) => publicClient.getEvent(eventId);
 export const createRegistration = (request) => publicClient.createRegistration(request);
 export const lookupTicket = (ticketNumber, verificationValue) => publicClient.lookupTicket(ticketNumber, verificationValue);
 export const verifyTicket = (token) => publicClient.verifyTicket(token);
-export const checkIn = (token, sessionId, staffIdentity) => publicClient.checkIn(token, sessionId, staffIdentity);

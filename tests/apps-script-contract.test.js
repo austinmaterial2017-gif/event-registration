@@ -73,7 +73,11 @@ test("routing shells return safe public envelopes and the manifest has V8 scopes
   const parsed = JSON.parse(manifest);
   assert.equal(parsed.runtimeVersion, "V8");
   assert.ok(parsed.oauthScopes.includes("https://www.googleapis.com/auth/spreadsheets"));
-  assert.deepEqual(parsed.oauthScopes, ["https://www.googleapis.com/auth/spreadsheets"]);
+  assert.ok(parsed.oauthScopes.includes("https://www.googleapis.com/auth/userinfo.email"));
+  assert.deepEqual(parsed.oauthScopes, [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/userinfo.email"
+  ]);
   assert.equal(parsed.webapp.access, "ANYONE_ANONYMOUS");
 });
 
@@ -168,10 +172,11 @@ test("attendance service keeps verification read-only and serializes staff check
   assert.match(attendance, /function\s+verifyTicket\s*\(\s*payload\s*\)/);
   assert.match(attendance, /function\s+checkIn\s*\(\s*payload\s*\)/);
   assert.match(attendance, /ATTENDANCE_STAFF_ALLOWLIST/);
+  assert.match(attendance, /Session\.getActiveUser\(\)\.getEmail\(\)/);
   assert.match(attendance, /withScriptLock\s*\(\s*function\s*\(\s*\)/);
   assert.match(attendance, /ALREADY_CHECKED_IN/);
   assert.match(attendance, /sessionId/);
-  assert.doesNotMatch(attendance, /Session\.getActiveUser|payload\.checkedInAt/);
-  assert.match(code, /['"]checkIn['"]\s*:/);
-  assert.match(code, /STAFF_NOT_AUTHORIZED|ALREADY_CHECKED_IN|CHECK_IN_CLOSED/);
+  assert.doesNotMatch(attendance, /payload\.staffIdentity|payload\.checkedInAt/);
+  assert.doesNotMatch(code, /['"]checkIn['"]\s*:/);
+  assert.doesNotMatch(code, /STAFF_NOT_AUTHORIZED|ALREADY_CHECKED_IN|CHECK_IN_CLOSED/);
 });

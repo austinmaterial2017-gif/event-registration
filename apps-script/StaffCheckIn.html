@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <base target="_top">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+      body { margin:0; padding:24px; background:#18131d; color:#f8f0df; font:15px/1.5 Arial,sans-serif; }
+      main { max-width:560px; margin:auto; } form, section { display:grid; gap:14px; padding:20px; border:1px solid #594463; border-radius:18px; background:#2b202f; }
+      label { display:grid; gap:6px; } input, select, button { min-height:44px; padding:9px 11px; border-radius:10px; font:inherit; }
+      input, select { border:1px solid #6b5874; background:#171219; color:#fff; } button { border:0; background:linear-gradient(110deg,#ff4fa3,#8755ff); color:#fff; font-weight:800; cursor:pointer; }
+      .confirm { display:flex; align-items:flex-start; gap:8px; }.confirm input { min-height:auto; margin-top:5px; }.message { min-height:1.5em; color:#77e4aa; }
+      [hidden] { display:none !important; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>员工讲座签到</h1>
+      <p>员工身份来自当前 Google 登录会话，页面不会接受手动填写的身份。</p>
+      <form id="lookup-form">
+        <label>二维码 token
+          <input name="token" autocomplete="off" required>
+        </label>
+        <button type="submit">读取凭证</button>
+      </form>
+      <form id="check-in-form" hidden>
+        <p id="ticket-summary"></p>
+        <label>签到场次
+          <select name="sessionId" required>
+            <option value="">请选择场次</option>
+          </select>
+        </label>
+        <label class="confirm">
+          <input name="confirmCheckIn" type="checkbox" required>
+          我已当面核对参与者和本场讲座
+        </label>
+        <button type="submit">确认本场签到</button>
+      </form>
+      <p id="message" class="message" role="status"></p>
+    </main>
+    <script>
+      const lookupForm = document.querySelector("#lookup-form");
+      const checkInForm = document.querySelector("#check-in-form");
+      const message = document.querySelector("#message");
+      const summary = document.querySelector("#ticket-summary");
+      let activeToken = "";
+
+      function showResult(result) {
+        if (!result || result.ok !== true) {
+          message.textContent = result && result.message ? result.message : "员工签到不可用。";
+          return;
+        }
+        const ticket = result.data;
+        summary.textContent = `${ticket.participantName} · ${ticket.event.title} · ${ticket.status}`;
+        const select = checkInForm.elements.sessionId;
+        select.length = 1;
+        ticket.sessions.forEach((session) => {
+          const option = document.createElement("option");
+          option.value = session.sessionId;
+          option.textContent = `${session.title} · ${session.speaker || "讲师待公布"}`;
+          select.append(option);
+        });
+        checkInForm.hidden = ticket.status !== "active";
+        message.textContent = "已读取凭证；请选择本次签到场次。";
+      }
+
+      lookupForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        activeToken = lookupForm.elements.token.value.trim();
+        message.textContent = "正在读取凭证…";
+        google.script.run
+          .withSuccessHandler(showResult)
+          .withFailureHandler(() => { message.textContent = "员工签到不可用。"; })
+          .getStaffTicketForCheckIn({ token: activeToken });
+      });
+
+      checkInForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        if (!checkInForm.elements.confirmCheckIn.checked) return;
+        message.textContent = "正在提交签到…";
+        google.script.run
+          .withSuccessHandler((result) => {
+            message.textContent = result && result.ok
+              ? "本场签到成功。"
+              : result && result.message ? result.message : "签到未完成。";
+          })
+          .withFailureHandler(() => { message.textContent = "员工签到不可用。"; })
+          .checkIn({ token: activeToken, sessionId: checkInForm.elements.sessionId.value });
+      });
+    </script>
+  </body>
+</html>

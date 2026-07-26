@@ -1,4 +1,4 @@
-import { checkIn, verifyTicket } from "./api.js";
+import { verifyTicket } from "./api.js";
 
 const STATUS_LABELS = {
   active: "凭证有效",
@@ -79,12 +79,10 @@ function renderVerification(view) {
 
 async function initialiseVerificationPage() {
   const status = document.querySelector("#verification-message");
-  const staffForm = document.querySelector("#staff-check-in-form");
-  if (!status || !staffForm) return;
+  if (!status) return;
   const token = new URLSearchParams(window.location.search).get("token") || "";
   if (!token) {
     status.textContent = "二维码缺少有效凭证资料。";
-    staffForm.hidden = true;
     return;
   }
 
@@ -92,43 +90,11 @@ async function initialiseVerificationPage() {
   const result = await verifyTicket(token);
   if (!result.ok) {
     status.textContent = result.message;
-    staffForm.hidden = true;
     return;
   }
   const view = createVerificationViewModel(result.data);
   renderVerification(view);
   status.textContent = "已读取凭证；此步骤不会自动签到。";
-  if (view.status !== "active") {
-    staffForm.hidden = true;
-    return;
-  }
-
-  const select = staffForm.elements.sessionId;
-  view.sessions.forEach((session) => {
-    const option = element("option", "", `${session.title} · ${session.time}`);
-    option.value = session.sessionId;
-    select.append(option);
-  });
-  staffForm.hidden = false;
-  staffForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    if (!staffForm.elements.confirmCheckIn.checked) {
-      status.textContent = "请先确认已当面核对参与者与场次。";
-      return;
-    }
-    const button = staffForm.querySelector("button");
-    button.disabled = true;
-    status.textContent = "正在提交签到…";
-    const checkedIn = await checkIn(
-      token,
-      select.value,
-      staffForm.elements.staffIdentity.value.trim()
-    );
-    button.disabled = false;
-    status.textContent = checkedIn.ok
-      ? `签到成功：${select.options[select.selectedIndex]?.textContent || ""}`
-      : checkedIn.message;
-  });
 }
 
 if (typeof document !== "undefined") initialiseVerificationPage();

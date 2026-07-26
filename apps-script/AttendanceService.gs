@@ -21,14 +21,12 @@ function verifyTicket(payload) {
  */
 function checkIn(payload) {
   return runAttendanceService_(function() {
+    var staffIdentity = requireAuthorizedStaffSession_();
     return withScriptLock(function() {
       if (!payload || typeof payload !== 'object' ||
-          typeof payload.sessionId !== 'string' || !payload.sessionId.trim() ||
-          typeof payload.staffIdentity !== 'string' || !payload.staffIdentity.trim()) {
+          typeof payload.sessionId !== 'string' || !payload.sessionId.trim()) {
         attendanceError_('INVALID_REQUEST');
       }
-      var staffIdentity = String(payload.staffIdentity).trim().toLowerCase();
-      if (!isAuthorizedAttendanceStaff_(staffIdentity)) attendanceError_('STAFF_NOT_AUTHORIZED');
 
       var match = findAttendanceTicket_(payload.token);
       if (match.status !== 'active') attendanceError_('TICKET_INACTIVE');
@@ -73,6 +71,26 @@ function checkIn(payload) {
   });
 }
 
+/**
+ * Returns the staff-only HtmlService page. It is intentionally not routed by
+ * the anonymous doGet/doPost public API.
+ */
+function getStaffCheckInPage() {
+  requireAuthorizedStaffSession_();
+  return HtmlService.createHtmlOutputFromFile('StaffCheckIn')
+    .setTitle('员工讲座签到');
+}
+
+/** Supplies the protected staff page with the same read-only ticket snapshot. */
+function getStaffTicketForCheckIn(payload) {
+  try {
+    requireAuthorizedStaffSession_();
+  } catch (_ignored) {
+    return attendanceFailure_('STAFF_ACTION_DENIED');
+  }
+  return verifyTicket(payload);
+}
+
 function runAttendanceService_(callback) {
   try {
     return { ok: true, data: callback() };
@@ -86,7 +104,7 @@ function attendanceFailure_(code) {
   var messages = {
     INVALID_REQUEST: '提交信息无效，请检查后重试。',
     TOKEN_INVALID: '凭证无效或已过期。',
-    STAFF_NOT_AUTHORIZED: '当前员工身份无权签到。',
+    STAFF_ACTION_DENIED: '员工签到不可用。',
     TICKET_INACTIVE: '该凭证当前不可签到。',
     SESSION_NOT_REGISTERED: '该凭证未报名此场讲座。',
     CHECK_IN_CLOSED: '当前不在此场讲座的签到时间内。',
@@ -220,6 +238,19 @@ function isAuthorizedAttendanceStaff_(identity) {
   return values.some(function(candidate) {
     return typeof candidate === 'string' && candidate.trim().toLowerCase() === identity;
   });
+}
+
+function requireAuthorizedStaffSession_() {
+  var identity = '';
+  try {
+    identity = String(Session.getActiveUser().getEmail() || '').trim().toLowerCase();
+  } catch (_ignored) {
+    identity = '';
+  }
+  if (!identity || !isAuthorizedAttendanceStaff_(identity)) {
+    attendanceError_('STAFF_ACTION_DENIED');
+  }
+  return identity;
 }
 
 function isWithinAttendanceWindow_(session, now) {

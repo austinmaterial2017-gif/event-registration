@@ -14,23 +14,91 @@ var STAFF_SHEET_DEFINITIONS = {
 };
 
 function getConfiguredSpreadsheet_() {
+  var spreadsheet = getRootConfiguredSpreadsheet_();
+  var spreadsheetId = String(spreadsheet.getId());
+  var visited = {};
+  for (var redirects = 0; redirects < 50; redirects += 1) {
+    if (visited[spreadsheetId]) throw new Error('Staff spreadsheet redirect cycle.');
+    visited[spreadsheetId] = true;
+    var nextSpreadsheetId = getSharedSettingValue_(spreadsheet, ACTIVE_SPREADSHEET_ID);
+    if (nextSpreadsheetId === null || nextSpreadsheetId === '') return spreadsheet;
+    if (typeof nextSpreadsheetId !== 'string' || !nextSpreadsheetId.trim()) {
+      throw new Error('Staff spreadsheet redirect is invalid.');
+    }
+    spreadsheetId = nextSpreadsheetId.trim();
+    spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+  }
+  throw new Error('Too many staff spreadsheet redirects.');
+}
+
+function getRootConfiguredSpreadsheet_() {
   var spreadsheetId = PropertiesService.getScriptProperties().getProperty(ACTIVE_SPREADSHEET_ID);
   if (!spreadsheetId) throw new Error('Staff spreadsheet is not configured.');
   return SpreadsheetApp.openById(spreadsheetId);
 }
 
 function getAdminSettings_() {
-  var serialized = PropertiesService.getScriptProperties().getProperty(ADMIN_SETTINGS);
-  if (!serialized) return {};
-  try {
-    return JSON.parse(serialized);
-  } catch (_ignored) {
-    return {};
-  }
+  var shared = getSharedSettingValue_(getConfiguredSpreadsheet_(), ADMIN_SETTINGS);
+  var fallback = PropertiesService.getScriptProperties().getProperty(ADMIN_SETTINGS);
+  return resolveAdminSettings_(shared, fallback);
 }
 
 function setAdminSettings_(settings) {
-  PropertiesService.getScriptProperties().setProperty(ADMIN_SETTINGS, JSON.stringify(settings || {}));
+  setSharedSettingValue_(
+    getConfiguredSpreadsheet_(),
+    ADMIN_SETTINGS,
+    JSON.stringify(settings || {})
+  );
+}
+
+function resolveAdminSettings_(shared, fallback) {
+  var parsedShared = parseAdminSettings_(shared);
+  if (parsedShared) return parsedShared;
+  var parsedFallback = parseAdminSettings_(fallback);
+  if (parsedFallback) return parsedFallback;
+  if (shared !== null || fallback !== null) {
+    throw new Error('Administrator settings are invalid.');
+  }
+  return {};
+}
+
+function parseAdminSettings_(serialized) {
+  if (typeof serialized !== 'string' || !serialized.trim()) return null;
+  try {
+    var parsed = JSON.parse(serialized);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch (_ignored) {
+    return null;
+  }
+}
+
+function setSharedSettingValue_(spreadsheet, key, value) {
+  var sheet = getRequiredSheet_(spreadsheet, '系统设置');
+  var values = sheet.getLastRow() > 1
+    ? sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues()
+    : [];
+  var rowNumber = 0;
+  values.some(function(row, index) {
+    if (row[0] !== key) return false;
+    rowNumber = index + 2;
+    return true;
+  });
+  var row = [key, value, new Date().toISOString()];
+  if (rowNumber) {
+    sheet.getRange(rowNumber, 1, 1, row.length).setValues([row]);
+  } else {
+    sheet.appendRow(row);
+  }
+}
+
+function getSharedSettingValue_(spreadsheet, key) {
+  var sheet = getRequiredSheet_(spreadsheet, '系统设置');
+  if (sheet.getLastRow() <= 1) return null;
+  var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues();
+  for (var index = 0; index < values.length; index += 1) {
+    if (values[index][0] === key) return values[index][1];
+  }
+  return null;
 }
 
 function openSpreadsheetById_(spreadsheetId) {
@@ -38,10 +106,6 @@ function openSpreadsheetById_(spreadsheetId) {
     throw new Error('Invalid spreadsheet selection.');
   }
   return SpreadsheetApp.openById(spreadsheetId.trim());
-}
-
-function setActiveSpreadsheetId_(spreadsheetId) {
-  PropertiesService.getScriptProperties().setProperty(ACTIVE_SPREADSHEET_ID, spreadsheetId);
 }
 
 function withScriptLock_(callback) {

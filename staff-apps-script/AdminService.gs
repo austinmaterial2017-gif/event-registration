@@ -446,14 +446,8 @@ function saveAdminQuestion_(payload, actor) {
     var inheritedIdentityFields = settings.registration &&
       Array.isArray(settings.registration.identityFields) ? settings.registration.identityFields : [];
     var eventQuestions = readAdminRows_(spreadsheet, '报名问题');
-    var existingQuestionIds = {};
-    eventQuestions.forEach(function(question) {
-      if (question.eventId === row.eventId) existingQuestionIds[question.questionId] = true;
-    });
     var configuredIdentityFields = (Array.isArray(policy.identityFields)
-      ? policy.identityFields : inheritedIdentityFields).filter(function(identityQuestionId) {
-      return existingQuestionIds[identityQuestionId] === true;
-    });
+      ? policy.identityFields : inheritedIdentityFields).slice();
     var hadIdentityFields = configuredIdentityFields.length > 0;
     var identityFields = updateAdminFlagList_(
       configuredIdentityFields, questionId,
@@ -725,14 +719,51 @@ function switchAdminSheet_(payload) {
   }
   return withScriptLock_(function() {
     var spreadsheet;
+    var rootSpreadsheet;
     try {
+      rootSpreadsheet = getRootConfiguredSpreadsheet_();
       spreadsheet = openSpreadsheetById_(request.spreadsheetId);
       validateAdminSpreadsheet_(spreadsheet);
     } catch (error) {
       if (error && error.publicCode) throw error;
       adminError_('SHEET_CONNECTION_FAILED');
     }
-    setActiveSpreadsheetId_(request.spreadsheetId.trim());
+    var targetId = request.spreadsheetId.trim();
+    var rootId = String(rootSpreadsheet.getId());
+    var rootPointer = getSharedSettingValue_(rootSpreadsheet, ACTIVE_SPREADSHEET_ID);
+    var targetPointer = rootId === targetId
+      ? rootPointer
+      : getSharedSettingValue_(spreadsheet, ACTIVE_SPREADSHEET_ID);
+    try {
+      setSharedSettingValue_(spreadsheet, ACTIVE_SPREADSHEET_ID, '');
+      if (rootId !== targetId) {
+        setSharedSettingValue_(rootSpreadsheet, ACTIVE_SPREADSHEET_ID, targetId);
+      }
+    } catch (error) {
+      try {
+        if (rootId !== targetId) {
+          setSharedSettingValue_(
+            spreadsheet,
+            ACTIVE_SPREADSHEET_ID,
+            targetPointer === null ? '' : targetPointer
+          );
+          setSharedSettingValue_(
+            rootSpreadsheet,
+            ACTIVE_SPREADSHEET_ID,
+            rootPointer === null ? '' : rootPointer
+          );
+        } else {
+          setSharedSettingValue_(
+            rootSpreadsheet,
+            ACTIVE_SPREADSHEET_ID,
+            rootPointer === null ? '' : rootPointer
+          );
+        }
+      } catch (_ignored) {
+        // The original failure remains private; a later confirmed switch can repair the pointer.
+      }
+      throw error;
+    }
     return {
       connected: true,
       sheetName: String(spreadsheet.getName ? spreadsheet.getName() : 'Connected'),
@@ -1083,7 +1114,8 @@ function updateAdminFlagList_(values, value, enabled) {
 }
 
 function validateAdminIdentityFields_(identityFields, questions, candidate) {
-  if (!Array.isArray(identityFields) || !identityFields.length) adminError_('CONFLICT');
+  if (!Array.isArray(identityFields)) adminError_('CONFLICT');
+  if (!identityFields.length) return;
   var questionsById = {};
   questions.forEach(function(question) {
     if (question.eventId === candidate.eventId) questionsById[question.questionId] = question;

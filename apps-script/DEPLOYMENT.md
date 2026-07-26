@@ -39,9 +39,10 @@ The staff project requires these Script Properties:
   emails
 - `ADMIN_EMAIL_ALLOWLIST`: a separate JSON array of normalized administrator
   Google-account emails
-- `ADMIN_SETTINGS`: attendance windows plus administrator-controlled event,
-  session, countdown, cancellation, exchange, ticket-field, and duplicate
-  identity policies
+
+Existing deployments may also retain `ADMIN_SETTINGS` as a legacy/bootstrap
+Script Property until the shared spreadsheet contains its authoritative
+`ADMIN_SETTINGS` row.
 
 Example allowlist:
 
@@ -52,6 +53,15 @@ Example allowlist:
 Staff accounts must be in the allowlist **and** must be granted the necessary
 Sheet access to the private spreadsheet. This is required because the staff
 Web App executes as the user accessing it, not as the deployer.
+
+Administrator-controlled attendance, event, session, countdown, cancellation,
+exchange, ticket-field, and duplicate-identity policies are stored as JSON in
+the shared private Sheet's `系统设置` tab under the `ADMIN_SETTINGS` key. The
+administrator project writes this row and both projects read it, so policy
+changes take effect in the anonymous registration project despite the
+projects having separate Script Properties. Existing deployments may retain
+their `ADMIN_SETTINGS` Script Property as a fallback; the next administrator
+policy save writes the complete effective settings into the shared row.
 
 The attendance allowlist does not grant administrator access. The attendance
 and administrator allowlists are independent:
@@ -77,9 +87,12 @@ unauthorized administrator sessions receive the same fixed denial page.
 
 The administrator's data-table panel shows connection status and can test a
 submitted target Sheet before a switch. Switching requires explicit
-confirmation and only changes `ACTIVE_SPREADSHEET_ID`. Old data remains in the
-previous Sheet, and migration is not automatic. The switch does not
-initialize, copy, migrate, or delete rows.
+confirmation. It publishes an `ACTIVE_SPREADSHEET_ID` pointer in the private
+`系统设置` tab of the original configured Sheet. Both projects retain that
+Sheet as their stable Script Property root and follow the same private
+pointer, so both deployments change active data on one shared settings write.
+Old data remains in the previous Sheet. Migration is not automatic, and the
+switch does not initialize, copy, migrate, or delete business rows.
 
 ## Source bundles and two-project setup
 
@@ -90,7 +103,10 @@ source bundles:
    `USER_DEPLOYING` / `ANYONE_ANONYMOUS`.
 2. Copy the staff source, create a separate `staff-apps-script/` project, and
    deploy it as `USER_ACCESSING` / `ANYONE` with sign-in required.
-3. Set Script Properties manually in each project. The generated source
+3. Set Script Properties manually in each project. Both projects must
+   initially point `ACTIVE_SPREADSHEET_ID` at the same initialized private
+   Sheet and retain it as their stable root. Later confirmed administrator
+   switches are propagated through the shared pointer. The generated source
    contains property names only; it does not contain current property values,
    Sheet IDs, allowlist members, credentials, participant rows, or answers.
 4. Grant each staff or administrator account the required access to the

@@ -76,7 +76,13 @@ The signed-in staff deployment now serves:
 - Target testing validates every required Sheet and exact header without
   activating or mutating the target.
 - Switching requires explicit confirmation, validates the target first, and
-  changes only `ACTIVE_SPREADSHEET_ID`.
+  publishes a private `ACTIVE_SPREADSHEET_ID` pointer from the stable root
+  Sheet. Both projects retain that same property root and follow the pointer
+  on the same shared write, including when switching back to the root.
+- Administrator policies are persisted under the `ADMIN_SETTINGS` key in the
+  shared private `系统设置` sheet. Both the staff and anonymous projects read
+  this row, with their separate Script Properties retained only as a legacy
+  fallback.
 - The interface and response warn that old data remains and migration is not
   automatic. No initialization, copying, migration, or deletion occurs during
   switching.
@@ -173,8 +179,8 @@ Addressed all five findings from the first Task 7 review:
   identity cannot be made optional, hidden, removed, or moved to another
   event; replacement is allowed when the same locked mutation leaves another
   valid identity question. Identity removal persists the replacement policy
-  first, so a Script Property failure cannot leave the old policy pointing at
-  a newly invalid question row.
+  first, so a settings-storage failure cannot leave the old policy pointing
+  at a newly invalid question row.
 - Dashboard records now group all rows for one registration and return the
   union of their session IDs and seat choices rather than discarding rows
   after the first.
@@ -183,7 +189,7 @@ Regression coverage includes exact no-write assertions for incompatible seat
 targets and rejected identity-policy changes, injected registration/release
 write failures with exact seat rollback, an injected target-rollback failure
 that proves the old seat and recovery journal survive, an injected
-identity-policy property failure, global-policy fallback, the cross-event
+identity-policy storage failure, global-policy fallback, the cross-event
 identity bypass, boolean/collection masking, and two-session record
 aggregation.
 
@@ -191,5 +197,46 @@ Fresh verification after the fixes:
 
 - Focused administrator/security suite: 34 passed, 0 failed.
 - Full `npm.cmd test` suite: 111 passed, 0 failed.
+- `node scripts/build-admin-source-bundles.mjs --check`: passed.
+- `git diff --check`: passed.
+
+## Fix round 2
+
+The duplicate-identity policy may now be an explicit empty list. This disables
+duplicate checking for the event and lets an administrator clear the final
+`duplicateIdentity` flag, hide that question, or make it optional in the same
+mutation. When the final identity reference is removed, the empty policy is
+persisted to the shared settings row before the question row changes, so a
+settings-write failure leaves both the policy and question unchanged.
+
+Nonempty identity policies remain strict: every referenced question must
+exist in the same event and remain active, visible, and required. Missing or
+otherwise invalid references are rejected without silently filtering the
+configuration or mutating either settings or question rows.
+
+Regression coverage proves that:
+
+- each supported final-flag removal persists `identityFields: []`;
+- an injected shared-settings write failure preserves both settings and
+  questions;
+- a nonempty policy containing a missing question reference is rejected
+  without mutation; and
+- two registrations with identical answers both succeed when the event has an
+  explicit empty identity policy, even if the global fallback is nonempty; and
+- a real administrator mutation in the staff project is observed by a
+  separately instantiated public registration project through the shared
+  Sheet, despite each project retaining a different legacy property value;
+- blank or malformed shared settings use a valid legacy settings object
+  instead of silently disabling duplicate checks, while two invalid sources
+  fail closed; and
+- a confirmed Sheet switch publishes a private pointer that the separately
+  instantiated public project and staff project observe during the same write,
+  in both directions.
+
+Fresh verification after the second fix round:
+
+- Administrator and registration VM suites: 50 passed, 0 failed.
+- Focused administrator/security suite: 65 passed, 0 failed.
+- Full `npm.cmd test` suite: 118 passed, 0 failed.
 - `node scripts/build-admin-source-bundles.mjs --check`: passed.
 - `git diff --check`: passed.

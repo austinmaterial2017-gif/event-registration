@@ -477,6 +477,27 @@ test("serialized registrations observe the first committed identity before the s
   assert.equal(sheetObjects(sheets["报名项目"]).length, 1);
 });
 
+test("an explicit empty event identity policy allows repeated registrations with the same answers", async () => {
+  const settings = {
+    registration: {
+      identityFields: ["email"],
+      events: {
+        "event-1": {
+          identityFields: []
+        }
+      }
+    }
+  };
+  const { context, sheets } = await createHarness({ settings });
+
+  const first = context.createRegistration(registrationPayload());
+  const second = context.createRegistration(registrationPayload());
+
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true);
+  assert.equal(sheetObjects(sheets["报名项目"]).length, 2);
+});
+
 test("lookup takes a lock and cancellation preserves rows while releasing the seat", async () => {
   const { context, locks, sheets } = await createHarness({
     rows: baseRows({

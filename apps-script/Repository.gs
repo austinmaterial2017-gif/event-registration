@@ -26,18 +26,58 @@ function setupSystem() {
 function getConfiguredSpreadsheet() {
   var spreadsheetId = PropertiesService.getScriptProperties().getProperty(ACTIVE_SPREADSHEET_ID);
   if (!spreadsheetId) throw new Error('Spreadsheet is not configured.');
-  return SpreadsheetApp.openById(spreadsheetId);
+  var visited = {};
+  for (var redirects = 0; redirects < 50; redirects += 1) {
+    if (visited[spreadsheetId]) throw new Error('Spreadsheet redirect cycle.');
+    visited[spreadsheetId] = true;
+    var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+    var nextSpreadsheetId = getSharedSettingValue_(spreadsheet, ACTIVE_SPREADSHEET_ID);
+    if (nextSpreadsheetId === null || nextSpreadsheetId === '') return spreadsheet;
+    if (typeof nextSpreadsheetId !== 'string' || !nextSpreadsheetId.trim()) {
+      throw new Error('Spreadsheet redirect is invalid.');
+    }
+    spreadsheetId = nextSpreadsheetId.trim();
+  }
+  throw new Error('Too many spreadsheet redirects.');
 }
 
 /** Returns administrator-controlled options kept outside public files. */
 function getAdminSettings() {
-  var serialized = PropertiesService.getScriptProperties().getProperty(ADMIN_SETTINGS);
-  if (!serialized) return {};
-  try {
-    return JSON.parse(serialized);
-  } catch (_ignored) {
-    return {};
+  var shared = getSharedSettingValue_(getConfiguredSpreadsheet(), ADMIN_SETTINGS);
+  var fallback = PropertiesService.getScriptProperties().getProperty(ADMIN_SETTINGS);
+  return resolveAdminSettings_(shared, fallback);
+}
+
+function resolveAdminSettings_(shared, fallback) {
+  var parsedShared = parseAdminSettings_(shared);
+  if (parsedShared) return parsedShared;
+  var parsedFallback = parseAdminSettings_(fallback);
+  if (parsedFallback) return parsedFallback;
+  if (shared !== null || fallback !== null) {
+    throw new Error('Administrator settings are invalid.');
   }
+  return {};
+}
+
+function parseAdminSettings_(serialized) {
+  if (typeof serialized !== 'string' || !serialized.trim()) return null;
+  try {
+    var parsed = JSON.parse(serialized);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch (_ignored) {
+    return null;
+  }
+}
+
+function getSharedSettingValue_(spreadsheet, key) {
+  var sheet = spreadsheet.getSheetByName('系统设置');
+  if (!sheet) return null;
+  if (sheet.getLastRow() <= 1) return null;
+  var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues();
+  for (var index = 0; index < values.length; index += 1) {
+    if (values[index][0] === key) return values[index][1];
+  }
+  return null;
 }
 
 /** Selects and non-destructively initializes a spreadsheet for this deployment. */

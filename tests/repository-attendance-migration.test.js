@@ -34,3 +34,27 @@ test("attendance schema migration inserts sessionId without turning the old head
   assert.deepEqual(sheet.rows[1], ["c1", "r1", "e1", "", "2026-08-16T09:30:00.000Z", "staff@example.com", "checked_in"]);
   assert.equal(sheet.rows.length, 2);
 });
+
+test("the configured spreadsheet can be opened before the shared settings sheet is initialized", async () => {
+  const spreadsheet = {
+    getSheetByName: () => null
+  };
+  const context = vm.createContext({
+    Date, JSON, Object, Array, String, Number, Error,
+    PropertiesService: {
+      getScriptProperties: () => ({
+        getProperty: (key) => key === "ACTIVE_SPREADSHEET_ID" ? "bootstrap-sheet" : null
+      })
+    },
+    SpreadsheetApp: {
+      openById: (spreadsheetId) => {
+        assert.equal(spreadsheetId, "bootstrap-sheet");
+        return spreadsheet;
+      }
+    }
+  });
+  const source = await readFile(new URL("../apps-script/Repository.gs", import.meta.url), "utf8");
+  vm.runInContext(source, context);
+
+  assert.equal(context.getConfiguredSpreadsheet(), spreadsheet);
+});

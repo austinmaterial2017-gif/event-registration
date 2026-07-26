@@ -4,6 +4,7 @@ import vm from "node:vm";
 import { readFile } from "node:fs/promises";
 
 const staffScriptRoot = new URL("../staff-apps-script/", import.meta.url);
+const publicScriptRoot = new URL("../apps-script/", import.meta.url);
 
 const headers = {
   "系统设置": ["key", "value", "updatedAt"],
@@ -24,6 +25,7 @@ class FakeSheet {
     this.writeCount = 0;
     this.writeAttemptCount = 0;
     this.writeErrorsByAttempt = new Map();
+    this.afterWriteCallbacks = [];
   }
 
   failNextWrite(error = new Error(`injected ${this.name} write failure`)) {
@@ -38,6 +40,13 @@ class FakeSheet {
     this.writeErrorsByAttempt.delete(this.writeAttemptCount);
     if (error) throw error;
   }
+  afterNextWrite(callback) {
+    this.afterWriteCallbacks.push(callback);
+  }
+  notifyWrite() {
+    const callback = this.afterWriteCallbacks.shift();
+    if (callback) callback();
+  }
   getName() { return this.name; }
   getLastRow() { return this.rows.length; }
   getLastColumn() { return headers[this.name].length; }
@@ -45,6 +54,7 @@ class FakeSheet {
     this.consumeWriteFailure();
     this.writeCount += 1;
     this.rows.push([...values]);
+    this.notifyWrite();
   }
   getRange(row, column, rowCount, columnCount) {
     return {
@@ -58,6 +68,7 @@ class FakeSheet {
           source.forEach((value, x) => { target[column - 1 + x] = value; });
           this.rows[row - 1 + y] = target;
         });
+        this.notifyWrite();
       }
     };
   }
@@ -139,6 +150,19 @@ function records(sheet) {
     Object.fromEntries(headers[sheet.name].map((key, index) => [key, values[index]])));
 }
 
+function readHarnessAdminSettings(harness) {
+  const shared = records(harness.sourceSheets["系统设置"])
+    .find((row) => row.key === "ADMIN_SETTINGS");
+  return JSON.parse(shared ? shared.value : harness.properties.ADMIN_SETTINGS);
+}
+
+function settingsStorageSnapshot(harness) {
+  return JSON.stringify({
+    shared: records(harness.sourceSheets["系统设置"]),
+    legacyProperty: harness.properties.ADMIN_SETTINGS
+  });
+}
+
 function cloneRows(rows) {
   return Object.fromEntries(Object.entries(rows).map(([name, values]) =>
     [name, values.map((value) => ({ ...value }))]));
@@ -147,7 +171,7 @@ function cloneRows(rows) {
 async function createHarness(options = {}) {
   const defaultAdminSettings = {
     registration: {
-      identityFields: ["email"],
+      identityFields: [],
       events: {
         "event-1": {
           seatExchangeEnabled: true,
@@ -184,7 +208,6 @@ async function createHarness(options = {}) {
   const locks = [];
   let lockDepth = 0;
   let uuid = 0;
-  let nextPropertyWriteError = null;
   const RealDate = Date;
   class ServerDate extends RealDate {
     constructor(value) { super(value === undefined ? "2026-07-26T04:00:00Z" : value); }
@@ -199,9 +222,6 @@ async function createHarness(options = {}) {
       getScriptProperties: () => ({
         getProperty: (key) => properties[key] ?? null,
         setProperty: (key, value) => {
-          const error = nextPropertyWriteError;
-          nextPropertyWriteError = null;
-          if (error) throw error;
           properties[key] = value;
         }
       })
@@ -237,11 +257,61 @@ async function createHarness(options = {}) {
     properties,
     sourceSheets,
     targetSheets,
-    locks,
-    failNextPropertyWrite(error = new Error("injected property write failure")) {
-      nextPropertyWriteError = error;
-    }
+    locks
   };
+}
+
+async function createPublicRegistrationContext(sourceSheets, fallbackSettings, additionalSpreadsheets = {}) {
+  const properties = {
+    ACTIVE_SPREADSHEET_ID: "source-sheet-id",
+    ADMIN_SETTINGS: JSON.stringify(fallbackSettings)
+  };
+  const spreadsheets = {
+    "source-sheet-id": sourceSheets,
+    ...additionalSpreadsheets
+  };
+  let lockDepth = 0;
+  let uuid = 1000;
+  const RealDate = Date;
+  class RegistrationDate extends RealDate {
+    constructor(value) { super(value === undefined ? "2026-08-10T04:00:00Z" : value); }
+    static now() { return RealDate.parse("2026-08-10T04:00:00Z"); }
+  }
+  const context = vm.createContext({
+    JSON, Object, Array, String, Number, RegExp, Error, Math, isFinite, Date: RegistrationDate,
+    PropertiesService: {
+      getScriptProperties: () => ({
+        getProperty: (key) => properties[key] ?? null
+      })
+    },
+    SpreadsheetApp: {
+      openById: (spreadsheetId) => {
+        const sheets = spreadsheets[spreadsheetId];
+        if (!sheets) throw new Error("missing spreadsheet");
+        return {
+          getId: () => spreadsheetId,
+          getName: () => spreadsheetId,
+          getSheetByName: (name) => sheets[name] || null
+        };
+      }
+    },
+    LockService: {
+      getScriptLock: () => ({
+        waitLock: () => {
+          assert.equal(lockDepth, 0, "nested public lock");
+          lockDepth += 1;
+        },
+        releaseLock: () => { lockDepth -= 1; }
+      })
+    },
+    Utilities: {
+      getUuid: () => `00000000-0000-4000-8000-${String(++uuid).padStart(12, "0")}`
+    }
+  });
+  for (const file of ["Repository.gs", "RegistrationService.gs", "TicketService.gs"]) {
+    vm.runInContext(await readFile(new URL(file, publicScriptRoot), "utf8"), context, { filename: file });
+  }
+  return context;
 }
 
 test("event lifecycle changes preserve every related history row and save advanced policy", async () => {
@@ -267,7 +337,7 @@ test("event lifecycle changes preserve every related history row and save advanc
   for (const name of ["场次", "座位", "报名问题", "参加者", "报名项目", "签到记录"]) {
     assert.equal(harness.sourceSheets[name].rows.length, before[name], name);
   }
-  const eventSettings = JSON.parse(harness.properties.ADMIN_SETTINGS).registration.events["event-1"];
+  const eventSettings = readHarnessAdminSettings(harness).registration.events["event-1"];
   assert.equal(eventSettings.cancellationEnabled, false);
   assert.equal(eventSettings.seatExchangeEnabled, false);
   assert.equal(eventSettings.showOpeningCountdown, false);
@@ -574,7 +644,7 @@ test("identity questions cannot become optional or hidden while policy still dep
   ]) {
     const harness = await createHarness();
     const beforeQuestions = JSON.stringify(records(harness.sourceSheets["报名问题"]));
-    const beforeSettings = harness.properties.ADMIN_SETTINGS;
+    const beforeSettings = settingsStorageSnapshot(harness);
     const result = harness.context.saveAdminQuestion({
       eventId: "event-1",
       questionId: "email",
@@ -583,10 +653,158 @@ test("identity questions cannot become optional or hidden while policy still dep
 
     assert.equal(result.code, "CONFLICT");
     assert.equal(JSON.stringify(records(harness.sourceSheets["报名问题"])), beforeQuestions);
-    assert.equal(harness.properties.ADMIN_SETTINGS, beforeSettings);
+    assert.equal(settingsStorageSnapshot(harness), beforeSettings);
     assert.equal(harness.sourceSheets["报名问题"].writeCount, 0);
     assert.equal(harness.sourceSheets["操作记录"].writeCount, 0);
   }
+});
+
+test("the final identity flag can be cleared, hidden, or made optional while persisting an empty policy", async () => {
+  for (const change of [
+    { duplicateIdentity: false },
+    { action: "hide", duplicateIdentity: false },
+    { required: false, duplicateIdentity: false }
+  ]) {
+    const harness = await createHarness();
+
+    const result = harness.context.saveAdminQuestion({
+      eventId: "event-1",
+      questionId: "email",
+      ...change
+    });
+
+    assert.equal(result.ok, true, JSON.stringify(change));
+    assert.deepEqual(
+      readHarnessAdminSettings(harness).registration.events["event-1"].identityFields,
+      [],
+      JSON.stringify(change)
+    );
+    assert.equal(result.data.duplicateIdentity, false, JSON.stringify(change));
+  }
+});
+
+test("clearing the final identity flag is observed by the separate public registration project", async () => {
+  const harness = await createHarness();
+  const cleared = harness.context.saveAdminQuestion({
+    eventId: "event-1",
+    questionId: "email",
+    duplicateIdentity: false
+  });
+  assert.equal(cleared.ok, true);
+
+  const publicContext = await createPublicRegistrationContext(
+    harness.sourceSheets,
+    {
+      registration: {
+        identityFields: ["email"],
+        events: {
+          "event-1": {
+            identityFields: ["email"],
+            seatHoldsEnabled: true
+          }
+        }
+      }
+    }
+  );
+  const registered = publicContext.createRegistration({
+    eventId: "event-1",
+    sessionIds: ["session-1"],
+    seatChoices: ["seat-new"],
+    answers: { email: "alice@example.com" }
+  });
+
+  assert.equal(registered.ok, true, JSON.stringify(registered));
+});
+
+test("blank or malformed shared settings use valid legacy settings and never disable duplicate checks", async () => {
+  for (const sharedValue of ["", "{not-json"]) {
+    const rows = baseRows();
+    rows["系统设置"] = [{
+      key: "ADMIN_SETTINGS",
+      value: sharedValue,
+      updatedAt: "2026-07-01T00:00:00Z"
+    }];
+    const harness = await createHarness({ rows });
+    const dashboard = harness.context.getAdminDashboard({});
+    assert.equal(
+      dashboard.data.questions.find((question) => question.questionId === "email").duplicateIdentity,
+      true,
+      sharedValue
+    );
+
+    const publicContext = await createPublicRegistrationContext(
+      harness.sourceSheets,
+      {
+        registration: {
+          identityFields: ["email"],
+          events: { "event-1": { identityFields: ["email"] } }
+        }
+      }
+    );
+    const registered = publicContext.createRegistration({
+      eventId: "event-1",
+      sessionIds: ["session-1"],
+      seatChoices: ["seat-new"],
+      answers: { email: "alice@example.com" }
+    });
+    assert.equal(registered.code, "DUPLICATE_REGISTRATION", sharedValue);
+  }
+});
+
+test("malformed shared and legacy settings fail closed", async () => {
+  const rows = baseRows();
+  rows["系统设置"] = [{
+    key: "ADMIN_SETTINGS",
+    value: "{not-json",
+    updatedAt: "2026-07-01T00:00:00Z"
+  }];
+  const harness = await createHarness({
+    rows,
+    adminSettings: "{also-not-json"
+  });
+  harness.properties.ADMIN_SETTINGS = "{also-not-json";
+
+  assert.equal(harness.context.getAdminDashboard({}).code, "INTERNAL");
+
+  const publicContext = await createPublicRegistrationContext(
+    harness.sourceSheets,
+    "{also-not-json"
+  );
+  const registered = publicContext.createRegistration({
+    eventId: "event-1",
+    sessionIds: ["session-1"],
+    seatChoices: ["seat-new"],
+    answers: { email: "alice@example.com" }
+  });
+  assert.equal(registered.code, "INTERNAL");
+});
+
+test("a nonempty identity policy with a missing question reference is rejected without mutation", async () => {
+  const adminSettings = {
+    registration: {
+      identityFields: [],
+      events: {
+        "event-1": {
+          identityFields: ["email", "missing-question"],
+          showOnTicketFields: []
+        }
+      }
+    }
+  };
+  const harness = await createHarness({ adminSettings });
+  const beforeQuestions = JSON.stringify(records(harness.sourceSheets["报名问题"]));
+  const beforeSettings = settingsStorageSnapshot(harness);
+
+  const result = harness.context.saveAdminQuestion({
+    eventId: "event-1",
+    questionId: "email",
+    label: "Updated Email"
+  });
+
+  assert.equal(result.code, "CONFLICT");
+  assert.equal(JSON.stringify(records(harness.sourceSheets["报名问题"])), beforeQuestions);
+  assert.equal(settingsStorageSnapshot(harness), beforeSettings);
+  assert.equal(harness.sourceSheets["报名问题"].writeCount, 0);
 });
 
 test("event question edits preserve the effective global identity policy invariant", async () => {
@@ -604,7 +822,7 @@ test("event question edits preserve the effective global identity policy invaria
   };
   const harness = await createHarness({ adminSettings });
   const beforeQuestions = JSON.stringify(records(harness.sourceSheets["报名问题"]));
-  const beforeSettings = harness.properties.ADMIN_SETTINGS;
+  const beforeSettings = settingsStorageSnapshot(harness);
   const dashboard = harness.context.getAdminDashboard({});
 
   const result = harness.context.saveAdminQuestion({
@@ -619,7 +837,7 @@ test("event question edits preserve the effective global identity policy invaria
   );
   assert.equal(result.code, "CONFLICT");
   assert.equal(JSON.stringify(records(harness.sourceSheets["报名问题"])), beforeQuestions);
-  assert.equal(harness.properties.ADMIN_SETTINGS, beforeSettings);
+  assert.equal(settingsStorageSnapshot(harness), beforeSettings);
   assert.equal(harness.sourceSheets["报名问题"].writeCount, 0);
 });
 
@@ -633,7 +851,7 @@ test("an identity question cannot be moved to another event around the policy in
   });
   const harness = await createHarness({ rows });
   const beforeQuestions = JSON.stringify(records(harness.sourceSheets["报名问题"]));
-  const beforeSettings = harness.properties.ADMIN_SETTINGS;
+  const beforeSettings = settingsStorageSnapshot(harness);
 
   const result = harness.context.saveAdminQuestion({
     eventId: "event-2",
@@ -642,7 +860,7 @@ test("an identity question cannot be moved to another event around the policy in
 
   assert.equal(result.code, "CONFLICT");
   assert.equal(JSON.stringify(records(harness.sourceSheets["报名问题"])), beforeQuestions);
-  assert.equal(harness.properties.ADMIN_SETTINGS, beforeSettings);
+  assert.equal(settingsStorageSnapshot(harness), beforeSettings);
   assert.equal(harness.sourceSheets["报名问题"].writeCount, 0);
 });
 
@@ -678,33 +896,16 @@ test("identity question can be hidden when the same mutation leaves another acti
   assert.equal(result.ok, true);
   assert.equal(result.data.status, "inactive");
   assert.deepEqual(
-    JSON.parse(harness.properties.ADMIN_SETTINGS).registration.events["event-1"].identityFields,
+    readHarnessAdminSettings(harness).registration.events["event-1"].identityFields,
     ["phone"]
   );
 });
 
-test("identity removal persists policy first so a property failure cannot invalidate the question", async () => {
-  const rows = baseRows();
-  rows["报名问题"].push({
-    questionId: "phone", eventId: "event-1", label: "Phone", type: "tel", required: true,
-    options: "{}", sortOrder: 2, status: "active",
-    createdAt: "2026-07-01T00:00:00Z", updatedAt: "2026-07-01T00:00:00Z"
-  });
-  const adminSettings = {
-    registration: {
-      identityFields: ["email"],
-      events: {
-        "event-1": {
-          identityFields: ["email", "phone"],
-          showOnTicketFields: []
-        }
-      }
-    }
-  };
-  const harness = await createHarness({ rows, adminSettings });
+test("clearing the final identity flag persists policy first so a shared-settings failure is atomic", async () => {
+  const harness = await createHarness();
   const beforeQuestions = JSON.stringify(records(harness.sourceSheets["报名问题"]));
-  const beforeSettings = harness.properties.ADMIN_SETTINGS;
-  harness.failNextPropertyWrite();
+  const beforeSettings = settingsStorageSnapshot(harness);
+  harness.sourceSheets["系统设置"].failNextWrite();
 
   const result = harness.context.saveAdminQuestion({
     eventId: "event-1",
@@ -715,7 +916,7 @@ test("identity removal persists policy first so a property failure cannot invali
 
   assert.equal(result.code, "INTERNAL");
   assert.equal(JSON.stringify(records(harness.sourceSheets["报名问题"])), beforeQuestions);
-  assert.equal(harness.properties.ADMIN_SETTINGS, beforeSettings);
+  assert.equal(settingsStorageSnapshot(harness), beforeSettings);
   assert.equal(harness.sourceSheets["操作记录"].writeCount, 0);
 });
 
@@ -765,7 +966,7 @@ test("connection testing validates the target without returning or activating it
   assert.equal(harness.context.testAdminSheetConnection({ spreadsheetId: "missing" }).code, "SHEET_CONNECTION_FAILED");
 });
 
-test("Sheet switching requires confirmation and changes only the active property", async () => {
+test("Sheet switching requires confirmation and publishes a pointer followed by the public project", async () => {
   const harness = await createHarness();
   const sourceCounts = Object.fromEntries(Object.entries(harness.sourceSheets)
     .map(([name, sheet]) => [name, sheet.rows.length]));
@@ -776,6 +977,17 @@ test("Sheet switching requires confirmation and changes only the active property
   assert.equal(denied.code, "CONFIRMATION_REQUIRED");
   assert.equal(harness.properties.ACTIVE_SPREADSHEET_ID, "source-sheet-id");
 
+  const publicContext = await createPublicRegistrationContext(
+    harness.sourceSheets,
+    {},
+    { "target-sheet-id": harness.targetSheets }
+  );
+  harness.sourceSheets["系统设置"].afterNextWrite(() => {
+    assert.equal(publicContext.getConfiguredSpreadsheet().getId(), "target-sheet-id");
+    assert.equal(harness.context.getConfiguredSpreadsheet_().getId(), "target-sheet-id");
+    assert.equal(harness.properties.ACTIVE_SPREADSHEET_ID, "source-sheet-id");
+  });
+
   const switched = harness.context.switchAdminSheet({
     spreadsheetId: "target-sheet-id",
     confirm: true
@@ -784,13 +996,34 @@ test("Sheet switching requires confirmation and changes only the active property
   assert.equal(switched.data.connected, true);
   assert.match(switched.data.warning, /旧数据.*保留/);
   assert.match(switched.data.warning, /不会自动迁移/);
-  assert.equal(harness.properties.ACTIVE_SPREADSHEET_ID, "target-sheet-id");
+  assert.equal(harness.properties.ACTIVE_SPREADSHEET_ID, "source-sheet-id");
   assert.equal(JSON.stringify(switched).includes("target-sheet-id"), false);
+  const pointer = records(harness.sourceSheets["系统设置"])
+    .find((row) => row.key === "ACTIVE_SPREADSHEET_ID");
+  assert.equal(pointer.value, "target-sheet-id");
+
+  assert.equal(publicContext.getConfiguredSpreadsheet().getId(), "target-sheet-id");
+
+  const switchedBack = harness.context.switchAdminSheet({
+    spreadsheetId: "source-sheet-id",
+    confirm: true
+  });
+  assert.equal(switchedBack.ok, true);
+  assert.equal(harness.properties.ACTIVE_SPREADSHEET_ID, "source-sheet-id");
+  assert.equal(publicContext.getConfiguredSpreadsheet().getId(), "source-sheet-id");
 
   for (const [name, count] of Object.entries(sourceCounts)) {
-    assert.equal(harness.sourceSheets[name].rows.length, count, `source ${name}`);
+    assert.equal(
+      harness.sourceSheets[name].rows.length,
+      count + (name === "系统设置" ? 1 : 0),
+      `source ${name}`
+    );
   }
   for (const [name, count] of Object.entries(targetCounts)) {
-    assert.equal(harness.targetSheets[name].rows.length, count, `target ${name}`);
+    assert.equal(
+      harness.targetSheets[name].rows.length,
+      count + (name === "系统设置" ? 1 : 0),
+      `target ${name}`
+    );
   }
 });

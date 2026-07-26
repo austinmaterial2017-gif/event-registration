@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 300" role="img">
+  <title>现代X好未来猫头鹰吉祥物</title>
+  <path fill="#65040B" d="M70 87 56 25l57 40c15-8 29-12 47-12s34 4 49 12l55-40-13 63c19 22 29 48 29 80 0 72-52 117-120 117S40 240 40 168c0-32 10-59 30-81Z"/>
+  <path fill="#9D202B" d="M87 86 73 49l40 29c14-7 30-10 47-10s34 3 48 10l39-29-13 38c15 19 22 42 22 68 0 58-43 96-96 96s-96-38-96-96c0-27 8-50 23-69Z"/>
+  <ellipse cx="112" cy="145" rx="52" ry="58" fill="#FFF1C8"/>
+  <ellipse cx="208" cy="145" rx="52" ry="58" fill="#FFF1C8"/>
+  <circle cx="116" cy="147" r="24" fill="#2E1718"/>
+  <circle cx="204" cy="147" r="24" fill="#2E1718"/>
+  <circle cx="124" cy="138" r="7" fill="#FFF1C8"/>
+  <circle cx="212" cy="138" r="7" fill="#FFF1C8"/>
+  <path fill="#FFD58B" d="m160 160 22 18-22 18-22-18 22-18Z"/>
+  <path fill="#FFF1C8" d="M111 208c16 10 32 15 49 15s34-5 50-15c-5 30-24 48-50 48-25 0-44-18-49-48Z"/>
+  <path d="M78 254c25-5 52-7 82-7s58 2 84 7M132 254v20m56-20v20" fill="none" stroke="#2E1718" stroke-width="6" stroke-linecap="round"/>
+</svg>

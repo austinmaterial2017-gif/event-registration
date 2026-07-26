@@ -1,5 +1,6 @@
 import { listEvents } from "./api.js";
 import { refreshActivityCountdowns } from "./activity-countdown-view.js";
+import { buildActivityTicketView, buildEmptyActivityView } from "./activity-ticket-view.js";
 import { getActivityCountdown, getVisibleActivities } from "./event-list-flow.js";
 import { getRegistrationAvailability } from "./registration-flow.js";
 
@@ -29,27 +30,53 @@ function renderActivities(activities) {
     canRegister: getRegistrationAvailability(activity, serverTimestamp()).canRegister
   }));
   countdownEntries.length = 0;
+
+  if (visibleActivities.length === 0) {
+    const empty = buildEmptyActivityView();
+    const article = node("article", "empty-ticket");
+    const mascot = node("img", "empty-ticket-mascot");
+    mascot.src = empty.mascotPath;
+    mascot.alt = "";
+    const copy = node("div", "empty-ticket-copy");
+    copy.append(
+      node("p", "hero-kicker", empty.kicker),
+      node("h3", "", empty.title),
+      node("p", "", empty.description),
+    );
+    article.append(mascot, copy);
+    list.replaceChildren(article);
+    list.setAttribute("aria-busy", "false");
+    accessibleStatus.textContent = "已显示 0 个活动。";
+    return;
+  }
+
   list.replaceChildren(...visibleActivities.map((activity) => {
-    const article = node("article", "activity-card");
-    const copy = node("div");
-    const top = node("div", "card-top");
-    const date = node("p", "eyebrow", activity.date);
-    const status = node("span", `status ${activity.status}`, statusNames[activity.status] || "状态未知");
-    const title = node("h3", "", activity.title);
-    const description = node("p", "", activity.description);
-    top.append(date, status);
+    const statusLabel = statusNames[activity.status] || "状态未知";
+    const view = buildActivityTicketView(activity, activity.canRegister, statusLabel);
+    const article = node("article", `activity-ticket ticket-${activity.status}`);
+    const dateBlock = node("div", "ticket-date");
+    dateBlock.append(node("span", "", "活动日期"), node("strong", "", view.dateLabel || "日期待定"));
+    const copy = node("div", "ticket-copy");
+    const status = node("span", `status ${activity.status}`, view.statusLabel);
+    const title = node("h3", "", view.title);
+    const description = node("p", "", view.description);
     const countdown = getActivityCountdown(activity, serverTimestamp());
     const clock = countdown ? node("p", "registration-countdown") : null;
     if (clock) clock.setAttribute("aria-live", "polite");
-    copy.append(top, title, description);
+    copy.append(status, title, description);
     if (clock) copy.append(clock);
-    const actions = node("div", "activity-actions");
-    const meta = node("div", "meta-list"); meta.append(node("span", "", `⌖ ${activity.place || ""}`));
-    const action = node(activity.canRegister ? "a" : "span", activity.canRegister ? "primary-button" : "secondary-button", activity.canRegister ? "立即报名" : "暂不可报名");
-    if (activity.canRegister) action.href = `register.html?event=${encodeURIComponent(activity.id)}`;
-    else action.setAttribute("aria-label", `${statusNames[activity.status] || "当前状态"}，暂不可报名`);
+    const actions = node("div", "ticket-action");
+    const meta = node("p", "ticket-place", view.placeLabel);
+    const action = node(
+      view.actionEnabled ? "a" : "span",
+      view.actionEnabled ? "ticket-button" : "ticket-button disabled",
+      view.actionLabel,
+    );
+    if (view.actionEnabled) action.href = view.actionHref;
+    else action.setAttribute("aria-label", `${view.statusLabel || "当前状态"}，暂不可报名`);
     if (clock) countdownEntries.push({ activity, countdownNode: clock, actionNode: action });
-    actions.append(meta, action); article.append(copy, actions);
+    actions.append(meta, action);
+    article.append(dateBlock, copy, actions);
     return article;
   }));
   list.setAttribute("aria-busy", "false");

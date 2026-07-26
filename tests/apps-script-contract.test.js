@@ -5,6 +5,8 @@ import { readFile } from "node:fs/promises";
 const root = new URL("../apps-script/", import.meta.url);
 const sheetDefinitions = {
   "系统设置": ["key", "value", "updatedAt"],
+  "活动目录": ["eventId", "spreadsheetId", "sheetName", "title", "description", "status", "opensAt", "closesAt", "location", "selectionMode", "minChoices", "maxChoices", "seatMode", "seatZones", "createdAt", "updatedAt"],
+  "票券索引": ["ticketNumber", "tokenDigest", "eventId", "registrationId", "status", "createdAt", "updatedAt"],
   "活动": ["eventId", "title", "description", "status", "opensAt", "closesAt", "location", "selectionMode", "minChoices", "maxChoices", "seatMode", "seatZones", "createdAt", "updatedAt"],
   "场次": ["sessionId", "eventId", "title", "speaker", "startsAt", "endsAt", "required", "capacity", "status", "createdAt", "updatedAt"],
   "座位": ["seatId", "eventId", "sessionId", "label", "zone", "status", "holderRegistrationId", "createdAt", "updatedAt"],
@@ -37,6 +39,20 @@ test("Apps Script repository declares every private sheet with explicit headers"
   assert.match(repository, /function\s+readRows\s*\(\s*spreadsheet\s*,\s*sheetName\s*\)/);
   assert.match(repository, /function\s+appendRow\s*\(\s*sheetName\s*,\s*row\s*\)/);
   assert.match(repository, /function\s+updateRow\s*\(\s*sheetName\s*,\s*rowNumber\s*,\s*values\s*\)/);
+  for (const name of [
+    "initializeRegistrySpreadsheet_",
+    "initializeEventSpreadsheet_",
+    "getEventCatalogEntry_",
+    "getEventSpreadsheet_",
+    "getTicketRouteByNumber_",
+    "getTicketRouteByToken_",
+    "upsertTicketRoute_",
+    "digestTicketToken_"
+  ]) {
+    assert.match(repository, new RegExp(`function\\s+${name}\\s*\\(`));
+  }
+  assert.match(repository, /var\s+REGISTRY_SHEET_NAMES_\s*=/);
+  assert.match(repository, /var\s+EVENT_SHEET_NAMES_\s*=/);
 });
 
 test("repository uses script properties and script locks while preserving existing data", async () => {

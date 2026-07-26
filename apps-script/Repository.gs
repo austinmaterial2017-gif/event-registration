@@ -8,6 +8,8 @@ var INITIAL_ADMIN_SETTINGS = {
 
 var SHEET_DEFINITIONS = {
   '系统设置': ['key', 'value', 'updatedAt'],
+  '活动目录': ['eventId', 'spreadsheetId', 'sheetName', 'title', 'description', 'status', 'opensAt', 'closesAt', 'location', 'selectionMode', 'minChoices', 'maxChoices', 'seatMode', 'seatZones', 'createdAt', 'updatedAt'],
+  '票券索引': ['ticketNumber', 'tokenDigest', 'eventId', 'registrationId', 'status', 'createdAt', 'updatedAt'],
   '活动': ['eventId', 'title', 'description', 'status', 'opensAt', 'closesAt', 'location', 'selectionMode', 'minChoices', 'maxChoices', 'seatMode', 'seatZones', 'createdAt', 'updatedAt'],
   '场次': ['sessionId', 'eventId', 'title', 'speaker', 'startsAt', 'endsAt', 'required', 'capacity', 'status', 'createdAt', 'updatedAt'],
   '座位': ['seatId', 'eventId', 'sessionId', 'label', 'zone', 'status', 'holderRegistrationId', 'createdAt', 'updatedAt'],
@@ -18,11 +20,17 @@ var SHEET_DEFINITIONS = {
   '操作记录': ['auditId', 'action', 'entityType', 'entityId', 'actor', 'details', 'createdAt']
 };
 
+var REGISTRY_SHEET_NAMES_ = ['系统设置', '活动目录', '票券索引', '操作记录'];
+var EVENT_SHEET_NAMES_ = [
+  '活动', '场次', '座位', '报名问题', '参加者',
+  '报名项目', '签到记录', '操作记录'
+];
+
 /** Initializes all private sheets without replacing any populated cells. */
 function setupSystem() {
   return withScriptLock(function() {
     var spreadsheet = getRegistrySpreadsheet_();
-    initializeSpreadsheet_(spreadsheet, true);
+    initializeRegistrySpreadsheet_(spreadsheet);
     seedInitialAdminSettings_(spreadsheet);
     return spreadsheet.getId();
   });
@@ -144,7 +152,7 @@ function setActiveSpreadsheet(spreadsheetId) {
 
   return withScriptLock(function() {
     var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
-    initializeSpreadsheet_(spreadsheet, true);
+    initializeRegistrySpreadsheet_(spreadsheet);
     PropertiesService.getScriptProperties().setProperty(ACTIVE_SPREADSHEET_ID, spreadsheet.getId());
     appendAuditRow_(spreadsheet, 'SET_ACTIVE_SPREADSHEET', 'spreadsheet', 'active', 'Configured active spreadsheet.');
     return spreadsheet.getId();
@@ -201,12 +209,20 @@ function updateRow(sheetName, rowNumber, values) {
   });
 }
 
-function initializeSpreadsheet_(spreadsheet, seedDraftEvent) {
-  Object.keys(SHEET_DEFINITIONS).forEach(function(sheetName) {
+function initializeRegistrySpreadsheet_(registry) {
+  initializeNamedSheets_(registry, REGISTRY_SHEET_NAMES_);
+}
+
+function initializeEventSpreadsheet_(spreadsheet) {
+  initializeNamedSheets_(spreadsheet, EVENT_SHEET_NAMES_);
+}
+
+function initializeNamedSheets_(spreadsheet, sheetNames) {
+  if (typeof spreadsheet.insertSheet !== 'function') return;
+  sheetNames.forEach(function(sheetName) {
     var sheet = spreadsheet.getSheetByName(sheetName) || spreadsheet.insertSheet(sheetName);
     ensureHeaders_(sheet, SHEET_DEFINITIONS[sheetName]);
   });
-  if (seedDraftEvent) addSampleDraftEventIfEmpty_(spreadsheet.getSheetByName('活动'));
 }
 
 function ensureHeaders_(sheet, headers) {
@@ -235,8 +251,163 @@ function migrateLegacyAttendanceHeader_(sheet, headers) {
 
 function hasExactHeaderRow_(sheet, headers) {
   if (sheet.getLastRow() === 0) return false;
+  if (typeof sheet.getLastColumn === 'function' && sheet.getLastColumn() !== headers.length) return false;
   var existing = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
   return headers.every(function(header, index) { return existing[index] === header; });
+}
+
+function getEventCatalogEntry_(registry, eventId) {
+  var normalizedEventId = normalizeRoutingValue_(eventId);
+  if (!normalizedEventId) routingError_('EVENT_NOT_FOUND');
+  requireExactRoutingSheet_(registry, '活动目录');
+  var matches = readRows(registry, '活动目录').filter(function(entry) {
+    return normalizeRoutingValue_(entry.eventId) === normalizedEventId;
+  });
+  if (!matches.length) routingError_('EVENT_NOT_FOUND');
+  if (matches.length !== 1) routingError_('INTEGRITY_ERROR');
+  return validateEventCatalogEntry_(registry, matches[0], normalizedEventId);
+}
+
+function getEventSpreadsheet_(registry, eventId) {
+  var entry = getEventCatalogEntry_(registry, eventId);
+  var spreadsheet;
+  try {
+    spreadsheet = SpreadsheetApp.openById(entry.spreadsheetId);
+  } catch (_ignored) {
+    routingError_('INTEGRITY_ERROR');
+  }
+  EVENT_SHEET_NAMES_.forEach(function(sheetName) {
+    var sheet = spreadsheet.getSheetByName(sheetName);
+    if (!sheet || !hasExactHeaderRow_(sheet, SHEET_DEFINITIONS[sheetName])) {
+      routingError_('INTEGRITY_ERROR');
+    }
+  });
+  var events = readRows(spreadsheet, '活动').filter(function(event) {
+    return normalizeRoutingValue_(event.eventId) === entry.eventId;
+  });
+  if (events.length !== 1) routingError_('INTEGRITY_ERROR');
+  return spreadsheet;
+}
+
+function getTicketRouteByNumber_(registry, ticketNumber) {
+  var normalizedTicketNumber = normalizeRoutingValue_(ticketNumber);
+  if (!normalizedTicketNumber) routingError_('TICKET_NOT_FOUND');
+  requireExactRoutingSheet_(registry, '票券索引');
+  var matches = readRows(registry, '票券索引').filter(function(route) {
+    return normalizeRoutingValue_(route.ticketNumber) === normalizedTicketNumber;
+  });
+  if (!matches.length) routingError_('TICKET_NOT_FOUND');
+  if (matches.length !== 1) routingError_('INTEGRITY_ERROR');
+  return validateTicketRouteForRegistry_(registry, matches[0], normalizedTicketNumber);
+}
+
+function getTicketRouteByToken_(registry, token) {
+  var normalizedToken = normalizeRoutingValue_(token);
+  if (!normalizedToken) routingError_('TICKET_NOT_FOUND');
+  requireExactRoutingSheet_(registry, '票券索引');
+  var digest = digestTicketToken_(normalizedToken);
+  var matches = readRows(registry, '票券索引').filter(function(route) {
+    return normalizeRoutingValue_(route.tokenDigest).toLowerCase() === digest;
+  });
+  if (!matches.length) routingError_('TICKET_NOT_FOUND');
+  if (matches.length !== 1) routingError_('INTEGRITY_ERROR');
+  return validateTicketRouteForRegistry_(registry, matches[0]);
+}
+
+function upsertTicketRoute_(registry, route) {
+  var normalized = validateTicketRouteForRegistry_(registry, route);
+  var indexSheet = requireExactRoutingSheet_(registry, '票券索引');
+  var routes = readRows(registry, '票券索引');
+  var matchingTickets = routes.filter(function(candidate) {
+    return normalizeRoutingValue_(candidate.ticketNumber) === normalized.ticketNumber;
+  });
+  if (matchingTickets.length > 1) routingError_('INTEGRITY_ERROR');
+  var matchingDigests = routes.filter(function(candidate) {
+    return normalizeRoutingValue_(candidate.tokenDigest).toLowerCase() === normalized.tokenDigest &&
+      normalizeRoutingValue_(candidate.ticketNumber) !== normalized.ticketNumber;
+  });
+  if (matchingDigests.length) routingError_('INTEGRITY_ERROR');
+  var values = normalizeRow_('票券索引', normalized);
+  if (matchingTickets.length === 1) {
+    indexSheet.getRange(matchingTickets[0].rowNumber, 1, 1, values.length).setValues([values]);
+  } else {
+    indexSheet.getRange(indexSheet.getLastRow() + 1, 1, 1, values.length).setValues([values]);
+  }
+  return normalized;
+}
+
+function digestTicketToken_(token) {
+  var bytes = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    String(token || '').trim(),
+    Utilities.Charset.UTF_8
+  );
+  return bytes.map(function(value) {
+    var unsigned = value < 0 ? value + 256 : value;
+    return ('0' + unsigned.toString(16)).slice(-2);
+  }).join('');
+}
+
+function validateEventCatalogEntry_(registry, entry, expectedEventId) {
+  var eventId = normalizeRoutingValue_(entry && entry.eventId);
+  var spreadsheetId = normalizeRoutingValue_(entry && entry.spreadsheetId);
+  var sheetName = normalizeRoutingValue_(entry && entry.sheetName);
+  if (!eventId || eventId !== expectedEventId || !spreadsheetId ||
+      spreadsheetId.length > 256 || sheetName !== '活动' ||
+      (registry && typeof registry.getId === 'function' && spreadsheetId === registry.getId())) {
+    routingError_('INTEGRITY_ERROR');
+  }
+  entry.eventId = eventId;
+  entry.spreadsheetId = spreadsheetId;
+  entry.sheetName = sheetName;
+  return entry;
+}
+
+function validateTicketRoute_(route, expectedTicketNumber) {
+  var ticketNumber = normalizeRoutingValue_(route && route.ticketNumber);
+  var tokenDigest = normalizeRoutingValue_(route && route.tokenDigest).toLowerCase();
+  var eventId = normalizeRoutingValue_(route && route.eventId);
+  var registrationId = normalizeRoutingValue_(route && route.registrationId);
+  var status = normalizeRoutingValue_(route && route.status);
+  var createdAt = normalizeRoutingValue_(route && route.createdAt);
+  var updatedAt = normalizeRoutingValue_(route && route.updatedAt);
+  if (!ticketNumber || (expectedTicketNumber && ticketNumber !== expectedTicketNumber) ||
+      !/^[a-f0-9]{64}$/.test(tokenDigest) || !eventId || !registrationId ||
+      !status || !createdAt || !updatedAt) {
+    routingError_('INTEGRITY_ERROR');
+  }
+  return {
+    ticketNumber: ticketNumber,
+    tokenDigest: tokenDigest,
+    eventId: eventId,
+    registrationId: registrationId,
+    status: status,
+    createdAt: createdAt,
+    updatedAt: updatedAt
+  };
+}
+
+function validateTicketRouteForRegistry_(registry, route, expectedTicketNumber) {
+  var normalized = validateTicketRoute_(route, expectedTicketNumber);
+  getEventSpreadsheet_(registry, normalized.eventId);
+  return normalized;
+}
+
+function normalizeRoutingValue_(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function requireExactRoutingSheet_(spreadsheet, sheetName) {
+  var sheet = spreadsheet && spreadsheet.getSheetByName(sheetName);
+  if (!sheet) routingError_('INTEGRITY_ERROR');
+  if (!hasExactHeaderRow_(sheet, SHEET_DEFINITIONS[sheetName])) routingError_('INTEGRITY_ERROR');
+  return sheet;
+}
+
+function routingError_(code) {
+  var error = new Error('Private routing lookup failed.');
+  error.publicCode = code;
+  throw error;
 }
 
 function addSampleDraftEventIfEmpty_(eventSheet) {

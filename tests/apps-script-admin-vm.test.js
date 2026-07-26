@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 const staffScriptRoot = new URL("../staff-apps-script/", import.meta.url);
@@ -10,6 +10,8 @@ const switchProbeSecret = "test-switch-probe-secret-with-32-bytes";
 
 const headers = {
   "系统设置": ["key", "value", "updatedAt"],
+  "活动目录": ["eventId", "spreadsheetId", "sheetName", "title", "description", "status", "opensAt", "closesAt", "location", "selectionMode", "minChoices", "maxChoices", "seatMode", "seatZones", "createdAt", "updatedAt"],
+  "票券索引": ["ticketNumber", "tokenDigest", "eventId", "registrationId", "status", "createdAt", "updatedAt"],
   "活动": ["eventId", "title", "description", "status", "opensAt", "closesAt", "location", "selectionMode", "minChoices", "maxChoices", "seatMode", "seatZones", "createdAt", "updatedAt"],
   "场次": ["sessionId", "eventId", "title", "speaker", "startsAt", "endsAt", "required", "capacity", "status", "createdAt", "updatedAt"],
   "座位": ["seatId", "eventId", "sessionId", "label", "zone", "status", "holderRegistrationId", "createdAt", "updatedAt"],
@@ -59,7 +61,7 @@ class FakeSheet {
   }
   getName() { return this.name; }
   getLastRow() { return this.rows.length; }
-  getLastColumn() { return headers[this.name].length; }
+  getLastColumn() { return this.rows[0]?.length || headers[this.name].length; }
   appendRow(values) {
     this.consumeWriteFailure();
     this.writeCount += 1;
@@ -91,6 +93,8 @@ class FakeSheet {
 function baseRows() {
   return {
     "系统设置": [],
+    "活动目录": [],
+    "票券索引": [],
     "活动": [{
       eventId: "event-1", title: "Ideas Forum", description: "Private notes stay private",
       status: "open", opensAt: "2026-08-01T00:00:00Z", closesAt: "2026-08-15T00:00:00Z",
@@ -299,6 +303,10 @@ async function createHarness(options = {}) {
       getUuid: () => `generated-${++uuid}`,
       computeHmacSha256Signature: (value, key) =>
         Array.from(createHmac("sha256", key).update(value).digest()),
+      computeDigest: (_algorithm, value) =>
+        Array.from(createHash("sha256").update(value).digest()),
+      DigestAlgorithm: { SHA_256: "SHA_256" },
+      Charset: { UTF_8: "UTF_8" },
       base64EncodeWebSafe: (bytes) => Buffer.from(bytes).toString("base64url")
     }
   });
@@ -432,6 +440,10 @@ async function createPublicRegistrationContext(
       getUuid: () => `00000000-0000-4000-8000-${String(++uuid).padStart(12, "0")}`,
       computeHmacSha256Signature: (value, key) =>
         Array.from(createHmac("sha256", key).update(value).digest()),
+      computeDigest: (_algorithm, value) =>
+        Array.from(createHash("sha256").update(value).digest()),
+      DigestAlgorithm: { SHA_256: "SHA_256" },
+      Charset: { UTF_8: "UTF_8" },
       base64EncodeWebSafe: (bytes) => Buffer.from(bytes).toString("base64url")
     },
     ContentService: {
@@ -467,6 +479,211 @@ async function createPublicRegistrationContext(
   }
   return context;
 }
+
+function eventSpreadsheetSheets(eventId, title) {
+  const rows = baseRows();
+  rows["活动"][0].eventId = eventId;
+  rows["活动"][0].title = title;
+  rows["场次"].forEach((row) => { row.eventId = eventId; });
+  rows["座位"].forEach((row) => { row.eventId = eventId; });
+  rows["报名问题"].forEach((row) => { row.eventId = eventId; });
+  rows["报名项目"].forEach((row) => { row.eventId = eventId; });
+  rows["签到记录"].forEach((row) => { row.eventId = eventId; });
+  return Object.fromEntries(Object.entries(rows)
+    .filter(([name]) => !["系统设置", "活动目录", "票券索引"].includes(name))
+    .map(([name, values]) => [name, new FakeSheet(name, values)]));
+}
+
+function assertPublicCode(action, code) {
+  assert.throws(action, (error) => error && error.publicCode === code);
+}
+
+test("registry and event initializers keep their private schemas separate", async () => {
+  const sheets = {};
+  const registry = {
+    getId: () => "registry-id",
+    getSheetByName: (name) => sheets[name] || null,
+    insertSheet: (name) => {
+      const sheet = new FakeSheet(name, []);
+      sheet.rows = [];
+      sheets[name] = sheet;
+      return sheet;
+    }
+  };
+  const context = vm.createContext({
+    Date, JSON, Object, Array, String, Number, RegExp, Error, Math, isFinite,
+    PropertiesService: {
+      getScriptProperties: () => ({
+        getProperty: () => "registry-id",
+        setProperty: () => {}
+      })
+    },
+    SpreadsheetApp: { openById: () => registry },
+    LockService: { getScriptLock: () => ({ waitLock: () => {}, releaseLock: () => {} }) },
+    Utilities: { getUuid: () => "test-audit-id" }
+  });
+  vm.runInContext(await readFile(new URL("Repository.gs", publicScriptRoot), "utf8"), context);
+
+  context.setupSystem();
+  assert.deepEqual(Array.from(sheets["活动目录"].rows[0]), headers["活动目录"]);
+  assert.deepEqual(Array.from(sheets["票券索引"].rows[0]), headers["票券索引"]);
+  assert.equal(sheets["活动"], undefined);
+
+  const eventSheets = {};
+  const eventSpreadsheet = {
+    getSheetByName: (name) => eventSheets[name] || null,
+    insertSheet: (name) => {
+      const sheet = new FakeSheet(name, []);
+      sheet.rows = [];
+      eventSheets[name] = sheet;
+      return sheet;
+    }
+  };
+  context.initializeEventSpreadsheet_(eventSpreadsheet);
+  assert.deepEqual(Array.from(eventSheets["活动"].rows[0]), headers["活动"]);
+  assert.equal(eventSheets["活动"].rows.length, 1);
+  assert.equal(eventSheets["活动目录"], undefined);
+  assert.equal(eventSheets["票券索引"], undefined);
+});
+
+test("registry routing resolves one validated activity and ticket route without raw tokens", async () => {
+  const rows = baseRows();
+  const tokenDigest = createHash("sha256").update("raw-secret-token").digest("hex");
+  rows["活动目录"].push(
+    {
+      eventId: "event-a", spreadsheetId: "sheet-a", sheetName: "活动", title: "Activity A",
+      description: "A", status: "open", opensAt: "", closesAt: "", location: "",
+      selectionMode: "free", minChoices: 0, maxChoices: 1, seatMode: "none", seatZones: "[]",
+      createdAt: "2026-07-01T00:00:00Z", updatedAt: "2026-07-01T00:00:00Z"
+    },
+    {
+      eventId: "event-b", spreadsheetId: "sheet-b", sheetName: "活动", title: "Activity B",
+      description: "B", status: "open", opensAt: "", closesAt: "", location: "",
+      selectionMode: "free", minChoices: 0, maxChoices: 1, seatMode: "none", seatZones: "[]",
+      createdAt: "2026-07-01T00:00:00Z", updatedAt: "2026-07-01T00:00:00Z"
+    }
+  );
+  rows["票券索引"].push(
+    {
+      ticketNumber: "EVT-AAA", tokenDigest: createHash("sha256").update("different-token").digest("hex"),
+      eventId: "event-a", registrationId: "registration-a", status: "active",
+      createdAt: "2026-07-01T00:00:00Z", updatedAt: "2026-07-01T00:00:00Z"
+    },
+    {
+      ticketNumber: "EVT-BBB", tokenDigest, eventId: "event-b", registrationId: "registration-b",
+      status: "active", createdAt: "2026-07-01T00:00:00Z", updatedAt: "2026-07-01T00:00:00Z"
+    }
+  );
+  const harness = await createHarness({ rows });
+  const context = await createPublicRegistrationContext(harness.sourceSheets, {}, {
+    "sheet-a": eventSpreadsheetSheets("event-a", "Activity A"),
+    "sheet-b": eventSpreadsheetSheets("event-b", "Activity B")
+  });
+  const registry = context.getRegistrySpreadsheet_();
+
+  assert.equal(context.getEventSpreadsheet_(registry, "event-a").getId(), "sheet-a");
+  assert.equal(context.getEventSpreadsheet_(registry, " event-b ").getId(), "sheet-b");
+  assert.equal(context.getTicketRouteByNumber_(registry, " EVT-AAA ").eventId, "event-a");
+  assert.equal(context.getTicketRouteByToken_(registry, " raw-secret-token ").eventId, "event-b");
+  assert.notEqual(records(harness.sourceSheets["票券索引"])[1].tokenDigest, "raw-secret-token");
+
+  assertPublicCode(() => context.getEventCatalogEntry_(registry, "missing"), "EVENT_NOT_FOUND");
+  assertPublicCode(() => context.getTicketRouteByNumber_(registry, "missing"), "TICKET_NOT_FOUND");
+
+  rows["活动目录"].push({ ...rows["活动目录"][0] });
+  const duplicateContext = await createPublicRegistrationContext(
+    Object.fromEntries(Object.entries(rows).map(([name, values]) => [name, new FakeSheet(name, values)])),
+    {}, { "sheet-a": eventSpreadsheetSheets("event-a", "Activity A") }
+  );
+  assertPublicCode(
+    () => duplicateContext.getEventCatalogEntry_(duplicateContext.getRegistrySpreadsheet_(), "event-a"),
+    "INTEGRITY_ERROR"
+  );
+
+  const malformedRows = baseRows();
+  malformedRows["活动目录"].push({ ...rows["活动目录"][0], spreadsheetId: "" });
+  const malformedContext = await createPublicRegistrationContext(
+    Object.fromEntries(Object.entries(malformedRows).map(([name, values]) => [name, new FakeSheet(name, values)])),
+    {}
+  );
+  assertPublicCode(
+    () => malformedContext.getEventCatalogEntry_(malformedContext.getRegistrySpreadsheet_(), "event-a"),
+    "INTEGRITY_ERROR"
+  );
+
+  const selfMappedRows = baseRows();
+  selfMappedRows["活动目录"].push({ ...rows["活动目录"][0], spreadsheetId: "source-sheet-id" });
+  const selfMappedContext = await createPublicRegistrationContext(
+    Object.fromEntries(Object.entries(selfMappedRows).map(([name, values]) => [name, new FakeSheet(name, values)])),
+    {}
+  );
+  assertPublicCode(
+    () => selfMappedContext.getEventCatalogEntry_(selfMappedContext.getRegistrySpreadsheet_(), "event-a"),
+    "INTEGRITY_ERROR"
+  );
+
+  const mismatchedRows = baseRows();
+  mismatchedRows["活动目录"].push({ ...rows["活动目录"][0] });
+  const mismatchContext = await createPublicRegistrationContext(
+    Object.fromEntries(Object.entries(mismatchedRows).map(([name, values]) => [name, new FakeSheet(name, values)])),
+    {}, { "sheet-a": eventSpreadsheetSheets("other-event", "Activity A") }
+  );
+  assertPublicCode(
+    () => mismatchContext.getEventSpreadsheet_(mismatchContext.getRegistrySpreadsheet_(), "event-a"),
+    "INTEGRITY_ERROR"
+  );
+
+  const duplicateTicketRows = cloneRows(rows);
+  duplicateTicketRows["票券索引"].push({ ...duplicateTicketRows["票券索引"][0] });
+  const duplicateTicketContext = await createPublicRegistrationContext(
+    Object.fromEntries(Object.entries(duplicateTicketRows).map(([name, values]) => [name, new FakeSheet(name, values)])),
+    {}
+  );
+  assertPublicCode(
+    () => duplicateTicketContext.getTicketRouteByNumber_(duplicateTicketContext.getRegistrySpreadsheet_(), "EVT-AAA"),
+    "INTEGRITY_ERROR"
+  );
+
+  const malformedTicketRows = cloneRows(rows);
+  malformedTicketRows["票券索引"][0].tokenDigest = "not-a-sha256-digest";
+  const malformedTicketContext = await createPublicRegistrationContext(
+    Object.fromEntries(Object.entries(malformedTicketRows).map(([name, values]) => [name, new FakeSheet(name, values)])),
+    {}
+  );
+  assertPublicCode(
+    () => malformedTicketContext.getTicketRouteByNumber_(malformedTicketContext.getRegistrySpreadsheet_(), "EVT-AAA"),
+    "INTEGRITY_ERROR"
+  );
+
+  const missingIndexSheets = Object.fromEntries(Object.entries(baseRows())
+    .filter(([name]) => name !== "票券索引")
+    .map(([name, values]) => [name, new FakeSheet(name, values)]));
+  const missingIndexContext = await createPublicRegistrationContext(missingIndexSheets, {});
+  assertPublicCode(
+    () => missingIndexContext.getTicketRouteByNumber_(missingIndexContext.getRegistrySpreadsheet_(), "EVT-AAA"),
+    "INTEGRITY_ERROR"
+  );
+
+  const upsertRows = baseRows();
+  upsertRows["活动目录"].push({ ...rows["活动目录"][0] });
+  const upsertSheets = Object.fromEntries(Object.entries(upsertRows)
+    .map(([name, values]) => [name, new FakeSheet(name, values)]));
+  const upsertContext = await createPublicRegistrationContext(upsertSheets, {}, {
+    "sheet-a": eventSpreadsheetSheets("event-a", "Activity A")
+  });
+  const upsertRegistry = upsertContext.getRegistrySpreadsheet_();
+  const initialRoute = {
+    ticketNumber: "EVT-UPSERT", tokenDigest: upsertContext.digestTicketToken_("opaque-token"),
+    eventId: "event-a", registrationId: "registration-a", status: "active",
+    createdAt: "2026-07-01T00:00:00Z", updatedAt: "2026-07-01T00:00:00Z"
+  };
+  upsertContext.upsertTicketRoute_(upsertRegistry, initialRoute);
+  upsertContext.upsertTicketRoute_(upsertRegistry, { ...initialRoute, status: "cancelled", updatedAt: "2026-07-02T00:00:00Z" });
+  const upsertedRoutes = records(upsertSheets["票券索引"]);
+  assert.equal(upsertedRoutes.length, 1);
+  assert.equal(upsertedRoutes[0].status, "cancelled");
+  assert.notEqual(upsertedRoutes[0].tokenDigest, "opaque-token");
+});
 
 function postPublic(context, action, payload) {
   const response = context.doPost({

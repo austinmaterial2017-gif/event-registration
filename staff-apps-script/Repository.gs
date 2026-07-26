@@ -3,6 +3,8 @@ var ADMIN_SETTINGS = 'ADMIN_SETTINGS';
 
 var STAFF_SHEET_DEFINITIONS = {
   '系统设置': ['key', 'value', 'updatedAt'],
+  '活动目录': ['eventId', 'spreadsheetId', 'sheetName', 'title', 'description', 'status', 'opensAt', 'closesAt', 'location', 'selectionMode', 'minChoices', 'maxChoices', 'seatMode', 'seatZones', 'createdAt', 'updatedAt'],
+  '票券索引': ['ticketNumber', 'tokenDigest', 'eventId', 'registrationId', 'status', 'createdAt', 'updatedAt'],
   '活动': ['eventId', 'title', 'description', 'status', 'opensAt', 'closesAt', 'location', 'selectionMode', 'minChoices', 'maxChoices', 'seatMode', 'seatZones', 'createdAt', 'updatedAt'],
   '场次': ['sessionId', 'eventId', 'title', 'speaker', 'startsAt', 'endsAt', 'required', 'capacity', 'status', 'createdAt', 'updatedAt'],
   '座位': ['seatId', 'eventId', 'sessionId', 'label', 'zone', 'status', 'holderRegistrationId', 'createdAt', 'updatedAt'],
@@ -12,6 +14,12 @@ var STAFF_SHEET_DEFINITIONS = {
   '签到记录': ['checkInId', 'registrationId', 'eventId', 'sessionId', 'checkedInAt', 'checkedInBy', 'status'],
   '操作记录': ['auditId', 'action', 'entityType', 'entityId', 'actor', 'details', 'createdAt']
 };
+
+var REGISTRY_SHEET_NAMES_ = ['系统设置', '活动目录', '票券索引', '操作记录'];
+var EVENT_SHEET_NAMES_ = [
+  '活动', '场次', '座位', '报名问题', '参加者',
+  '报名项目', '签到记录', '操作记录'
+];
 
 function getConfiguredSpreadsheet_(registrySpreadsheet) {
   if (!registrySpreadsheet) throw new Error('Staff registry spreadsheet is required.');
@@ -160,4 +168,193 @@ function normalizeRow_(sheetName, row) {
     throw new Error('Invalid staff row.');
   }
   return headers.map(function(header) { return row[header] === undefined ? '' : row[header]; });
+}
+
+function initializeRegistrySpreadsheet_(registry) {
+  initializeNamedStaffSheets_(registry, REGISTRY_SHEET_NAMES_);
+}
+
+function initializeEventSpreadsheet_(spreadsheet) {
+  initializeNamedStaffSheets_(spreadsheet, EVENT_SHEET_NAMES_);
+}
+
+function initializeNamedStaffSheets_(spreadsheet, sheetNames) {
+  if (typeof spreadsheet.insertSheet !== 'function') return;
+  sheetNames.forEach(function(sheetName) {
+    var sheet = spreadsheet.getSheetByName(sheetName) || spreadsheet.insertSheet(sheetName);
+    ensureStaffHeaders_(sheet, STAFF_SHEET_DEFINITIONS[sheetName]);
+  });
+}
+
+function ensureStaffHeaders_(sheet, headers) {
+  if (hasExactStaffHeaderRow_(sheet, headers)) return;
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    return;
+  }
+  sheet.insertRowsBefore(1, 1);
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+}
+
+function hasExactStaffHeaderRow_(sheet, headers) {
+  if (sheet.getLastRow() === 0) return false;
+  if (typeof sheet.getLastColumn === 'function' && sheet.getLastColumn() !== headers.length) return false;
+  var existing = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
+  return headers.every(function(header, index) { return existing[index] === header; });
+}
+
+function getEventCatalogEntry_(registry, eventId) {
+  var normalizedEventId = normalizeStaffRoutingValue_(eventId);
+  if (!normalizedEventId) staffRoutingError_('EVENT_NOT_FOUND');
+  requireExactStaffRoutingSheet_(registry, '活动目录');
+  var matches = readRows_(registry, '活动目录').filter(function(entry) {
+    return normalizeStaffRoutingValue_(entry.eventId) === normalizedEventId;
+  });
+  if (!matches.length) staffRoutingError_('EVENT_NOT_FOUND');
+  if (matches.length !== 1) staffRoutingError_('INTEGRITY_ERROR');
+  return validateStaffEventCatalogEntry_(registry, matches[0], normalizedEventId);
+}
+
+function getEventSpreadsheet_(registry, eventId) {
+  var entry = getEventCatalogEntry_(registry, eventId);
+  var spreadsheet;
+  try {
+    spreadsheet = SpreadsheetApp.openById(entry.spreadsheetId);
+  } catch (_ignored) {
+    staffRoutingError_('INTEGRITY_ERROR');
+  }
+  EVENT_SHEET_NAMES_.forEach(function(sheetName) {
+    var sheet = spreadsheet.getSheetByName(sheetName);
+    if (!sheet || !hasExactStaffHeaderRow_(sheet, STAFF_SHEET_DEFINITIONS[sheetName])) {
+      staffRoutingError_('INTEGRITY_ERROR');
+    }
+  });
+  var events = readRows_(spreadsheet, '活动').filter(function(event) {
+    return normalizeStaffRoutingValue_(event.eventId) === entry.eventId;
+  });
+  if (events.length !== 1) staffRoutingError_('INTEGRITY_ERROR');
+  return spreadsheet;
+}
+
+function getTicketRouteByNumber_(registry, ticketNumber) {
+  var normalizedTicketNumber = normalizeStaffRoutingValue_(ticketNumber);
+  if (!normalizedTicketNumber) staffRoutingError_('TICKET_NOT_FOUND');
+  requireExactStaffRoutingSheet_(registry, '票券索引');
+  var matches = readRows_(registry, '票券索引').filter(function(route) {
+    return normalizeStaffRoutingValue_(route.ticketNumber) === normalizedTicketNumber;
+  });
+  if (!matches.length) staffRoutingError_('TICKET_NOT_FOUND');
+  if (matches.length !== 1) staffRoutingError_('INTEGRITY_ERROR');
+  return validateStaffTicketRouteForRegistry_(registry, matches[0], normalizedTicketNumber);
+}
+
+function getTicketRouteByToken_(registry, token) {
+  var normalizedToken = normalizeStaffRoutingValue_(token);
+  if (!normalizedToken) staffRoutingError_('TICKET_NOT_FOUND');
+  requireExactStaffRoutingSheet_(registry, '票券索引');
+  var digest = digestTicketToken_(normalizedToken);
+  var matches = readRows_(registry, '票券索引').filter(function(route) {
+    return normalizeStaffRoutingValue_(route.tokenDigest).toLowerCase() === digest;
+  });
+  if (!matches.length) staffRoutingError_('TICKET_NOT_FOUND');
+  if (matches.length !== 1) staffRoutingError_('INTEGRITY_ERROR');
+  return validateStaffTicketRouteForRegistry_(registry, matches[0]);
+}
+
+function upsertTicketRoute_(registry, route) {
+  var normalized = validateStaffTicketRouteForRegistry_(registry, route);
+  var indexSheet = requireExactStaffRoutingSheet_(registry, '票券索引');
+  var routes = readRows_(registry, '票券索引');
+  var matchingTickets = routes.filter(function(candidate) {
+    return normalizeStaffRoutingValue_(candidate.ticketNumber) === normalized.ticketNumber;
+  });
+  if (matchingTickets.length > 1) staffRoutingError_('INTEGRITY_ERROR');
+  var matchingDigests = routes.filter(function(candidate) {
+    return normalizeStaffRoutingValue_(candidate.tokenDigest).toLowerCase() === normalized.tokenDigest &&
+      normalizeStaffRoutingValue_(candidate.ticketNumber) !== normalized.ticketNumber;
+  });
+  if (matchingDigests.length) staffRoutingError_('INTEGRITY_ERROR');
+  var values = normalizeRow_('票券索引', normalized);
+  if (matchingTickets.length === 1) {
+    indexSheet.getRange(matchingTickets[0].rowNumber, 1, 1, values.length).setValues([values]);
+  } else {
+    indexSheet.getRange(indexSheet.getLastRow() + 1, 1, 1, values.length).setValues([values]);
+  }
+  return normalized;
+}
+
+function digestTicketToken_(token) {
+  var bytes = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    String(token || '').trim(),
+    Utilities.Charset.UTF_8
+  );
+  return bytes.map(function(value) {
+    var unsigned = value < 0 ? value + 256 : value;
+    return ('0' + unsigned.toString(16)).slice(-2);
+  }).join('');
+}
+
+function validateStaffEventCatalogEntry_(registry, entry, expectedEventId) {
+  var eventId = normalizeStaffRoutingValue_(entry && entry.eventId);
+  var spreadsheetId = normalizeStaffRoutingValue_(entry && entry.spreadsheetId);
+  var sheetName = normalizeStaffRoutingValue_(entry && entry.sheetName);
+  if (!eventId || eventId !== expectedEventId || !spreadsheetId ||
+      spreadsheetId.length > 256 || sheetName !== '活动' ||
+      (registry && typeof registry.getId === 'function' && spreadsheetId === registry.getId())) {
+    staffRoutingError_('INTEGRITY_ERROR');
+  }
+  entry.eventId = eventId;
+  entry.spreadsheetId = spreadsheetId;
+  entry.sheetName = sheetName;
+  return entry;
+}
+
+function validateStaffTicketRoute_(route, expectedTicketNumber) {
+  var ticketNumber = normalizeStaffRoutingValue_(route && route.ticketNumber);
+  var tokenDigest = normalizeStaffRoutingValue_(route && route.tokenDigest).toLowerCase();
+  var eventId = normalizeStaffRoutingValue_(route && route.eventId);
+  var registrationId = normalizeStaffRoutingValue_(route && route.registrationId);
+  var status = normalizeStaffRoutingValue_(route && route.status);
+  var createdAt = normalizeStaffRoutingValue_(route && route.createdAt);
+  var updatedAt = normalizeStaffRoutingValue_(route && route.updatedAt);
+  if (!ticketNumber || (expectedTicketNumber && ticketNumber !== expectedTicketNumber) ||
+      !/^[a-f0-9]{64}$/.test(tokenDigest) || !eventId || !registrationId ||
+      !status || !createdAt || !updatedAt) {
+    staffRoutingError_('INTEGRITY_ERROR');
+  }
+  return {
+    ticketNumber: ticketNumber,
+    tokenDigest: tokenDigest,
+    eventId: eventId,
+    registrationId: registrationId,
+    status: status,
+    createdAt: createdAt,
+    updatedAt: updatedAt
+  };
+}
+
+function validateStaffTicketRouteForRegistry_(registry, route, expectedTicketNumber) {
+  var normalized = validateStaffTicketRoute_(route, expectedTicketNumber);
+  getEventSpreadsheet_(registry, normalized.eventId);
+  return normalized;
+}
+
+function normalizeStaffRoutingValue_(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function requireExactStaffRoutingSheet_(spreadsheet, sheetName) {
+  var sheet = spreadsheet && spreadsheet.getSheetByName(sheetName);
+  if (!sheet) staffRoutingError_('INTEGRITY_ERROR');
+  if (!hasExactStaffHeaderRow_(sheet, STAFF_SHEET_DEFINITIONS[sheetName])) {
+    staffRoutingError_('INTEGRITY_ERROR');
+  }
+  return sheet;
+}
+
+function staffRoutingError_(code) {
+  var error = new Error('Private routing lookup failed.');
+  error.publicCode = code;
+  throw error;
 }

@@ -59,3 +59,39 @@ test("the configured spreadsheet can be opened before the shared settings sheet 
   const registry = context.getRegistrySpreadsheet_();
   assert.equal(context.getConfiguredSpreadsheet(registry), spreadsheet);
 });
+
+test("setupSystem seeds one valid conservative ADMIN_SETTINGS row without overwriting existing settings", async () => {
+  const rows = [["key", "value", "updatedAt"]];
+  const settingsSheet = {
+    getLastRow: () => rows.length,
+    getRange(row, column, rowCount, columnCount) {
+      return {
+        getValues: () => Array.from({ length: rowCount }, (_, rowOffset) =>
+          Array.from({ length: columnCount }, (_, columnOffset) => rows[row - 1 + rowOffset]?.[column - 1 + columnOffset] ?? "")),
+        setValues: (values) => values.forEach((source, rowOffset) =>
+          source.forEach((value, columnOffset) => { rows[row - 1 + rowOffset][column - 1 + columnOffset] = value; }))
+      };
+    },
+    appendRow: (row) => rows.push(row)
+  };
+  const spreadsheet = { getId: () => "registry-sheet", getSheetByName: () => settingsSheet };
+  const context = vm.createContext({
+    Date, JSON, Object, Array, String, Number, Error,
+    PropertiesService: { getScriptProperties: () => ({ getProperty: () => "registry-sheet" }) },
+    SpreadsheetApp: { openById: () => spreadsheet },
+    LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) }
+  });
+  const source = await readFile(new URL("../apps-script/Repository.gs", import.meta.url), "utf8");
+  vm.runInContext(source, context);
+  context.initializeSpreadsheet_ = () => {};
+
+  assert.equal(context.setupSystem(), "registry-sheet");
+  assert.equal(rows.length, 2);
+  assert.equal(rows[1][0], "ADMIN_SETTINGS");
+  assert.deepEqual(JSON.parse(rows[1][1]), { attendance: {}, registration: { events: {}, identityFields: [] } });
+
+  rows[1][1] = '{"registration":{"events":{"kept":{}}}}';
+  context.setupSystem();
+  assert.equal(rows.length, 2);
+  assert.equal(rows[1][1], '{"registration":{"events":{"kept":{}}}}');
+});

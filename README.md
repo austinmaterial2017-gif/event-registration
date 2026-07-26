@@ -53,7 +53,7 @@
 
 ### 3. 填写管理员设置并发布 Pages
 
-1. 使用已授权管理员打开工作人员项目的 `?view=admin`，在永久注册表的「系统设置」页中建立有效、非空的 `ADMIN_SETTINGS` JSON。此行是两个项目共同信任的唯一策略来源；缺失、空白或格式错误时会安全地拒绝服务，不能以脚本属性替代。
+1. `setupSystem()` 已在永久注册表的「系统设置」页中首次写入一个有效、保守的 `ADMIN_SETTINGS` JSON（空的报名/签到策略，所有可选权限默认关闭）。使用已授权管理员打开工作人员项目的 `?view=admin` 后再按需要更新活动策略。此行是两个项目共同信任的唯一策略来源；若后来被删除、清空或改成错误格式，系统会安全地拒绝服务，不能以脚本属性替代。
 2. 配置活动、场次、座位和报名问题后，确认公开活动流程可用。
 3. GitHub Pages **仅**发布本仓库的 `public/` 目录。不要发布仓库根目录、`apps-script/`、`staff-apps-script/`、`source-bundles/`、测试或管理 HTML。
 
@@ -94,6 +94,16 @@ node scripts/build-admin-source-bundles.mjs --check
 ```
 
 前者会重新生成 `source-bundles/*.txt` 和 `staff-apps-script/SourceBundles.gs`；后者只验证是否同步。然后把更新后的相应源码包重新复制到两个独立 Apps Script 项目，保存并建立新部署版本。前端改动也需重新发布 `public/` 到 GitHub Pages。
+
+若 `public/js/config.js` 已由占位符改成真实公开 `/exec` URL，运行完整检查时还必须在命令外显式提供同一个 URL，防止误把工作人员 URL 放入公开包：
+
+```powershell
+$env:PUBLIC_APPS_SCRIPT_WEB_APP_URL = "https://script.google.com/macros/s/你的公开部署ID/exec"
+npm.cmd run check
+Remove-Item Env:PUBLIC_APPS_SCRIPT_WEB_APP_URL
+```
+
+占位符配置不需要这个环境变量。无论哪种模式，公开包都只能有这一个公开 `/exec` URL。
 
 ## 常见问题
 

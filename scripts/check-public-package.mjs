@@ -6,7 +6,11 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const root = fileURLToPath(new URL("..", import.meta.url));
-const publicRoot = join(root, "public");
+const directoryOption = process.argv.indexOf("--public-dir");
+const publicRoot = directoryOption === -1 ? join(root, "public") : process.argv[directoryOption + 1];
+if (!publicRoot) throw new Error("Public package check failed: --public-dir requires a directory.");
+const approvedEndpoint = process.env.PUBLIC_APPS_SCRIPT_WEB_APP_URL || "";
+const endpointPattern = /^https:\/\/script\.google\.com\/macros\/s\/[^/?#]+\/exec$/;
 const allowedFiles = new Set([
   "404.html", "index.html", "register.html", "ticket.html", "verify.html",
   "css/app.css",
@@ -43,7 +47,8 @@ const files = await Promise.all(paths.map(async (path) => ({
 const combined = files.map(({ name, text }) => `\n===== ${name} =====\n${text}`).join("");
 
 const forbidden = [
-  ["staff/admin endpoint", /(?:staff|admin)[^\n]{0,80}https:\/\/script\.google\.com\/macros\/s\//i],
+  ["Google Sheets URL", /https?:\/\/(?:docs|sheets)\.google\.com\/(?:spreadsheets|a\/[^/]+\/spreadsheets)\//i],
+  ["Google Sheet ID", /\b1[A-Za-z0-9_-]{20,}\b/],
   ["Google Sheet ID", /(?:spreadsheetId|sheetId|ACTIVE_SPREADSHEET_ID)\s*[:=]\s*["'][A-Za-z0-9_-]{20,}/i],
   ["password field or value", /(?:password|passwd|pwd)\b/i],
   ["allowlist", /allowlist/i],
@@ -56,9 +61,20 @@ const forbidden = [
 for (const [label, pattern] of forbidden) if (pattern.test(combined)) fail(`contains ${label}`);
 
 const config = files.find(({ name }) => name === "js/config.js")?.text || "";
-if (!/APPS_SCRIPT_WEB_APP_URL/.test(config)) fail("public endpoint configuration is missing");
-if (/https:\/\/script\.google\.com\/macros\/s\//i.test(combined.replace(config, ""))) {
-  fail("only js/config.js may contain the public Apps Script URL");
+const configMatch = config.match(/^export const APPS_SCRIPT_WEB_APP_URL = "([^"]+)";\s*$/);
+if (!configMatch) fail("public endpoint configuration must be one exact export.");
+const configuredEndpoint = configMatch[1];
+const usesPlaceholder = configuredEndpoint === "PASTE_APPS_SCRIPT_WEB_APP_URL_HERE";
+if (!usesPlaceholder && (!endpointPattern.test(approvedEndpoint) || configuredEndpoint !== approvedEndpoint)) {
+  fail("public endpoint must be the separately approved exact Apps Script endpoint.");
+}
+const endpointOccurrences = [...combined.matchAll(/https:\/\/script\.google\.com\/macros\/s\/[^\s"'<)]+/gi)];
+if (usesPlaceholder && endpointOccurrences.length) {
+  fail("contains an Apps Script endpoint outside the placeholder configuration.");
+}
+if (!usesPlaceholder &&
+    (endpointOccurrences.length !== 1 || endpointOccurrences[0][0] !== approvedEndpoint)) {
+  fail("contains an unexpected Apps Script endpoint.");
 }
 
 for (const file of files.filter(({ name }) => name.endsWith(".js"))) {

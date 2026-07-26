@@ -1,5 +1,9 @@
 var ACTIVE_SPREADSHEET_ID = 'ACTIVE_SPREADSHEET_ID';
 var ADMIN_SETTINGS = 'ADMIN_SETTINGS';
+var INITIAL_ADMIN_SETTINGS = {
+  attendance: {},
+  registration: { events: {}, identityFields: [] }
+};
 
 var SHEET_DEFINITIONS = {
   '系统设置': ['key', 'value', 'updatedAt'],
@@ -18,6 +22,7 @@ function setupSystem() {
   return withScriptLock(function() {
     var spreadsheet = getRegistrySpreadsheet_();
     initializeSpreadsheet_(spreadsheet, true);
+    seedInitialAdminSettings_(spreadsheet);
     return spreadsheet.getId();
   });
 }
@@ -69,6 +74,35 @@ function getSharedSettingValue_(spreadsheet, key) {
     if (values[index][0] === key) return values[index][1];
   }
   return null;
+}
+
+/** Seeds the first-run policy only when the authoritative row is absent. */
+function seedInitialAdminSettings_(registrySpreadsheet) {
+  if (getSharedSettingValue_(registrySpreadsheet, ADMIN_SETTINGS) !== null) return;
+  setSharedSettingValue_(
+    registrySpreadsheet,
+    ADMIN_SETTINGS,
+    JSON.stringify(INITIAL_ADMIN_SETTINGS)
+  );
+}
+
+function setSharedSettingValue_(spreadsheet, key, value) {
+  var sheet = getRequiredSheet_(spreadsheet, '系统设置');
+  var values = sheet.getLastRow() > 1
+    ? sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues()
+    : [];
+  var rowNumber = 0;
+  values.some(function(row, index) {
+    if (row[0] !== key) return false;
+    rowNumber = index + 2;
+    return true;
+  });
+  var row = [key, value, new Date().toISOString()];
+  if (rowNumber) {
+    sheet.getRange(rowNumber, 1, 1, row.length).setValues([row]);
+  } else {
+    sheet.appendRow(row);
+  }
 }
 
 function requireNoSwitchMaintenance_(registrySpreadsheet) {

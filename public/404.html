@@ -4,20 +4,30 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>页面未找到 · 微光现场</title>
-    <link rel="stylesheet" href="css/app.css">
+    <link id="page-styles" rel="stylesheet">
   </head>
   <body>
     <header class="site-header">
-      <a class="brand" href="index.html" aria-label="微光现场首页">微光<span>现场</span></a>
+      <a id="home-link" class="brand" aria-label="微光现场首页">微光<span>现场</span></a>
     </header>
     <main>
       <section class="hero" aria-labelledby="not-found-title">
         <p class="eyebrow">404 / PAGE NOT FOUND</p>
         <h1 id="not-found-title">这个页面暂时不存在。</h1>
         <p>链接可能已失效，或地址有误。请回到活动列表重新选择。</p>
-        <p><a class="button" href="index.html">返回活动首页</a></p>
+        <p><a id="home-action" class="primary-button">返回活动首页</a></p>
       </section>
     </main>
     <footer>微光现场 · 参与者服务</footer>
+    <script>
+      (() => {
+        const segments = location.pathname.split("/").filter(Boolean);
+        const isNestedProject = /\.github\.io$/i.test(location.hostname) && segments.length > 1;
+        const basePath = isNestedProject ? `/${segments[0]}/` : "/";
+        document.getElementById("page-styles").href = `${basePath}css/app.css`;
+        document.getElementById("home-link").href = basePath;
+        document.getElementById("home-action").href = basePath;
+      })();
+    </script>
   </body>
 </html>

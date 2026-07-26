@@ -68,8 +68,12 @@ Blank, missing, or malformed registry settings fail closed in both projects;
 neither project falls back to its separate Script Properties. The
 administrator project writes this row and both projects read it, so policy
 changes take effect in the anonymous registration project despite the
-projects having separate Script Properties. `ADMIN_SETTINGS` must therefore
-be populated in the registry before either deployment serves traffic.
+projects having separate Script Properties. `setupSystem()` in the public
+project seeds a valid, conservative `ADMIN_SETTINGS` object in the registry
+on first initialization (empty registration/attendance policy maps, with
+optional capabilities disabled). The administrator project can then update
+that shared row. A subsequently blank, missing, or malformed row still fails
+closed; neither project uses a Script Property fallback.
 
 The attendance allowlist does not grant administrator access. The attendance
 and administrator allowlists are independent:
@@ -141,7 +145,9 @@ source bundles:
    in the staff project. The generated source contains property names only; it
    does not contain current property values, Sheet IDs, allowlist members,
    credentials, participant rows, or answers.
-4. Populate the registry Sheet's authoritative `ADMIN_SETTINGS` row.
+4. Verify the public project's `setupSystem()` seeded the registry's
+   authoritative `ADMIN_SETTINGS` row, then use the protected administrator
+   project to configure the required policies.
 5. Grant the public deployer and each required staff or administrator account
    access to the registry and every candidate data Sheet.
 

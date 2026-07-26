@@ -44,6 +44,13 @@ test("public package checker permits only the separately approved exact public e
   assert.match(result.stdout, /Public package check passed/);
 });
 
+test("public package checker still rejects an unapproved public asset", async () => {
+  await assert.rejects(
+    withPublicFixture((publicRoot) => writeFile(join(publicRoot, "assets", "extra-mascot.svg"), "<svg></svg>\n", "utf8")),
+    /Public package check failed:.*unexpected file assets\/extra-mascot\.svg/i,
+  );
+});
+
 test("public package checker rejects a config endpoint that differs from the separately approved value", async () => {
   await assert.rejects(
     withPublicFixture(

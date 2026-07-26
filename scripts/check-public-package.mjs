@@ -14,8 +14,9 @@ const attestedStaffEndpoint = process.env.STAFF_APPS_SCRIPT_WEB_APP_URL || "";
 const endpointPattern = /^https:\/\/script\.google\.com\/macros\/s\/[^/?#]+\/exec$/;
 const allowedFiles = new Set([
   "404.html", "index.html", "register.html", "ticket.html", "verify.html",
+  "assets/owl-mascot.svg",
   "css/app.css",
-  "js/activity-countdown-view.js", "js/api.js", "js/config.js", "js/domain.js",
+  "js/activity-countdown-view.js", "js/activity-ticket-view.js", "js/api.js", "js/config.js", "js/domain.js",
   "js/event-list-flow.js", "js/index-page.js", "js/qr.js", "js/register-page.js",
   "js/registration-flow.js", "js/registration-success.js", "js/ticket-page.js", "js/verify-page.js"
 ]);

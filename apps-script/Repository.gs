@@ -327,6 +327,14 @@ function upsertTicketRoute_(registry, route) {
       normalizeRoutingValue_(candidate.ticketNumber) !== normalized.ticketNumber;
   });
   if (matchingDigests.length) routingError_('INTEGRITY_ERROR');
+  if (matchingTickets.length === 1) {
+    var existing = validateTicketRoute_(matchingTickets[0], normalized.ticketNumber);
+    if (existing.eventId !== normalized.eventId ||
+        existing.registrationId !== normalized.registrationId ||
+        existing.tokenDigest !== normalized.tokenDigest) {
+      routingError_('INTEGRITY_ERROR');
+    }
+  }
   var values = normalizeRow_('票券索引', normalized);
   if (matchingTickets.length === 1) {
     indexSheet.getRange(matchingTickets[0].rowNumber, 1, 1, values.length).setValues([values]);

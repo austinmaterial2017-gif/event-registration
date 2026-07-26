@@ -665,11 +665,12 @@ test("registry routing resolves one validated activity and ticket route without 
   );
 
   const upsertRows = baseRows();
-  upsertRows["活动目录"].push({ ...rows["活动目录"][0] });
+  upsertRows["活动目录"].push({ ...rows["活动目录"][0] }, { ...rows["活动目录"][1] });
   const upsertSheets = Object.fromEntries(Object.entries(upsertRows)
     .map(([name, values]) => [name, new FakeSheet(name, values)]));
   const upsertContext = await createPublicRegistrationContext(upsertSheets, {}, {
-    "sheet-a": eventSpreadsheetSheets("event-a", "Activity A")
+    "sheet-a": eventSpreadsheetSheets("event-a", "Activity A"),
+    "sheet-b": eventSpreadsheetSheets("event-b", "Activity B")
   });
   const upsertRegistry = upsertContext.getRegistrySpreadsheet_();
   const initialRoute = {
@@ -683,6 +684,21 @@ test("registry routing resolves one validated activity and ticket route without 
   assert.equal(upsertedRoutes.length, 1);
   assert.equal(upsertedRoutes[0].status, "cancelled");
   assert.notEqual(upsertedRoutes[0].tokenDigest, "opaque-token");
+  assertPublicCode(
+    () => upsertContext.upsertTicketRoute_(upsertRegistry, {
+      ...initialRoute,
+      tokenDigest: upsertContext.digestTicketToken_("attacker-token"),
+      eventId: "event-b",
+      registrationId: "registration-b",
+      updatedAt: "2026-07-03T00:00:00Z"
+    }),
+    "INTEGRITY_ERROR"
+  );
+  assert.deepEqual(records(upsertSheets["票券索引"])[0], {
+    ...initialRoute,
+    status: "cancelled",
+    updatedAt: "2026-07-02T00:00:00Z"
+  });
 });
 
 function postPublic(context, action, payload) {

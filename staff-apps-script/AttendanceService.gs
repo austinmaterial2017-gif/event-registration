@@ -4,7 +4,7 @@ var ATTENDANCE_STAFF_ALLOWLIST = 'ATTENDANCE_STAFF_ALLOWLIST';
 function getStaffTicketForCheckIn(payload) {
   return runStaffAttendanceService_(function() {
     requireAuthorizedStaffSession_();
-    return withScriptLock(function() {
+    return withScriptLock_(function() {
       return staffTicketProjection_(findStaffTicket_(payload && payload.token));
     });
   });
@@ -14,7 +14,7 @@ function getStaffTicketForCheckIn(payload) {
 function checkIn(payload) {
   return runStaffAttendanceService_(function() {
     var staffIdentity = requireAuthorizedStaffSession_();
-    return withScriptLock(function() {
+    return withScriptLock_(function() {
       if (!payload || typeof payload !== 'object' ||
           typeof payload.sessionId !== 'string' || !payload.sessionId.trim()) {
         staffAttendanceError_('INVALID_REQUEST');
@@ -39,7 +39,7 @@ function checkIn(payload) {
       if (!isWithinStaffAttendanceWindow_(session, serverNow)) {
         staffAttendanceError_('CHECK_IN_CLOSED');
       }
-      var duplicate = readRows('签到记录').some(function(record) {
+      var duplicate = readRows_('签到记录').some(function(record) {
         return record.registrationId === match.registrationId &&
           record.sessionId === sessionId &&
           String(record.status || '').toLowerCase() === 'checked_in';
@@ -55,7 +55,7 @@ function checkIn(payload) {
         checkedInBy: staffIdentity,
         status: 'checked_in'
       };
-      var spreadsheet = getConfiguredSpreadsheet();
+      var spreadsheet = getConfiguredSpreadsheet_();
       var sheet = getRequiredSheet_(spreadsheet, '签到记录');
       var values = normalizeRow_('签到记录', row);
       sheet.getRange(sheet.getLastRow() + 1, 1, 1, values.length).setValues([values]);
@@ -130,7 +130,7 @@ function findStaffTicket_(token) {
     staffAttendanceError_('TOKEN_INVALID');
   }
   var normalizedToken = token.trim();
-  var records = readRows('报名项目').filter(function(record) {
+  var records = readRows_('报名项目').filter(function(record) {
     if (String(record.status || '').toLowerCase() === 'pending') return false;
     return storedStaffTicketToken_(record.answers) === normalizedToken;
   });
@@ -141,21 +141,21 @@ function findStaffTicket_(token) {
   records = records.filter(function(record) {
     return record.registrationId === registrationId && record.eventId === eventId;
   });
-  var event = readRows('活动').filter(function(candidate) {
+  var event = readRows_('活动').filter(function(candidate) {
     return candidate.eventId === eventId;
   })[0];
   if (!event) staffAttendanceError_('TOKEN_INVALID');
-  var participant = readRows('参加者').filter(function(candidate) {
+  var participant = readRows_('参加者').filter(function(candidate) {
     return candidate.participantId === records[0].participantId;
   })[0] || {};
   var selected = {};
   records.forEach(function(record) {
     staffStringArray_(record.sessionIds).forEach(function(sessionId) { selected[sessionId] = true; });
   });
-  var sessions = readRows('场次').filter(function(session) {
+  var sessions = readRows_('场次').filter(function(session) {
     return session.eventId === eventId && selected[session.sessionId];
   });
-  var seats = readRows('座位').filter(function(seat) {
+  var seats = readRows_('座位').filter(function(seat) {
     return seat.holderRegistrationId === registrationId ||
       seat.holderRegistrationId === 'PENDING|' + registrationId;
   });
@@ -233,7 +233,7 @@ function isWithinStaffAttendanceWindow_(session, now) {
   var startsAt = Date.parse(session.startsAt);
   var endsAt = Date.parse(session.endsAt);
   if (!isFinite(startsAt) || !isFinite(endsAt) || endsAt <= startsAt) return false;
-  var settings = typeof getAdminSettings === 'function' ? getAdminSettings() : {};
+  var settings = typeof getAdminSettings_ === 'function' ? getAdminSettings_() : {};
   var attendance = settings && settings.attendance && typeof settings.attendance === 'object'
     ? settings.attendance : {};
   var earlyMinutes = Number(attendance.earlyMinutes);

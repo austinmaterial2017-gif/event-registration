@@ -210,3 +210,41 @@ settings, absence of staff code from the anonymous project, generic
 unauthorized denial, Session-only identity, forged submitted identity
 rejection, allowlisted check-in behavior, and the minimal staff repository
 boundary.
+
+## Round 4: closed the staff server-function surface
+
+The separate staff project now exposes exactly three remotely callable
+top-level functions:
+
+- `doGet`
+- `getStaffTicketForCheckIn`
+- `checkIn`
+
+Every internal server helper has a trailing underscore, including the
+repository helpers formerly named `getConfiguredSpreadsheet`,
+`getAdminSettings`, `withScriptLock`, and `readRows`. All service and
+repository callers use the private names, so signed-in but non-allowlisted
+users cannot invoke those helpers directly through `google.script.run`.
+
+Both staff data entry points continue to call
+`requireAuthorizedStaffSession_()` independently before acquiring a lock,
+opening the configured spreadsheet, reading rows, or writing attendance.
+Regression coverage loads the real staff repository and attendance service
+with instrumented Sheet and lock boundaries, calls both entry points as a
+non-allowlisted session, and proves both return `STAFF_ACTION_DENIED` with
+zero Sheet or lock access.
+
+The staff server-surface test enumerates top-level declarations from every
+`.gs` file in `staff-apps-script/` and fails if the remotely callable set
+differs from the exact three-function allowlist above. The test was observed
+failing against the prior implementation, where it detected all four leaked
+repository helpers.
+
+Round 4 verification:
+
+- `node --test tests/apps-script-staff-route-vm.test.js tests/apps-script-attendance-vm.test.js`
+  - 14 tests passed
+  - 0 failed
+- `npm.cmd test`
+  - 83 tests passed
+  - 0 failed

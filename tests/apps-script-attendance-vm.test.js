@@ -92,6 +92,35 @@ async function createHarness(options = {}) {
     constructor(value) { super(value === undefined ? now : value); }
     static now() { return RealDate.parse(now); }
   }
+  const getConfiguredSpreadsheet = () => spreadsheet;
+  const getRequiredSheet = (_spreadsheet, name) => sheets[name];
+  const normalizeRow = (name, row) => headers[name].map((key) => row[key] ?? "");
+  const readRows = (name) => sheets[name].rows.slice(1).map((values, index) => ({
+    rowNumber: index + 2,
+    ...Object.fromEntries(headers[name].map((key, column) => [key, values[column]]))
+  }));
+  const withScriptLock = (callback) => {
+    assert.equal(lockDepth, 0, "nested lock");
+    lockDepth += 1;
+    locks.push("acquire");
+    try { return callback(); }
+    finally { locks.push("release"); lockDepth -= 1; }
+  };
+  const repositoryBindings = options.staffProject
+    ? {
+        getConfiguredSpreadsheet_: getConfiguredSpreadsheet,
+        getRequiredSheet_: getRequiredSheet,
+        normalizeRow_: normalizeRow,
+        readRows_: readRows,
+        withScriptLock_: withScriptLock
+      }
+    : {
+        getConfiguredSpreadsheet,
+        getRequiredSheet_: getRequiredSheet,
+        normalizeRow_: normalizeRow,
+        readRows,
+        withScriptLock
+      };
   const context = vm.createContext({
     Date: ServerDate, JSON, Math, Object, Array, String, Number, RegExp, Error, isFinite,
     Utilities: { getUuid: () => `checkin-${++uuid}` },
@@ -105,20 +134,7 @@ async function createHarness(options = {}) {
     Session: {
       getActiveUser: () => ({ getEmail: () => options.sessionEmail || "" })
     },
-    getConfiguredSpreadsheet: () => spreadsheet,
-    getRequiredSheet_: (_spreadsheet, name) => sheets[name],
-    normalizeRow_: (name, row) => headers[name].map((key) => row[key] ?? ""),
-    readRows: (name) => sheets[name].rows.slice(1).map((values, index) => ({
-      rowNumber: index + 2,
-      ...Object.fromEntries(headers[name].map((key, column) => [key, values[column]]))
-    })),
-    withScriptLock: (callback) => {
-      assert.equal(lockDepth, 0, "nested lock");
-      lockDepth += 1;
-      locks.push("acquire");
-      try { return callback(); }
-      finally { locks.push("release"); lockDepth -= 1; }
-    }
+    ...repositoryBindings
   });
   const serviceUrl = options.staffProject
     ? new URL("../staff-apps-script/AttendanceService.gs", import.meta.url)

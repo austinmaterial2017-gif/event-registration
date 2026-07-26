@@ -10,13 +10,13 @@ var STAFF_SHEET_DEFINITIONS = {
   '签到记录': ['checkInId', 'registrationId', 'eventId', 'sessionId', 'checkedInAt', 'checkedInBy', 'status']
 };
 
-function getConfiguredSpreadsheet() {
+function getConfiguredSpreadsheet_() {
   var spreadsheetId = PropertiesService.getScriptProperties().getProperty(ACTIVE_SPREADSHEET_ID);
   if (!spreadsheetId) throw new Error('Staff spreadsheet is not configured.');
   return SpreadsheetApp.openById(spreadsheetId);
 }
 
-function getAdminSettings() {
+function getAdminSettings_() {
   var serialized = PropertiesService.getScriptProperties().getProperty(ADMIN_SETTINGS);
   if (!serialized) return {};
   try {
@@ -26,7 +26,7 @@ function getAdminSettings() {
   }
 }
 
-function withScriptLock(callback) {
+function withScriptLock_(callback) {
   var lock = LockService.getScriptLock();
   lock.waitLock(30000);
   try {
@@ -45,8 +45,8 @@ function getRequiredSheet_(spreadsheet, sheetName) {
   return sheet;
 }
 
-function readRows(sheetName) {
-  var sheet = getRequiredSheet_(getConfiguredSpreadsheet(), sheetName);
+function readRows_(sheetName) {
+  var sheet = getRequiredSheet_(getConfiguredSpreadsheet_(), sheetName);
   if (sheet.getLastRow() <= 1) return [];
   var headers = STAFF_SHEET_DEFINITIONS[sheetName];
   return sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues().map(function(values, index) {

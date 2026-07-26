@@ -1,9 +1,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 
 const staffScriptRoot = new URL("../staff-apps-script/", import.meta.url);
+
+async function declaredStaffServerFunctions() {
+  const fileNames = (await readdir(staffScriptRoot))
+    .filter((name) => name.endsWith(".gs"))
+    .sort();
+  const declarations = [];
+  for (const fileName of fileNames) {
+    const script = await readFile(new URL(fileName, staffScriptRoot), "utf8");
+    for (const match of script.matchAll(/^function\s+([A-Za-z_$][\w$]*)\s*\(/gm)) {
+      declarations.push({ fileName, name: match[1] });
+    }
+  }
+  return declarations;
+}
 
 async function createHarness({ sessionEmail = "", allowlist = ["staff@example.com"] } = {}) {
   let templateLoads = 0;
@@ -66,6 +80,63 @@ test("an allowlisted active Google session receives the StaffCheckIn template", 
   assert.equal(result.content, "StaffCheckIn");
   assert.equal(result.title, "员工讲座签到");
   assert.equal(harness.templateLoads, 1);
+});
+
+test("staff project exposes only the approved Apps Script server entry points", async () => {
+  const declarations = await declaredStaffServerFunctions();
+  const remotelyCallable = declarations
+    .filter(({ name }) => !name.endsWith("_"))
+    .map(({ name }) => name)
+    .sort();
+
+  assert.deepEqual(remotelyCallable, [
+    "checkIn",
+    "doGet",
+    "getStaffTicketForCheckIn"
+  ]);
+});
+
+test("both staff data entry points deny an unauthorized session before any Sheet access", async () => {
+  let sheetAccesses = 0;
+  let lockAccesses = 0;
+  const context = vm.createContext({
+    JSON, Object, Array, String, Number, Error, isFinite,
+    Session: {
+      getActiveUser: () => ({ getEmail: () => "stranger@example.com" })
+    },
+    PropertiesService: {
+      getScriptProperties: () => ({
+        getProperty: (key) => key === "ATTENDANCE_STAFF_ALLOWLIST"
+          ? JSON.stringify(["staff@example.com"])
+          : "private-spreadsheet-id"
+      })
+    },
+    SpreadsheetApp: {
+      openById: () => {
+        sheetAccesses += 1;
+        throw new Error("unauthorized Sheet access");
+      }
+    },
+    LockService: {
+      getScriptLock: () => {
+        lockAccesses += 1;
+        throw new Error("unauthorized lock access");
+      }
+    }
+  });
+  for (const file of ["Repository.gs", "AttendanceService.gs"]) {
+    vm.runInContext(await readFile(new URL(file, staffScriptRoot), "utf8"), context, { filename: file });
+  }
+
+  const lookup = context.getStaffTicketForCheckIn({ token: "opaque-token" });
+  const checkIn = context.checkIn({ token: "opaque-token", sessionId: "session-1" });
+
+  assert.equal(lookup.ok, false);
+  assert.equal(lookup.code, "STAFF_ACTION_DENIED");
+  assert.equal(checkIn.ok, false);
+  assert.equal(checkIn.code, "STAFF_ACTION_DENIED");
+  assert.equal(sheetAccesses, 0);
+  assert.equal(lockAccesses, 0);
 });
 
 test("deployment guide requires separate public and staff Apps Script projects", async () => {

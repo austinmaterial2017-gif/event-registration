@@ -48,3 +48,22 @@ None.
 - Full `npm.cmd test`: 50 passed, 0 failed, 0 skipped.
 - Apps Script syntax compilation check: 3 files passed.
 - `git diff --check`: passed.
+
+## Fix round 2
+
+- Replaced creation-time active writes with a recoverable transaction state: registration items are appended as `pending`, seats are precommitted with `PENDING|<registrationId>`, and the item batch is activated only after participant, item, expired-hold, and seat writes complete.
+- Pending items are excluded from capacity, duplicate detection, and ticket lookup. Pending seat markers are not public ownership and are reclaimable if cleanup cannot finish.
+- Added `recoverPendingTransactions_` to clear abandoned pending items/seats and finalize logically committed seats before every locked registration, lookup, cancellation, or exchange snapshot.
+- Cleanup failure now deliberately leaves identifiable pending state and an integrity/recovery audit instead of any observable partial active registration. Post-commit seat-finalization or audit failures do not convert a complete registration into a misleading client failure.
+- Reordered seat exchange into a precommit and a final release: claim the new seat, persist registration choices and rotated token, then attempt the old-seat release. No rollback path contains the old seat.
+- If old-seat release fails, both seats remain safely owned, the exchange result remains committed, and `SEAT_RELEASE_RETRY` is audited. Failures before release restore only the new seat and registration/token snapshots.
+- Exchange audit failure never rolls back an already completed seat exchange.
+- Mixed layouts now try a chosen/available event-level shared seat first and fall back to one session-bound seat per selected session. An unavailable shared seat can no longer block valid session seats.
+- Expanded the executable VM suite with failure injection at pending-item, pending-seat, activation, finalization, post-commit audit, new-seat claim, registration/token update, old-seat release, and exchange-audit phases.
+
+### Fix-round 2 verification
+
+- Target VM suite: 22 passed, 0 failed.
+- Full `npm.cmd test`: 57 passed, 0 failed, 0 skipped.
+- Apps Script syntax compilation check: 3 files passed.
+- `git diff --check`: passed.

@@ -6,6 +6,8 @@
 function lookupTicket(payload) {
   return runTicketService_(function() {
     return withScriptLock(function() {
+      var spreadsheet = getConfiguredSpreadsheet();
+      recoverPendingTransactions_(spreadsheet);
       var match = requireVerifiedTicket_(payload, readRows('报名项目'));
       return ticketProjectionFromRecords_(match);
     });
@@ -21,13 +23,14 @@ function cancelRegistration(payload) {
   return runTicketService_(function() {
     return withScriptLock(function() {
       var spreadsheet = getConfiguredSpreadsheet();
+      recoverPendingTransactions_(spreadsheet);
       var match = requireVerifiedTicket_(payload, readRows('报名项目'));
       if (match.records.every(function(record) { return record.status === 'cancelled'; })) {
         return ticketProjectionFromRecords_(match);
       }
       var registrationSnapshots = snapshotTicketRows_(spreadsheet, '报名项目', match.records);
       var occupiedSeats = readRows('座位').filter(function(seat) {
-        return seat.holderRegistrationId === match.registrationId;
+        return seatBelongsToRegistration_(seat, match.registrationId);
       });
       var seatSnapshots = snapshotTicketRows_(spreadsheet, '座位', occupiedSeats);
       var auditSnapshot = null;
@@ -67,6 +70,7 @@ function exchangeSeat(payload) {
   return runTicketService_(function() {
     return withScriptLock(function() {
       var spreadsheet = getConfiguredSpreadsheet();
+      recoverPendingTransactions_(spreadsheet);
       var match = requireVerifiedTicket_(payload, readRows('报名项目'));
       var policy = getRegistrationPolicy_(getAdminSettings(), match.event.eventId);
       if (!policy.seatExchangeEnabled) ticketError_('SEAT_EXCHANGE_DISABLED');
@@ -75,7 +79,7 @@ function exchangeSeat(payload) {
       }
 
       var allSeats = readRows('座位').filter(function(seat) { return seat.eventId === match.event.eventId; });
-      var oldSeats = allSeats.filter(function(seat) { return seat.holderRegistrationId === match.registrationId; });
+      var oldSeats = allSeats.filter(function(seat) { return seatBelongsToRegistration_(seat, match.registrationId); });
       var oldSeat = payload.oldSeatId
         ? oldSeats.filter(function(seat) { return seat.seatId === payload.oldSeatId; })[0]
         : oldSeats[0];
@@ -92,34 +96,46 @@ function exchangeSeat(payload) {
       }
 
       var registrationSnapshots = snapshotTicketRows_(spreadsheet, '报名项目', match.records);
-      var seatSnapshots = snapshotTicketRows_(spreadsheet, '座位', [oldSeat, newSeat]);
-      var auditSnapshot = null;
+      var newSeatSnapshots = snapshotTicketRows_(spreadsheet, '座位', [newSeat]);
       var rotatedToken = rotateTicketToken_(match.records);
+      var newSeatClaimed = false;
       try {
         claimExchangedSeat_(spreadsheet, newSeat, match.registrationId);
+        newSeatClaimed = true;
         updateExchangeRegistrationRows_(spreadsheet, match.records, oldSeat.seatId, newSeat.seatId, rotatedToken);
-        releaseTicketSeats_(spreadsheet, [oldSeat]);
-        auditSnapshot = appendTicketAudit_(spreadsheet, 'EXCHANGE_SEAT', match.registrationId, {
-          oldSeatId: oldSeat.seatId,
-          newSeatId: newSeat.seatId
-        });
-        match.token = rotatedToken;
-        match.seats = allSeats.filter(function(seat) {
-          return seat.holderRegistrationId === match.registrationId && seat.seatId !== oldSeat.seatId;
-        });
-        newSeat.holderRegistrationId = match.registrationId;
-        newSeat.status = 'registered';
-        match.seats.push(newSeat);
-        return ticketProjectionFromRecords_(match);
       } catch (error) {
-        var restoreFailures = restoreExchangeSnapshots_(registrationSnapshots.concat(seatSnapshots));
-        var auditRollbackFailure = rollbackTicketAudit_(auditSnapshot);
-        if (auditRollbackFailure) restoreFailures.push(auditRollbackFailure);
+        var restoreFailures = newSeatClaimed
+          ? restoreExchangeSnapshots_(registrationSnapshots.concat(newSeatSnapshots))
+          : [];
         if (restoreFailures.length) {
-          raiseTicketIntegrityError_(spreadsheet, match.registrationId, 'EXCHANGE_SEAT', restoreFailures);
+          raiseTicketIntegrityError_(spreadsheet, match.registrationId, 'EXCHANGE_PRECOMMIT', restoreFailures);
         }
         throw error;
       }
+
+      match.token = rotatedToken;
+      newSeat.holderRegistrationId = match.registrationId;
+      newSeat.status = 'registered';
+      var releaseFailed = false;
+      try {
+        releaseTicketSeats_(spreadsheet, [oldSeat]);
+      } catch (releaseError) {
+        releaseFailed = true;
+        appendTicketAuditSafely_(spreadsheet, 'SEAT_RELEASE_RETRY', match.registrationId, {
+          oldSeatId: oldSeat.seatId,
+          newSeatId: newSeat.seatId
+        });
+      }
+      if (!releaseFailed) {
+        appendTicketAuditSafely_(spreadsheet, 'EXCHANGE_SEAT', match.registrationId, {
+          oldSeatId: oldSeat.seatId,
+          newSeatId: newSeat.seatId
+        });
+      }
+      match.seats = readRows('座位').filter(function(seat) {
+        return seatBelongsToRegistration_(seat, match.registrationId);
+      });
+      return ticketProjectionFromRecords_(match);
     });
   });
 }
@@ -160,7 +176,8 @@ function requireVerifiedTicket_(payload, registrations) {
     ticketError_('INVALID_REQUEST');
   }
   var records = registrations.filter(function(record) {
-    return record.ticketNumber === payload.ticketNumber.trim();
+    return record.ticketNumber === payload.ticketNumber.trim() &&
+      record.status !== 'pending';
   });
   if (!records.length) ticketError_('TICKET_NOT_FOUND');
 
@@ -181,7 +198,7 @@ function requireVerifiedTicket_(payload, registrations) {
   var sessions = collectTicketSessions_(records, event.eventId);
   var registrationId = records[0].registrationId;
   var seats = readRows('座位').filter(function(seat) {
-    return seat.holderRegistrationId === registrationId;
+    return seatBelongsToRegistration_(seat, registrationId);
   });
   return {
     registrationId: registrationId,
@@ -194,6 +211,11 @@ function requireVerifiedTicket_(payload, registrations) {
     seats: seats,
     records: records
   };
+}
+
+function seatBelongsToRegistration_(seat, registrationId) {
+  return seat.holderRegistrationId === registrationId ||
+    seat.holderRegistrationId === 'PENDING|' + registrationId;
 }
 
 function collectTicketSessions_(records, eventId) {
@@ -365,6 +387,24 @@ function appendTicketAudit_(spreadsheet, action, registrationId, details) {
   var row = sheet.getLastRow() + 1;
   sheet.getRange(row, 1, 1, values.length).setValues([values]);
   return { sheet: sheet, row: row };
+}
+
+function appendTicketAuditSafely_(spreadsheet, action, registrationId, details) {
+  try {
+    appendTicketAudit_(spreadsheet, action, registrationId, details);
+    return null;
+  } catch (error) {
+    if (action !== 'AUDIT_RETRY') {
+      try {
+        appendTicketAudit_(spreadsheet, 'AUDIT_RETRY', registrationId, {
+          failedAction: action
+        });
+      } catch (_auditRetryError) {
+        // The committed seat state remains authoritative.
+      }
+    }
+    return error;
+  }
 }
 
 function rollbackTicketAudit_(snapshot) {

@@ -103,14 +103,17 @@ test("registration service validates every server-authoritative rule inside one 
   assert.match(registration, /seatMode|held|holdOwner|holdExpiresAt/);
 });
 
-test("registration writes are atomic, append one item per selected session, and compensate on failure", async () => {
+test("registration writes use pending batches, activate last, and expose recovery for failed cleanup", async () => {
   const registration = await source("RegistrationService.gs");
   assert.match(registration, /selectedSessions\.map\s*\(/);
   assert.match(registration, /appendParticipantRow_/);
   assert.match(registration, /appendRegistrationRows_/);
-  assert.match(registration, /getRange\(rowNumber,\s*1,\s*rows\.length,\s*rows\[0\]\.length\)\.setValues\(rows\)/);
-  assert.match(registration, /catch\s*\([^)]*\)\s*\{[\s\S]*rollbackRegistrationWrites_/);
-  assert.match(registration, /function\s+rollbackRegistrationWrites_\s*\(/);
+  assert.match(registration, /getRange\(rowNumber,\s*1,\s*pendingRows\.length,\s*pendingRows\[0\]\.length\)\.setValues\(pendingRows\)/);
+  assert.match(registration, /status:\s*['"]pending['"]/);
+  assert.match(registration, /claimPendingRegistrationSeats_/);
+  assert.match(registration, /activateRegistrationRows_/);
+  assert.match(registration, /catch\s*\([^)]*\)\s*\{[\s\S]*cleanupPendingRegistration_/);
+  assert.match(registration, /function\s+recoverPendingTransactions_\s*\(/);
   assert.match(registration, /deleteRow\s*\(/);
   assert.match(registration, /restoreSeatSnapshots_/);
   assert.match(registration, /EVT-\s*['"]?\s*\+\s*Utilities\.getUuid\(\)\.replace\(\/-\/g,\s*['"]{2}\)\.slice\(0,\s*10\)\.toUpperCase\(\)/);

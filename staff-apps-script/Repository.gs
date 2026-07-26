@@ -87,8 +87,31 @@ function getSharedSettingValue_(spreadsheet, key) {
 }
 
 function requireNoSwitchMaintenance_(registrySpreadsheet) {
-  var maintenance = getSharedSettingValue_(registrySpreadsheet, 'SWITCH_MAINTENANCE');
-  if (maintenance === null || maintenance === '') return;
+  var serialized = getSharedSettingValue_(registrySpreadsheet, 'SWITCH_MAINTENANCE');
+  if (serialized === null || serialized === '') return;
+  var maintenance = null;
+  try {
+    maintenance = typeof serialized === 'string' ? JSON.parse(serialized) : null;
+  } catch (_ignored) {
+    maintenance = null;
+  }
+  var expiresAt = NaN;
+  if (maintenance && typeof maintenance === 'object' &&
+      !Array.isArray(maintenance) && typeof maintenance.expiresAt === 'string') {
+    var parsedExpiry = new Date(maintenance.expiresAt).getTime();
+    if (isFinite(parsedExpiry) &&
+        new Date(parsedExpiry).toISOString() === maintenance.expiresAt) {
+      expiresAt = parsedExpiry;
+    }
+  }
+  if (isFinite(expiresAt) && expiresAt <= Date.now()) {
+    try {
+      setSharedSettingValue_(registrySpreadsheet, 'SWITCH_MAINTENANCE', '');
+    } catch (_ignored) {
+      // Expiry is authoritative; cleanup failure must not extend maintenance.
+    }
+    return;
+  }
   var error = new Error('Switch maintenance is active.');
   error.publicCode = 'MAINTENANCE';
   throw error;

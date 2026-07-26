@@ -308,3 +308,42 @@ Fresh verification after the third fix round:
 - `git diff --check`: passed.
 - Independent Critical/Important review after extending maintenance to every
   mutating RPC: clean.
+
+## Fix round 4
+
+Made staged Sheet-switch maintenance self-expiring in both Apps Script
+deployments.
+
+Both public and staff maintenance guards now parse the
+`SWITCH_MAINTENANCE` JSON object and require a canonical ISO `expiresAt`.
+Missing, malformed, array, non-string, ambiguous, and unparseable expiry
+values continue to fail closed. A well-formed marker blocks mutations only
+while `expiresAt` is in the future; the exact expiry instant and every later
+instant are inactive.
+
+The public deployment does not depend on clearing the registry marker before
+continuing an expired mutation. The staff deployment opportunistically clears
+an expired marker, but ignores a cleanup-write failure because expiry remains
+authoritative.
+
+VM regression coverage proves:
+
+- an abandoned staged switch blocks registration, cancellation, seat
+  exchange, staff check-in, and administrator writes before expiry;
+- all five mutation surfaces succeed both at the exact expiry boundary and
+  after it;
+- malformed maintenance markers fail closed in both deployments; and
+- if the active pointer is published but clearing maintenance fails, writes
+  remain blocked before expiry, public registration follows the published
+  pointer after expiry without clearing the marker, and a later staff mutation
+  succeeds while opportunistically cleaning it up.
+
+The generated public and staff source bundles were rebuilt from the corrected
+repositories.
+
+Fresh verification after the fourth fix round:
+
+- Focused administrator VM suite: 50 passed, 0 failed.
+- Full `npm.cmd test`: 144 passed, 0 failed, 0 skipped.
+- `node scripts/build-admin-source-bundles.mjs --check`: passed.
+- `git diff --check`: passed.

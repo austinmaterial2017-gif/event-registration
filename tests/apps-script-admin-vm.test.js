@@ -254,7 +254,7 @@ async function createHarness(options = {}) {
   let lockDepth = 0;
   let uuid = 0;
   const RealDate = Date;
-  const serverNow = options.nowIso || "2026-07-26T04:00:00Z";
+  let serverNow = options.nowIso || "2026-07-26T04:00:00Z";
   class ServerDate extends RealDate {
     constructor(value) { super(value === undefined ? serverNow : value); }
     static now() { return RealDate.parse(serverNow); }
@@ -306,7 +306,8 @@ async function createHarness(options = {}) {
     properties,
     sourceSheets,
     targetSheets,
-    locks
+    locks,
+    setNow: (value) => { serverNow = value; }
   };
 }
 
@@ -329,9 +330,10 @@ async function createPublicRegistrationContext(
   let lockDepth = 0;
   let uuid = 1000;
   const RealDate = Date;
+  let serverNow = "2026-08-10T04:00:00Z";
   class RegistrationDate extends RealDate {
-    constructor(value) { super(value === undefined ? "2026-08-10T04:00:00Z" : value); }
-    static now() { return RealDate.parse("2026-08-10T04:00:00Z"); }
+    constructor(value) { super(value === undefined ? serverNow : value); }
+    static now() { return RealDate.parse(serverNow); }
   }
   const context = vm.createContext({
     JSON, Object, Array, String, Number, RegExp, Error, Math, isFinite, Date: RegistrationDate,
@@ -386,6 +388,7 @@ async function createPublicRegistrationContext(
     };
   };
   context.__openedSpreadsheetIds = openedSpreadsheetIds;
+  context.__setNow = (value) => { serverNow = value; };
   for (const file of [
     "Repository.gs",
     "RegistrationService.gs",
@@ -404,6 +407,24 @@ function postPublic(context, action, payload) {
     postData: { contents: JSON.stringify({ action, payload }) }
   });
   return JSON.parse(response.content);
+}
+
+function setSwitchMaintenance(harness, expiresAt) {
+  setRegistryValue(harness, "SWITCH_MAINTENANCE", JSON.stringify({
+    nonce: "abandoned-switch",
+    expiresAt
+  }));
+}
+
+async function createPublicMaintenanceHarness(expiresAt) {
+  const harness = await createHarness({ nowIso: "2026-08-10T04:00:00Z" });
+  setSwitchMaintenance(harness, expiresAt);
+  const publicContext = await createPublicRegistrationContext(
+    harness.sourceSheets,
+    {},
+    { "target-sheet-id": harness.targetSheets }
+  );
+  return { harness, publicContext };
 }
 
 test("event lifecycle changes preserve every related history row and save advanced policy", async () => {
@@ -1206,6 +1227,199 @@ test("Sheet switching stages maintenance, waits for a public-deployer ack, then 
   for (const [name, count] of Object.entries(targetCounts)) {
     assert.equal(harness.targetSheets[name].rows.length, count, `target ${name}`);
   }
+});
+
+test("an abandoned staged switch blocks every mutation surface before expiry", async () => {
+  const harness = await createHarness({ nowIso: "2026-08-10T04:00:00Z" });
+  const publicContext = await createPublicRegistrationContext(
+    harness.sourceSheets,
+    {},
+    { "target-sheet-id": harness.targetSheets }
+  );
+  const staged = harness.context.switchAdminSheet({
+    spreadsheetId: "target-sheet-id",
+    confirm: true
+  });
+  assert.equal(staged.ok, true);
+
+  assert.equal(publicContext.createRegistration({
+    eventId: "event-1",
+    sessionIds: ["session-1"],
+    seatChoices: ["seat-new"],
+    answers: { email: "abandoned@example.com" }
+  }).code, "MAINTENANCE");
+  assert.equal(publicContext.cancelRegistration({}).code, "MAINTENANCE");
+  assert.equal(publicContext.exchangeSeat({}).code, "MAINTENANCE");
+  assert.equal(harness.context.checkIn({}).code, "MAINTENANCE");
+  assert.equal(harness.context.saveAdminEvent({}).code, "MAINTENANCE");
+  assert.equal(registryValue(harness, "ACTIVE_SPREADSHEET_ID"), null);
+  assert.notEqual(registryValue(harness, "SWITCH_MAINTENANCE"), "");
+});
+
+test("exact and elapsed maintenance expiry permit registration, cancellation, exchange, check-in, and admin writes", async (t) => {
+  const boundaries = [
+    {
+      label: "at exact expiry",
+      publicExpiresAt: "2026-08-10T04:00:00.000Z",
+      staffExpiresAt: "2026-08-16T09:30:00.000Z"
+    },
+    {
+      label: "after expiry",
+      publicExpiresAt: "2026-08-10T03:59:59.999Z",
+      staffExpiresAt: "2026-08-16T09:29:59.999Z"
+    }
+  ];
+
+  for (const boundary of boundaries) {
+    await t.test(`${boundary.label}: public registration`, async () => {
+      const { publicContext } = await createPublicMaintenanceHarness(boundary.publicExpiresAt);
+      const result = publicContext.createRegistration({
+        eventId: "event-1",
+        sessionIds: ["session-1"],
+        seatChoices: ["seat-new"],
+        answers: { email: `${boundary.label.replaceAll(" ", "-")}@example.com` }
+      });
+      assert.equal(result.ok, true, JSON.stringify(result));
+    });
+
+    await t.test(`${boundary.label}: public cancellation`, async () => {
+      const { publicContext } = await createPublicMaintenanceHarness(boundary.publicExpiresAt);
+      const result = publicContext.cancelRegistration({
+        ticketNumber: "EVT-PRIVATE-001",
+        verificationValue: "alice@example.com"
+      });
+      assert.equal(result.ok, true, JSON.stringify(result));
+      assert.equal(result.data.status, "cancelled");
+    });
+
+    await t.test(`${boundary.label}: public seat exchange`, async () => {
+      const { publicContext } = await createPublicMaintenanceHarness(boundary.publicExpiresAt);
+      const result = publicContext.exchangeSeat({
+        ticketNumber: "EVT-PRIVATE-001",
+        verificationValue: "alice@example.com",
+        oldSeatId: "seat-old",
+        newSeatId: "seat-new"
+      });
+      assert.equal(result.ok, true, JSON.stringify(result));
+      assert.ok(result.data.seats.some((seat) => seat.seatId === "seat-new"));
+    });
+
+    await t.test(`${boundary.label}: staff check-in`, async () => {
+      const rows = baseRows();
+      rows["\u6d3b\u52a8"][0].status = "live";
+      rows["\u573a\u6b21"][0].status = "live";
+      rows["\u7b7e\u5230\u8bb0\u5f55"] = [];
+      const harness = await createHarness({
+        rows,
+        nowIso: "2026-08-16T09:30:00Z",
+        staffAllowlist: ["admin@example.com"]
+      });
+      setSwitchMaintenance(harness, boundary.staffExpiresAt);
+
+      const result = harness.context.checkIn({
+        token: "opaque-private-ticket-token",
+        sessionId: "session-1"
+      });
+      assert.equal(result.ok, true, JSON.stringify(result));
+      assert.equal(result.data.status, "checked_in");
+    });
+
+    await t.test(`${boundary.label}: administrator mutation`, async () => {
+      const harness = await createHarness({ nowIso: "2026-08-10T04:00:00Z" });
+      setSwitchMaintenance(harness, boundary.publicExpiresAt);
+
+      const result = harness.context.saveAdminEvent({
+        eventId: "event-1",
+        title: `Updated ${boundary.label}`
+      });
+      assert.equal(result.ok, true, JSON.stringify(result));
+      assert.equal(result.data.title, `Updated ${boundary.label}`);
+    });
+  }
+});
+
+test("malformed maintenance markers fail closed in both public and staff deployments", async (t) => {
+  const malformedMarkers = [
+    "{",
+    "[]",
+    "{}",
+    JSON.stringify({ expiresAt: "not-a-date" }),
+    JSON.stringify({ expiresAt: "0" }),
+    JSON.stringify({ expiresAt: 0 })
+  ];
+
+  for (const marker of malformedMarkers) {
+    await t.test(marker, async () => {
+      const harness = await createHarness({ nowIso: "2026-08-10T04:00:00Z" });
+      setRegistryValue(harness, "SWITCH_MAINTENANCE", marker);
+      const publicContext = await createPublicRegistrationContext(harness.sourceSheets, {});
+
+      assert.equal(publicContext.createRegistration({
+        eventId: "event-1",
+        sessionIds: ["session-1"],
+        seatChoices: ["seat-new"],
+        answers: { email: "malformed@example.com" }
+      }).code, "MAINTENANCE");
+      assert.equal(harness.context.saveAdminEvent({}).code, "MAINTENANCE");
+      assert.equal(registryValue(harness, "SWITCH_MAINTENANCE"), marker);
+    });
+  }
+});
+
+test("a published pointer recovers after maintenance expiry when clearing the marker failed", async () => {
+  const harness = await createHarness({ nowIso: "2026-08-10T04:00:00Z" });
+  const publicContext = await createPublicRegistrationContext(
+    harness.sourceSheets,
+    {},
+    { "target-sheet-id": harness.targetSheets }
+  );
+  const staged = harness.context.switchAdminSheet({
+    spreadsheetId: "target-sheet-id",
+    confirm: true
+  });
+  postPublic(publicContext, "probeSheetSwitch", { nonce: staged.data.nonce });
+
+  const registrySheet = harness.sourceSheets["\u7cfb\u7edf\u8bbe\u7f6e"];
+  registrySheet.failWriteOnAttempt(
+    registrySheet.writeAttemptCount + 2,
+    new Error("injected maintenance clear failure")
+  );
+  const finalized = harness.context.switchAdminSheet({
+    nonce: staged.data.nonce,
+    confirm: true
+  });
+
+  assert.equal(finalized.code, "INTERNAL");
+  assert.equal(registryValue(harness, "ACTIVE_SPREADSHEET_ID"), "target-sheet-id");
+  assert.notEqual(registryValue(harness, "SWITCH_MAINTENANCE"), "");
+  assert.equal(publicContext.createRegistration({
+    eventId: "event-1",
+    sessionIds: ["session-1"],
+    seatChoices: ["seat-new"],
+    answers: { email: "still-blocked@example.com" }
+  }).code, "MAINTENANCE");
+
+  const afterExpiry = new Date(Date.parse(staged.data.expiresAt) + 1).toISOString();
+  harness.setNow(afterExpiry);
+  publicContext.__setNow(afterExpiry);
+  const registered = publicContext.createRegistration({
+    eventId: "event-1",
+    sessionIds: ["session-1"],
+    seatChoices: ["seat-new"],
+    answers: { email: "recovered@example.com" }
+  });
+  assert.equal(registered.ok, true, JSON.stringify(registered));
+  assert.notEqual(registryValue(harness, "SWITCH_MAINTENANCE"), "");
+  assert.ok(records(harness.targetSheets["\u62a5\u540d\u9879\u76ee"])
+    .some((record) => record.registrationId === registered.data.registrationId));
+
+  const adminMutation = harness.context.saveAdminEvent({
+    eventId: "event-1",
+    title: "Recovered target"
+  });
+  assert.equal(adminMutation.ok, true, JSON.stringify(adminMutation));
+  assert.equal(registryValue(harness, "SWITCH_MAINTENANCE"), "");
+  assert.equal(records(harness.targetSheets["\u6d3b\u52a8"])[0].title, "Recovered target");
 });
 
 test("Sheet switching aborts maintenance without publishing when no public ack arrives", async () => {

@@ -63,10 +63,7 @@ function listEvents(_payload) {
     return withScriptLock(function() {
       var registry = getRegistrySpreadsheet_();
       var settings = getAdminSettings(registry);
-      var events = readRows(registry, '活动目录')
-        .filter(function(event) {
-          return PUBLIC_EVENT_STATUSES_[String(event.status || '').toLowerCase()] === true;
-        })
+      var events = getPublicEventCatalogEntries_(registry)
         .map(function(event) {
           return publicEventSummary_(event, publicEventPolicy_(settings, event.eventId));
         });
@@ -85,10 +82,7 @@ function getEvent(payload) {
     return withScriptLock(function() {
       var registry = getRegistrySpreadsheet_();
       var eventId = payload.eventId.trim();
-      var catalog = getEventCatalogEntry_(registry, eventId);
-      if (PUBLIC_EVENT_STATUSES_[String(catalog.status || '').toLowerCase()] !== true) {
-        publicEventReadError_('EVENT_NOT_FOUND');
-      }
+      var catalog = getPublicEventCatalogEntry_(registry, eventId);
       var spreadsheet = getEventSpreadsheet_(registry, eventId);
       var event = readRows(spreadsheet, '活动').filter(function(candidate) {
         return candidate.eventId === eventId;
@@ -161,6 +155,40 @@ function getEvent(payload) {
       return { event: detail, serverNow: new Date().toISOString() };
     });
   });
+}
+
+function getPublicEventCatalogEntries_(registry) {
+  requireExactRoutingSheet_(registry, '活动目录');
+  var entries = readRows(registry, '活动目录');
+  var eventIdCounts = {};
+  entries.forEach(function(entry) {
+    var eventId = normalizeRoutingValue_(entry.eventId);
+    if (eventId) eventIdCounts[eventId] = (eventIdCounts[eventId] || 0) + 1;
+  });
+  return entries.filter(function(entry) {
+    return PUBLIC_EVENT_STATUSES_[String(entry.status || '').toLowerCase()] === true;
+  }).map(function(entry) {
+    var eventId = normalizeRoutingValue_(entry.eventId);
+    var validated = validateEventCatalogEntry_(registry, entry, eventId);
+    if (eventIdCounts[validated.eventId] !== 1) routingError_('INTEGRITY_ERROR');
+    return validated;
+  });
+}
+
+function getPublicEventCatalogEntry_(registry, eventId) {
+  var normalizedEventId = normalizeRoutingValue_(eventId);
+  if (!normalizedEventId) publicEventReadError_('EVENT_NOT_FOUND');
+  requireExactRoutingSheet_(registry, '活动目录');
+  var matches = readRows(registry, '活动目录').filter(function(entry) {
+    return normalizeRoutingValue_(entry.eventId) === normalizedEventId;
+  });
+  if (!matches.length) publicEventReadError_('EVENT_NOT_FOUND');
+  var visibleMatches = matches.filter(function(entry) {
+    return PUBLIC_EVENT_STATUSES_[String(entry.status || '').toLowerCase()] === true;
+  });
+  if (!visibleMatches.length) publicEventReadError_('EVENT_NOT_FOUND');
+  if (matches.length !== 1) routingError_('INTEGRITY_ERROR');
+  return validateEventCatalogEntry_(registry, visibleMatches[0], normalizedEventId);
 }
 
 function runPublicEventRead_(callback) {

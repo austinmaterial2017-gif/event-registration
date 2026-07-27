@@ -1902,6 +1902,46 @@ test("public catalog lists safe visible activities and reads only the requested 
   assert.deepEqual(context.__openedSpreadsheetIds, ["source-sheet-id", "source-sheet-id", "sheet-b"]);
 });
 
+test("public catalog fails closed for malformed routes and duplicate visible event IDs", async () => {
+  const catalogEntry = (overrides = {}) => ({
+    eventId: "event-a", spreadsheetId: "sheet-a", sheetName: "\u6d3b\u52a8", title: "Activity A",
+    description: "A", status: "open", opensAt: "", closesAt: "", location: "",
+    selectionMode: "free", minChoices: 0, maxChoices: 1, seatMode: "none", seatZones: "[]",
+    createdAt: "2026-07-01T00:00:00Z", updatedAt: "2026-07-01T00:00:00Z",
+    ...overrides
+  });
+  const cases = [
+    [catalogEntry({ spreadsheetId: "" })],
+    [catalogEntry({ sheetName: "wrong-sheet" })],
+    [catalogEntry({ spreadsheetId: "source-sheet-id" })],
+    [catalogEntry(), catalogEntry()]
+  ];
+
+  for (const catalogRows of cases) {
+    const rows = baseRows();
+    rows["\u6d3b\u52a8\u76ee\u5f55"].push(...catalogRows);
+    const harness = await createHarness({ rows });
+    const context = await createPublicRegistrationContext(harness.sourceSheets, {});
+
+    assert.equal(context.listEvents({}).code, "INTEGRITY_ERROR");
+  }
+});
+
+test("hidden malformed catalog rows remain not found without opening an activity sheet", async () => {
+  const rows = baseRows();
+  rows["\u6d3b\u52a8\u76ee\u5f55"].push({
+    eventId: "draft-event", spreadsheetId: "", sheetName: "wrong-sheet", title: "Private draft",
+    description: "Private", status: "draft", opensAt: "", closesAt: "", location: "",
+    selectionMode: "free", minChoices: 0, maxChoices: 1, seatMode: "none", seatZones: "[]",
+    createdAt: "2026-07-01T00:00:00Z", updatedAt: "2026-07-01T00:00:00Z"
+  });
+  const harness = await createHarness({ rows });
+  const context = await createPublicRegistrationContext(harness.sourceSheets, {});
+
+  assert.equal(context.getEvent({ eventId: "draft-event" }).code, "EVENT_NOT_FOUND");
+  assert.deepEqual(context.__openedSpreadsheetIds, ["source-sheet-id"]);
+});
+
 test("Sheet switching aborts maintenance without publishing when no public ack arrives", async () => {
   const harness = await createHarness({ nowIso: "2026-08-10T04:00:00Z" });
   const staged = harness.context.switchAdminSheet({

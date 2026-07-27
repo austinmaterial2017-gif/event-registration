@@ -11,7 +11,7 @@ function createRegistration(payload) {
       var request = requireRegistrationPayload_(payload);
       var registry = getRegistrySpreadsheet_();
       requireNoSwitchMaintenance_(registry);
-      var spreadsheet = getConfiguredSpreadsheet(registry);
+      var spreadsheet = getEventSpreadsheet_(registry, request.eventId);
       var recoveryFailures = recoverPendingTransactions_(spreadsheet);
       if (recoveryFailures.length) registrationError_('INTEGRITY_ERROR');
       cleanupStaleTicketSeats_(spreadsheet);
@@ -92,6 +92,38 @@ function createRegistration(payload) {
       var finalizeFailures = finalizePendingRegistrationSeats_(spreadsheet, selectedSeats, registrationId, createdAt);
       if (finalizeFailures.length) {
         appendRegistrationRecoveryAudit_(spreadsheet, 'SEAT_FINALIZE_RETRY', registrationId, finalizeFailures.length);
+      }
+      try {
+        upsertTicketRoute_(registry, {
+          ticketNumber: ticketNumber,
+          tokenDigest: digestTicketToken_(token),
+          eventId: event.eventId,
+          registrationId: registrationId,
+          status: 'active',
+          createdAt: createdAt,
+          updatedAt: createdAt
+        });
+      } catch (_routeError) {
+        var routeCleanupFailures = compensateActiveRegistration_(
+          seatSnapshots,
+          participant,
+          registrationBatch
+        );
+        if (routeCleanupFailures.length) {
+          raiseRegistrationIntegrityError_(
+            spreadsheet,
+            registrationId,
+            routeCleanupFailures,
+            'TICKET_ROUTE_PUBLICATION'
+          );
+        }
+        appendRegistrationAuditSafely_(
+          spreadsheet,
+          'TICKET_ROUTE_PUBLICATION_FAILED',
+          registrationId,
+          { eventId: event.eventId, compensated: true }
+        );
+        registrationError_('INTEGRITY_ERROR');
       }
       appendRegistrationAuditSafely_(spreadsheet, 'CREATE_REGISTRATION', registrationId, {
         eventId: event.eventId,
@@ -628,6 +660,7 @@ function appendRegistrationRows_(spreadsheet, registrationId, participantId, eve
     sheet: sheet,
     rowNumber: rowNumber,
     rowCount: pendingRows.length,
+    pendingRows: pendingRows,
     activeRows: activeRows
   };
 }
@@ -635,6 +668,11 @@ function appendRegistrationRows_(spreadsheet, registrationId, participantId, eve
 function activateRegistrationRows_(batch) {
   batch.sheet.getRange(batch.rowNumber, 1, batch.rowCount, batch.activeRows[0].length)
     .setValues(batch.activeRows);
+}
+
+function markRegistrationRowsPending_(batch) {
+  batch.sheet.getRange(batch.rowNumber, 1, batch.rowCount, batch.pendingRows[0].length)
+    .setValues(batch.pendingRows);
 }
 
 function claimPendingRegistrationSeats_(spreadsheet, seats, registrationId, updatedAt) {
@@ -749,6 +787,22 @@ function cleanupPendingRegistration_(seatSnapshots, participant, registrationBat
   return failures;
 }
 
+function compensateActiveRegistration_(seatSnapshots, participant, registrationBatch) {
+  var pendingFailure = null;
+  try {
+    markRegistrationRowsPending_(registrationBatch);
+  } catch (error) {
+    pendingFailure = error;
+  }
+  var cleanupFailures = cleanupPendingRegistration_(
+    seatSnapshots,
+    participant,
+    registrationBatch
+  );
+  if (cleanupFailures.length && pendingFailure) cleanupFailures.unshift(pendingFailure);
+  return cleanupFailures;
+}
+
 function recoverPendingTransactions_(spreadsheet) {
   var failures = [];
   var registrations = readRows(spreadsheet, '报名项目');
@@ -837,11 +891,11 @@ function appendRegistrationRecoveryAudit_(spreadsheet, action, registrationId, f
   }
 }
 
-function raiseRegistrationIntegrityError_(spreadsheet, registrationId, rollbackFailures) {
+function raiseRegistrationIntegrityError_(spreadsheet, registrationId, rollbackFailures, stage) {
   var auditFailure = null;
   try {
     appendRegistrationAudit_(spreadsheet, 'INTEGRITY_ALERT', registrationId, {
-      stage: 'CREATE_REGISTRATION',
+      stage: stage || 'CREATE_REGISTRATION',
       restoreFailureCount: rollbackFailures.length
     });
   } catch (error) {

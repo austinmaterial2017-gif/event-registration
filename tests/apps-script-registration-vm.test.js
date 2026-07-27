@@ -1,9 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 const headers = {
+  "票券索引": ["ticketNumber", "tokenDigest", "eventId", "registrationId", "status", "createdAt", "updatedAt"],
   "活动": ["eventId", "title", "description", "status", "opensAt", "closesAt", "location", "selectionMode", "minChoices", "maxChoices", "seatMode", "seatZones", "createdAt", "updatedAt"],
   "场次": ["sessionId", "eventId", "title", "speaker", "startsAt", "endsAt", "required", "capacity", "status", "createdAt", "updatedAt"],
   "座位": ["seatId", "eventId", "sessionId", "label", "zone", "status", "holderRegistrationId", "createdAt", "updatedAt"],
@@ -23,6 +25,8 @@ class FakeSheet {
   }
 
   getLastRow() { return this.rows.length; }
+  getLastColumn() { return this.rows[0].length; }
+  getName() { return this.name; }
 
   getRange(row, column, rowCount, columnCount) {
     return {
@@ -84,10 +88,37 @@ function baseRows(overrides = {}) {
   };
 }
 
-async function createHarness({ rows = baseRows(), settings, onWrite } = {}) {
-  const sheets = Object.fromEntries(Object.entries(rows).map(([name, values]) =>
-    [name, new FakeSheet(name, values, onWrite)]));
-  const spreadsheet = { getSheetByName: (name) => sheets[name] };
+async function createHarness({
+  rows = baseRows(),
+  settings,
+  onWrite,
+  eventRowsById,
+  registryRows = { "票券索引": [] }
+} = {}) {
+  const sheetsBySpreadsheet = new Map();
+  const makeSpreadsheet = (id, sourceRows) => {
+    const spreadsheetSheets = Object.fromEntries(Object.entries(sourceRows).map(([name, values]) =>
+      [name, new FakeSheet(name, values, onWrite)]));
+    const spreadsheet = {
+      getId: () => id,
+      getSheetByName: (name) => spreadsheetSheets[name]
+    };
+    sheetsBySpreadsheet.set(spreadsheet, spreadsheetSheets);
+    return { spreadsheet, sheets: spreadsheetSheets };
+  };
+  const fallback = makeSpreadsheet("event-default", rows);
+  const eventSpreadsheets = {};
+  const eventSheetsById = {};
+  Object.entries(eventRowsById || {}).forEach(([eventId, sourceRows]) => {
+    const eventHarness = makeSpreadsheet(`sheet-${eventId}`, sourceRows);
+    eventSpreadsheets[eventId] = eventHarness.spreadsheet;
+    eventSheetsById[eventId] = eventHarness.sheets;
+  });
+  const firstEventId = Object.keys(eventSpreadsheets)[0];
+  const spreadsheet = firstEventId ? eventSpreadsheets[firstEventId] : fallback.spreadsheet;
+  const sheets = firstEventId ? eventSheetsById[firstEventId] : fallback.sheets;
+  const registryHarness = makeSpreadsheet("registry", registryRows);
+  const registry = registryHarness.spreadsheet;
   const locks = [];
   const routedEventIds = [];
   let lockDepth = 0;
@@ -105,21 +136,51 @@ async function createHarness({ rows = baseRows(), settings, onWrite } = {}) {
     Error,
     isFinite,
     SHEET_DEFINITIONS: headers,
-    Utilities: { getUuid: () => `00000000-0000-4000-8000-${String(++uuid).padStart(12, "0")}` },
-    getRegistrySpreadsheet_: () => spreadsheet,
+    Utilities: {
+      getUuid: () => `${String(++uuid).padStart(8, "0")}-0000-4000-8000-000000000000`
+    },
+    getRegistrySpreadsheet_: () => registry,
     getConfiguredSpreadsheet: () => spreadsheet,
     getEventSpreadsheet_: (_registry, eventId) => {
       routedEventIds.push(eventId);
-      return spreadsheet;
+      return eventSpreadsheets[eventId] || spreadsheet;
+    },
+    digestTicketToken_: (token) => createHash("sha256").update(String(token || "").trim()).digest("hex"),
+    upsertTicketRoute_: (_registry, route) => {
+      const routeSheet = registryHarness.sheets["票券索引"];
+      const existing = sheetObjects(routeSheet);
+      if (existing.some((candidate) =>
+        candidate.ticketNumber === route.ticketNumber &&
+        (candidate.eventId !== route.eventId ||
+          candidate.registrationId !== route.registrationId ||
+          candidate.tokenDigest !== route.tokenDigest))) {
+        const error = new Error("ticket route collision");
+        error.publicCode = "INTEGRITY_ERROR";
+        throw error;
+      }
+      if (existing.some((candidate) =>
+        candidate.tokenDigest === route.tokenDigest &&
+        candidate.ticketNumber !== route.ticketNumber)) {
+        const error = new Error("ticket digest collision");
+        error.publicCode = "INTEGRITY_ERROR";
+        throw error;
+      }
+      const values = headers["票券索引"].map((key) => route[key] ?? "");
+      routeSheet.getRange(routeSheet.getLastRow() + 1, 1, 1, values.length).setValues([values]);
+      return route;
     },
     getSharedSettingValue_: () => null,
     requireNoSwitchMaintenance_: () => {},
-    getRequiredSheet_: (_spreadsheet, name) => sheets[name],
+    getRequiredSheet_: (targetSpreadsheet, name) =>
+      (sheetsBySpreadsheet.get(targetSpreadsheet) || sheets)[name],
     normalizeRow_: (name, row) => headers[name].map((key) => row[key] ?? ""),
-    readRows: (_spreadsheet, name) => sheets[name].rows.slice(1).map((values, index) => ({
-      rowNumber: index + 2,
-      ...Object.fromEntries(headers[name].map((key, column) => [key, values[column]]))
-    })),
+    readRows: (targetSpreadsheet, name) => {
+      const targetSheets = sheetsBySpreadsheet.get(targetSpreadsheet) || sheets;
+      return targetSheets[name].rows.slice(1).map((values, index) => ({
+        rowNumber: index + 2,
+        ...Object.fromEntries(headers[name].map((key, column) => [key, values[column]]))
+      }));
+    },
     getAdminSettings: () => settings || {
       registration: {
         identityFields: ["email"],
@@ -145,7 +206,15 @@ async function createHarness({ rows = baseRows(), settings, onWrite } = {}) {
   for (const file of ["RegistrationService.gs", "TicketService.gs"]) {
     vm.runInContext(await readFile(new URL(file, serviceRoot), "utf8"), context, { filename: file });
   }
-  return { context, sheets, locks, routedEventIds };
+  return {
+    context,
+    sheets,
+    locks,
+    routedEventIds,
+    registry,
+    registrySheets: registryHarness.sheets,
+    eventSheetsById
+  };
 }
 
 function registrationPayload(overrides = {}) {
@@ -166,6 +235,155 @@ function sheetObjects(sheet) {
 function sheetWithHeader(harness, header) {
   return Object.values(harness.sheets).find((sheet) => headers[sheet.name].includes(header));
 }
+
+function rowsForEvent(eventId, title) {
+  const rows = baseRows({
+    event: { eventId, title, selectionMode: "single", minChoices: 1, maxChoices: 1 },
+    sessions: [{
+      sessionId: `${eventId}-session`,
+      eventId,
+      title: `${title} Session`,
+      startsAt: "2030-01-01T09:00:00Z",
+      endsAt: "2030-01-01T10:00:00Z",
+      required: false,
+      capacity: 5,
+      status: "open"
+    }],
+    questions: [
+      { questionId: "name", eventId, label: "Name", type: "text", required: true, status: "active" },
+      { questionId: "email", eventId, label: "Email", type: "email", required: true, status: "active" }
+    ]
+  });
+  return rows;
+}
+
+test("registrations write only to their routed activity sheets and publish digest-only ticket routes", async () => {
+  const harness = await createHarness({
+    eventRowsById: {
+      "event-a": rowsForEvent("event-a", "Activity A"),
+      "event-b": rowsForEvent("event-b", "Activity B")
+    }
+  });
+
+  const ticketA = harness.context.createRegistration(registrationPayload({
+    eventId: "event-a",
+    sessionIds: ["event-a-session"],
+    answers: { name: "Alice", email: "alice@example.com" }
+  }));
+  const ticketB = harness.context.createRegistration(registrationPayload({
+    eventId: "event-b",
+    sessionIds: ["event-b-session"],
+    answers: { name: "Bob", email: "bob@example.com" }
+  }));
+
+  assert.equal(ticketA.ok, true, JSON.stringify(ticketA));
+  assert.equal(ticketB.ok, true, JSON.stringify(ticketB));
+  assert.deepEqual(harness.routedEventIds, ["event-a", "event-b"]);
+  assert.equal(sheetObjects(harness.eventSheetsById["event-a"]["报名项目"]).length, 1);
+  assert.equal(sheetObjects(harness.eventSheetsById["event-b"]["报名项目"]).length, 1);
+  const routes = sheetObjects(harness.registrySheets["票券索引"]);
+  assert.equal(routes.length, 2);
+  assert.deepEqual(routes.map((route) => route.eventId), ["event-a", "event-b"]);
+  assert.ok(routes.every((route) => route.tokenDigest.length === 64));
+  const serializedRoutes = JSON.stringify(routes);
+  assert.equal(serializedRoutes.includes(ticketA.data.token), false);
+  assert.equal(serializedRoutes.includes(ticketB.data.token), false);
+  assert.equal(serializedRoutes.includes("alice@example.com"), false);
+  assert.equal(serializedRoutes.includes("bob@example.com"), false);
+});
+
+test("ticket route publication failure compensates the activity registration and restores its seat", async () => {
+  const eventRows = rowsForEvent("event-a", "Activity A");
+  eventRows["活动"][0].seatMode = "self";
+  eventRows["座位"].push({
+    seatId: "seat-a1",
+    eventId: "event-a",
+    sessionId: "",
+    label: "A1",
+    zone: "front",
+    status: "available"
+  });
+  const harness = await createHarness({
+    eventRowsById: { "event-a": eventRows },
+    onWrite: ({ sheet }) => {
+      if (sheet.name === "票券索引") throw new Error("route publication failed");
+    }
+  });
+
+  const failed = harness.context.createRegistration(registrationPayload({
+    eventId: "event-a",
+    sessionIds: ["event-a-session"],
+    seatChoices: ["A1"],
+    answers: { name: "Alice", email: "alice@example.com" }
+  }));
+
+  assert.equal(failed.ok, false);
+  assert.equal(failed.code, "INTEGRITY_ERROR");
+  assert.equal(sheetObjects(harness.eventSheetsById["event-a"]["参加者"]).length, 0);
+  assert.equal(sheetObjects(harness.eventSheetsById["event-a"]["报名项目"]).length, 0);
+  const seat = sheetObjects(harness.eventSheetsById["event-a"]["座位"])[0];
+  assert.equal(seat.status, "available");
+  assert.equal(seat.holderRegistrationId, "");
+  assert.equal(sheetObjects(harness.registrySheets["票券索引"]).length, 0);
+});
+
+test("ticket route collision rejects and compensates the new private registration", async () => {
+  const existingRoute = {
+    ticketNumber: "EVT-0000000300",
+    tokenDigest: "a".repeat(64),
+    eventId: "event-b",
+    registrationId: "existing-registration",
+    status: "active",
+    createdAt: "2026-07-01T00:00:00Z",
+    updatedAt: "2026-07-01T00:00:00Z"
+  };
+  const harness = await createHarness({
+    eventRowsById: { "event-a": rowsForEvent("event-a", "Activity A") },
+    registryRows: { "票券索引": [existingRoute] }
+  });
+
+  const failed = harness.context.createRegistration(registrationPayload({
+    eventId: "event-a",
+    sessionIds: ["event-a-session"],
+    answers: { name: "Alice", email: "alice@example.com" }
+  }));
+
+  assert.equal(failed.ok, false);
+  assert.equal(failed.code, "INTEGRITY_ERROR");
+  assert.equal(sheetObjects(harness.eventSheetsById["event-a"]["参加者"]).length, 0);
+  assert.equal(sheetObjects(harness.eventSheetsById["event-a"]["报名项目"]).length, 0);
+  assert.deepEqual(sheetObjects(harness.registrySheets["票券索引"]), [existingRoute]);
+});
+
+test("failed route compensation leaves recoverable pending state and a token-safe integrity audit", async () => {
+  const harness = await createHarness({
+    eventRowsById: { "event-a": rowsForEvent("event-a", "Activity A") },
+    onWrite: ({ sheet, operation }) => {
+      if (sheet.name === "票券索引") throw new Error("route publication failed");
+      if (sheet.name === "报名项目" && operation === "delete") {
+        throw new Error("registration cleanup failed");
+      }
+    }
+  });
+
+  const failed = harness.context.createRegistration(registrationPayload({
+    eventId: "event-a",
+    sessionIds: ["event-a-session"],
+    answers: { name: "Alice", email: "alice@example.com" }
+  }));
+
+  assert.equal(failed.ok, false);
+  assert.equal(failed.code, "INTEGRITY_ERROR");
+  const registrations = sheetObjects(harness.eventSheetsById["event-a"]["报名项目"]);
+  assert.equal(registrations.length, 1);
+  assert.equal(registrations[0].status, "pending");
+  assert.equal(sheetObjects(harness.registrySheets["票券索引"]).length, 0);
+  const audits = sheetObjects(harness.eventSheetsById["event-a"]["操作记录"]);
+  const alert = audits.find((row) => row.action === "INTEGRITY_ALERT");
+  assert.ok(alert);
+  assert.equal(alert.details.includes("ticketToken"), false);
+  assert.equal(alert.details.includes("alice@example.com"), false);
+});
 
 test("owner ticket projections mask names and contacts and never return dynamic answers", async () => {
   const { context } = await createHarness();

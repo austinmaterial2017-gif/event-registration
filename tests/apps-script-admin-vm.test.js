@@ -494,6 +494,19 @@ function eventSpreadsheetSheets(eventId, title) {
     .map(([name, values]) => [name, new FakeSheet(name, values)]));
 }
 
+function addPublicEventRoute(registrySheets, eventSheets, spreadsheetId = "event-1-sheet") {
+  const event = records(eventSheets["活动"])[0];
+  const route = {
+    ...event,
+    spreadsheetId,
+    sheetName: "活动"
+  };
+  registrySheets["活动目录"].rows.push(
+    headers["活动目录"].map((key) => route[key] ?? "")
+  );
+  return { [spreadsheetId]: eventSheets };
+}
+
 function assertPublicCode(action, code) {
   assert.throws(action, (error) => error && error.publicCode === code);
 }
@@ -718,10 +731,11 @@ function setSwitchMaintenance(harness, expiresAt) {
 async function createPublicMaintenanceHarness(expiresAt) {
   const harness = await createHarness({ nowIso: "2026-08-10T04:00:00Z" });
   setSwitchMaintenance(harness, expiresAt);
+  const eventRoute = addPublicEventRoute(harness.sourceSheets, harness.sourceSheets);
   const publicContext = await createPublicRegistrationContext(
     harness.sourceSheets,
     {},
-    { "target-sheet-id": harness.targetSheets }
+    { "target-sheet-id": harness.targetSheets, ...eventRoute }
   );
   return { harness, publicContext };
 }
@@ -1153,6 +1167,7 @@ test("clearing the final identity flag is observed by the separate public regist
   });
   assert.equal(cleared.ok, true);
 
+  const eventRoute = addPublicEventRoute(harness.sourceSheets, harness.sourceSheets);
   const publicContext = await createPublicRegistrationContext(
     harness.sourceSheets,
     {
@@ -1165,7 +1180,8 @@ test("clearing the final identity flag is observed by the separate public regist
           }
         }
       }
-    }
+    },
+    eventRoute
   );
   const registered = publicContext.createRegistration({
     eventId: "event-1",
@@ -1208,6 +1224,7 @@ test("a public registration pins one active spreadsheet even when the root point
       "2026-07-26T04:00:00Z"
     ]);
   });
+  const eventRoute = addPublicEventRoute(harness.sourceSheets, harness.sourceSheets);
   const publicContext = await createPublicRegistrationContext(
     harness.sourceSheets,
     {
@@ -1216,7 +1233,7 @@ test("a public registration pins one active spreadsheet even when the root point
         events: { "event-1": { identityFields: ["email"] } }
       }
     },
-    { "target-sheet-id": harness.targetSheets }
+    { "target-sheet-id": harness.targetSheets, ...eventRoute }
   );
 
   const registered = publicContext.createRegistration({
@@ -1272,6 +1289,7 @@ test("blank or malformed authoritative registry settings fail closed despite val
     const dashboard = harness.context.getAdminDashboard({});
     assert.equal(dashboard.code, "INTERNAL", sharedValue);
 
+    const eventRoute = addPublicEventRoute(harness.sourceSheets, harness.sourceSheets);
     const publicContext = await createPublicRegistrationContext(
       harness.sourceSheets,
       {
@@ -1279,7 +1297,8 @@ test("blank or malformed authoritative registry settings fail closed despite val
           identityFields: ["email"],
           events: { "event-1": { identityFields: ["email"] } }
         }
-      }
+      },
+      eventRoute
     );
     const registered = publicContext.createRegistration({
       eventId: "event-1",
@@ -1297,6 +1316,7 @@ test("missing authoritative registry settings fail closed despite valid project 
 
   assert.equal(harness.context.getAdminDashboard({}).code, "INTERNAL");
 
+  const eventRoute = addPublicEventRoute(harness.sourceSheets, harness.sourceSheets);
   const publicContext = await createPublicRegistrationContext(
     harness.sourceSheets,
     {
@@ -1304,7 +1324,8 @@ test("missing authoritative registry settings fail closed despite valid project 
         identityFields: ["email"],
         events: { "event-1": { identityFields: ["email"] } }
       }
-    }
+    },
+    eventRoute
   );
   const registered = publicContext.createRegistration({
     eventId: "event-1",
@@ -1716,10 +1737,15 @@ test("malformed maintenance markers fail closed in both public and staff deploym
 
 test("a published pointer recovers after maintenance expiry when clearing the marker failed", async () => {
   const harness = await createHarness({ nowIso: "2026-08-10T04:00:00Z" });
+  const eventRoute = addPublicEventRoute(
+    harness.sourceSheets,
+    harness.targetSheets,
+    "event-1-sheet"
+  );
   const publicContext = await createPublicRegistrationContext(
     harness.sourceSheets,
     {},
-    { "target-sheet-id": harness.targetSheets }
+    { "target-sheet-id": harness.targetSheets, ...eventRoute }
   );
   const staged = harness.context.switchAdminSheet({
     spreadsheetId: "target-sheet-id",

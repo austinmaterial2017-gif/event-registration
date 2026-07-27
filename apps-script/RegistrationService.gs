@@ -126,7 +126,7 @@ function createSeatHold(payload) {
       var request = requireSeatHoldPayload_(payload);
       var registry = getRegistrySpreadsheet_();
       requireNoSwitchMaintenance_(registry);
-      var spreadsheet = getConfiguredSpreadsheet(registry);
+      var spreadsheet = getEventSpreadsheet_(registry, request.eventId);
       var now = new Date();
       var event = requireOpenEvent_(spreadsheet, request.eventId, now);
       var policy = getRegistrationPolicy_(getAdminSettings(registry), event.eventId);
@@ -179,7 +179,7 @@ function releaseSeatHold(payload) {
       var request = requireSeatHoldPayload_(payload);
       var registry = getRegistrySpreadsheet_();
       requireNoSwitchMaintenance_(registry);
-      var spreadsheet = getConfiguredSpreadsheet(registry);
+      var spreadsheet = getEventSpreadsheet_(registry, request.eventId);
       var policy = getRegistrationPolicy_(getAdminSettings(registry), request.eventId);
       var sheetName = registrationSheetNameByHeader_('seatId');
       var seat = readRows(spreadsheet, sheetName).filter(function(candidate) {

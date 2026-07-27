@@ -89,6 +89,7 @@ async function createHarness({ rows = baseRows(), settings, onWrite } = {}) {
     [name, new FakeSheet(name, values, onWrite)]));
   const spreadsheet = { getSheetByName: (name) => sheets[name] };
   const locks = [];
+  const routedEventIds = [];
   let lockDepth = 0;
   let uuid = 0;
   const context = vm.createContext({
@@ -107,6 +108,10 @@ async function createHarness({ rows = baseRows(), settings, onWrite } = {}) {
     Utilities: { getUuid: () => `00000000-0000-4000-8000-${String(++uuid).padStart(12, "0")}` },
     getRegistrySpreadsheet_: () => spreadsheet,
     getConfiguredSpreadsheet: () => spreadsheet,
+    getEventSpreadsheet_: (_registry, eventId) => {
+      routedEventIds.push(eventId);
+      return spreadsheet;
+    },
     getSharedSettingValue_: () => null,
     requireNoSwitchMaintenance_: () => {},
     getRequiredSheet_: (_spreadsheet, name) => sheets[name],
@@ -140,7 +145,7 @@ async function createHarness({ rows = baseRows(), settings, onWrite } = {}) {
   for (const file of ["RegistrationService.gs", "TicketService.gs"]) {
     vm.runInContext(await readFile(new URL(file, serviceRoot), "utf8"), context, { filename: file });
   }
-  return { context, sheets, locks };
+  return { context, sheets, locks, routedEventIds };
 }
 
 function registrationPayload(overrides = {}) {
@@ -972,6 +977,7 @@ test("seat holds are owner-bound, submit-compatible, releasable, and policy cont
     holdOwner: "browser-owner-0002"
   });
   assert.equal(wrongRelease.code, "SEAT_HOLD_OWNERSHIP");
+  assert.deepEqual(harness.routedEventIds, ["event-1", "event-1", "event-1"]);
 
   const created = harness.context.createRegistration(registrationPayload({
     seatChoices: ["seat-a"],

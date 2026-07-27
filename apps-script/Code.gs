@@ -62,9 +62,8 @@ function listEvents(_payload) {
   return runPublicEventRead_(function() {
     return withScriptLock(function() {
       var registry = getRegistrySpreadsheet_();
-      var spreadsheet = getConfiguredSpreadsheet(registry);
       var settings = getAdminSettings(registry);
-      var events = readRows(spreadsheet, '活动')
+      var events = readRows(registry, '活动目录')
         .filter(function(event) {
           return PUBLIC_EVENT_STATUSES_[String(event.status || '').toLowerCase()] === true;
         })
@@ -85,15 +84,23 @@ function getEvent(payload) {
     }
     return withScriptLock(function() {
       var registry = getRegistrySpreadsheet_();
-      var spreadsheet = getConfiguredSpreadsheet(registry);
       var eventId = payload.eventId.trim();
+      var catalog = getEventCatalogEntry_(registry, eventId);
+      if (PUBLIC_EVENT_STATUSES_[String(catalog.status || '').toLowerCase()] !== true) {
+        publicEventReadError_('EVENT_NOT_FOUND');
+      }
+      var spreadsheet = getEventSpreadsheet_(registry, eventId);
       var event = readRows(spreadsheet, '活动').filter(function(candidate) {
-        return candidate.eventId === eventId &&
-          PUBLIC_EVENT_STATUSES_[String(candidate.status || '').toLowerCase()] === true;
+        return candidate.eventId === eventId;
       })[0];
-      if (!event) publicEventReadError_('EVENT_NOT_FOUND');
+      if (!event || PUBLIC_EVENT_STATUSES_[String(event.status || '').toLowerCase()] !== true) {
+        publicEventReadError_('EVENT_NOT_FOUND');
+      }
       var settings = getAdminSettings(registry);
       var policy = publicEventPolicy_(settings, eventId);
+      if (!publicCatalogMatchesEvent_(catalog, event, policy)) {
+        publicEventReadError_('INTEGRITY_ERROR');
+      }
       var sessions = readRows(spreadsheet, '场次')
         .filter(function(session) {
           return session.eventId === eventId &&
@@ -191,6 +198,11 @@ function publicEventSummary_(event, policy) {
     exchangeEnabled: policy.seatExchangeEnabled === true,
     seatHoldsEnabled: policy.seatHoldsEnabled === true
   };
+}
+
+function publicCatalogMatchesEvent_(catalog, event, policy) {
+  return JSON.stringify(publicEventSummary_(catalog, policy)) ===
+    JSON.stringify(publicEventSummary_(event, policy));
 }
 
 function publicEventPolicy_(settings, eventId) {

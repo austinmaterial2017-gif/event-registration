@@ -1815,8 +1815,20 @@ test("real public event reads expose only safe visible projections and authorita
     maxLength: 120,
     pattern: "^[^@]+@[^@]+$"
   });
+  rows["\u6d3b\u52a8\u76ee\u5f55"].push(...rows["\u6d3b\u52a8"].map((event) => ({
+    ...event,
+    spreadsheetId: event.eventId === "event-1" ? "event-1-sheet" : "unused-" + event.eventId,
+    sheetName: "\u6d3b\u52a8"
+  })));
   const harness = await createHarness({ rows, nowIso: "2026-08-10T04:00:00Z" });
-  const context = await createPublicRegistrationContext(harness.sourceSheets, {});
+  const event1Sheets = eventSpreadsheetSheets("event-1", "Ideas Forum");
+  const questionSheet = Object.values(event1Sheets)
+    .find((sheet) => headers[sheet.name].includes("questionId"));
+  questionSheet.rows[1][headers[questionSheet.name].indexOf("options")] =
+    rows["\u62a5\u540d\u95ee\u9898"][0].options;
+  const context = await createPublicRegistrationContext(harness.sourceSheets, {}, {
+    "event-1-sheet": event1Sheets
+  });
 
   const listed = context.listEvents({});
   assert.equal(listed.ok, true, JSON.stringify(listed));
@@ -1843,6 +1855,51 @@ test("real public event reads expose only safe visible projections and authorita
 
   assert.equal(context.getEvent({ eventId: "draft-event" }).code, "EVENT_NOT_FOUND");
   assert.equal(context.getEvent({ eventId: "archived-event" }).code, "EVENT_NOT_FOUND");
+});
+
+test("public catalog lists safe visible activities and reads only the requested activity sheet", async () => {
+  const rows = baseRows();
+  const catalogKey = Object.keys(headers).find((name) => headers[name].includes("spreadsheetId"));
+  rows[catalogKey].push(
+    {
+      eventId: "event-a", spreadsheetId: "sheet-a", sheetName: "\u6d3b\u52a8", title: "Activity A",
+      description: "Private notes stay private", status: "open", opensAt: "2026-08-01T00:00:00Z",
+      closesAt: "2026-08-15T00:00:00Z", location: "Main Hall", selectionMode: "free",
+      minChoices: 1, maxChoices: 2, seatMode: "self", seatZones: JSON.stringify(["A"]),
+      createdAt: "2026-07-01T00:00:00Z", updatedAt: "2026-07-01T00:00:00Z"
+    },
+    {
+      eventId: "event-b", spreadsheetId: "sheet-b", sheetName: "\u6d3b\u52a8", title: "Activity B",
+      description: "Private notes stay private", status: "open", opensAt: "2026-08-01T00:00:00Z",
+      closesAt: "2026-08-15T00:00:00Z", location: "Main Hall", selectionMode: "free",
+      minChoices: 1, maxChoices: 2, seatMode: "self", seatZones: JSON.stringify(["A"]),
+      createdAt: "2026-07-01T00:00:00Z", updatedAt: "2026-07-01T00:00:00Z"
+    },
+    {
+      eventId: "draft-event", spreadsheetId: "draft-sheet", sheetName: "\u6d3b\u52a8", title: "Private draft",
+      description: "Private", status: "draft", opensAt: "", closesAt: "", location: "",
+      selectionMode: "free", minChoices: 0, maxChoices: 1, seatMode: "none", seatZones: "[]",
+      createdAt: "2026-07-01T00:00:00Z", updatedAt: "2026-07-01T00:00:00Z"
+    }
+  );
+  const harness = await createHarness({ rows });
+  const context = await createPublicRegistrationContext(harness.sourceSheets, {}, {
+    "sheet-a": eventSpreadsheetSheets("event-a", "Activity A"),
+    "sheet-b": eventSpreadsheetSheets("event-b", "Activity B"),
+    "draft-sheet": eventSpreadsheetSheets("draft-event", "Private draft")
+  });
+
+  const listed = context.listEvents({});
+  assert.equal(listed.ok, true, JSON.stringify(listed));
+  assert.deepEqual(Array.from(listed.data.events, (event) => event.id), ["event-a", "event-b"]);
+  assert.equal(JSON.stringify(listed).includes("sheet-a"), false);
+  assert.equal(JSON.stringify(listed).includes("spreadsheetId"), false);
+  assert.equal(JSON.stringify(listed).includes("Private draft"), false);
+
+  const detail = context.getEvent({ eventId: "event-b" });
+  assert.equal(detail.ok, true, JSON.stringify(detail));
+  assert.equal(detail.data.event.title, "Activity B");
+  assert.deepEqual(context.__openedSpreadsheetIds, ["source-sheet-id", "source-sheet-id", "sheet-b"]);
 });
 
 test("Sheet switching aborts maintenance without publishing when no public ack arrives", async () => {

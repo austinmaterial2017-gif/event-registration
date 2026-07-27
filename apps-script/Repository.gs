@@ -214,7 +214,24 @@ function initializeRegistrySpreadsheet_(registry) {
 }
 
 function initializeEventSpreadsheet_(spreadsheet) {
+  reuseDefaultBlankSheet_(spreadsheet, EVENT_SHEET_NAMES_);
   initializeNamedSheets_(spreadsheet, EVENT_SHEET_NAMES_);
+}
+
+function reuseDefaultBlankSheet_(spreadsheet, sheetNames) {
+  if (typeof spreadsheet.getSheets !== 'function') return;
+  var missingName = sheetNames.filter(function(sheetName) {
+    return !spreadsheet.getSheetByName(sheetName);
+  })[0];
+  if (!missingName) return;
+  var defaultSheet = spreadsheet.getSheets().filter(function(sheet) {
+    return sheet.getName() === 'Sheet1' &&
+      sheet.getLastRow() === 0 &&
+      (typeof sheet.getLastColumn !== 'function' || sheet.getLastColumn() === 0);
+  })[0];
+  if (defaultSheet && typeof defaultSheet.setName === 'function') {
+    defaultSheet.setName(missingName);
+  }
 }
 
 function initializeNamedSheets_(spreadsheet, sheetNames) {

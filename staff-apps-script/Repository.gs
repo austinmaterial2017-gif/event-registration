@@ -78,12 +78,30 @@ function upsertActivityCatalogEntry_(registry, event, spreadsheet) {
     createdAt: event.createdAt,
     updatedAt: event.updatedAt
   };
-  writeAdminRow_(
-    registry,
-    '活动目录',
-    matches.length === 1 ? matches[0].rowNumber : null,
-    entry
-  );
+  var sheet = getRequiredSheet_(registry, '活动目录');
+  var existingRowNumber = matches.length === 1 ? matches[0].rowNumber : null;
+  var targetRowNumber = existingRowNumber || sheet.getLastRow() + 1;
+  var previousValues = existingRowNumber
+    ? sheet.getRange(
+      existingRowNumber, 1, 1, STAFF_SHEET_DEFINITIONS['活动目录'].length
+    ).getValues()[0]
+    : null;
+  try {
+    writeAdminRow_(registry, '活动目录', existingRowNumber, entry);
+  } catch (error) {
+    try {
+      if (previousValues) {
+        sheet.getRange(
+          targetRowNumber, 1, 1, previousValues.length
+        ).setValues([previousValues]);
+      } else if (sheet.getLastRow() >= targetRowNumber) {
+        sheet.deleteRow(targetRowNumber);
+      }
+    } catch (rollbackError) {
+      adminError_('INTEGRITY_ERROR');
+    }
+    throw error;
+  }
   return entry;
 }
 
@@ -250,7 +268,24 @@ function initializeRegistrySpreadsheet_(registry) {
 }
 
 function initializeEventSpreadsheet_(spreadsheet) {
+  reuseDefaultBlankStaffSheet_(spreadsheet, EVENT_SHEET_NAMES_);
   initializeNamedStaffSheets_(spreadsheet, EVENT_SHEET_NAMES_);
+}
+
+function reuseDefaultBlankStaffSheet_(spreadsheet, sheetNames) {
+  if (typeof spreadsheet.getSheets !== 'function') return;
+  var missingName = sheetNames.filter(function(sheetName) {
+    return !spreadsheet.getSheetByName(sheetName);
+  })[0];
+  if (!missingName) return;
+  var defaultSheet = spreadsheet.getSheets().filter(function(sheet) {
+    return sheet.getName() === 'Sheet1' &&
+      sheet.getLastRow() === 0 &&
+      (typeof sheet.getLastColumn !== 'function' || sheet.getLastColumn() === 0);
+  })[0];
+  if (defaultSheet && typeof defaultSheet.setName === 'function') {
+    defaultSheet.setName(missingName);
+  }
 }
 
 function initializeNamedStaffSheets_(spreadsheet, sheetNames) {

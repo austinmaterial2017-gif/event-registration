@@ -26,17 +26,33 @@ class FakeSheet {
   constructor(name, records = [], onWrite) {
     this.name = name;
     this.onWrite = onWrite;
-    this.rows = [
-      headers[name].slice(),
-      ...records.map((record) => headers[name].map((key) => record[key] ?? ""))
-    ];
+    const sheetHeaders = headers[name];
+    this.rows = sheetHeaders ? [
+      sheetHeaders.slice(),
+      ...records.map((record) => sheetHeaders.map((key) => record[key] ?? ""))
+    ] : [];
+    this.afterWriteCallbacks = [];
   }
   getName() { return this.name; }
+  setName(name) {
+    const previous = this.name;
+    this.name = name;
+    this.onRename?.(previous, name, this);
+    return this;
+  }
   getLastRow() { return this.rows.length; }
-  getLastColumn() { return this.rows[0]?.length || headers[this.name].length; }
+  getLastColumn() { return this.rows[0]?.length || (headers[this.name] || []).length; }
+  afterNextWrite(callback) {
+    this.afterWriteCallbacks.push(callback);
+  }
+  notifyWrite() {
+    const callback = this.afterWriteCallbacks.shift();
+    if (callback) callback();
+  }
   insertRowsBefore(row, count) {
     this.onWrite?.(this.name);
     this.rows.splice(row - 1, 0, ...Array.from({ length: count }, () => []));
+    this.notifyWrite();
   }
   getRange(row, column, rowCount, columnCount) {
     return {
@@ -50,20 +66,24 @@ class FakeSheet {
           source.forEach((value, x) => { target[column - 1 + x] = value; });
           this.rows[row - 1 + y] = target;
         });
+        this.notifyWrite();
       }
     };
   }
   appendRow(values) {
     this.onWrite?.(this.name);
     this.rows.push(values.slice());
+    this.notifyWrite();
   }
   deleteRow(row) {
     this.onWrite?.(this.name);
     this.rows.splice(row - 1, 1);
+    this.notifyWrite();
   }
   deleteRows(row, count) {
     this.onWrite?.(this.name);
     this.rows.splice(row - 1, count);
+    this.notifyWrite();
   }
 }
 
@@ -290,6 +310,14 @@ async function createSystem({ onWrite, failActivityCreationStage } = {}) {
         const id = `created-activity-${++createdCount}`;
         const createdSheets = {};
         const writeCounts = {};
+        const registerCreatedSheet = (sheet) => {
+          sheet.onRename = (previous, next) => {
+            delete createdSheets[previous];
+            createdSheets[next] = sheet;
+          };
+          createdSheets[sheet.getName()] = sheet;
+          return sheet;
+        };
         const spreadsheet = {
           id,
           name,
@@ -298,6 +326,7 @@ async function createSystem({ onWrite, failActivityCreationStage } = {}) {
           getId: () => id,
           getName: () => name,
           getSheetByName: (sheetName) => createdSheets[sheetName] || null,
+          getSheets: () => Object.values(createdSheets),
           insertSheet: (sheetName) => {
             const sheet = new FakeSheet(sheetName, [], (writtenSheetName) => {
               assert.equal(publicLockDepth, 1, `${writtenSheetName} changed outside the public lock`);
@@ -313,14 +342,26 @@ async function createSystem({ onWrite, failActivityCreationStage } = {}) {
               onWrite?.(writtenSheetName);
             });
             sheet.rows = [];
-            createdSheets[sheetName] = sheet;
-            return sheet;
+            return registerCreatedSheet(sheet);
           },
           addEditor: (email) => {
             spreadsheet.editors.push(email);
             return spreadsheet;
           }
         };
+        registerCreatedSheet(new FakeSheet("Sheet1", [], (writtenSheetName) => {
+          assert.equal(publicLockDepth, 1, `${writtenSheetName} changed outside the public lock`);
+          writeCounts[writtenSheetName] = (writeCounts[writtenSheetName] || 0) + 1;
+          if (failActivityCreationStage === "initialize" &&
+              writeCounts[writtenSheetName] === 1) {
+            throw new Error("injected initialization failure");
+          }
+          if (failActivityCreationStage === "event" &&
+              writtenSheetName === "活动" && writeCounts[writtenSheetName] === 2) {
+            throw new Error("injected event write failure");
+          }
+          onWrite?.(writtenSheetName);
+        }));
         createdById[id] = spreadsheet;
         createdSpreadsheets.push(spreadsheet);
         return spreadsheet;
@@ -454,6 +495,12 @@ test("assembled automatic activity creation prepares private Sheets before catal
   assert.equal(system.createdSpreadsheets[0].editors.includes("admin@example.com"), true);
   assert.equal(system.createdSpreadsheets[0].getName().length <= 100, true);
   assert.doesNotMatch(system.createdSpreadsheets[0].getName(), /[\u0000-\u001f\u007f-\u009f]/);
+  for (const spreadsheet of system.createdSpreadsheets) {
+    assert.deepEqual(
+      Object.keys(spreadsheet.sheets).sort(),
+      ["活动", "场次", "座位", "报名问题", "参加者", "报名项目", "签到记录", "操作记录"].sort()
+    );
+  }
 
   const catalog = rows(system.registrySheets["活动目录"]);
   assert.equal(catalog.length, 3);
@@ -466,10 +513,15 @@ test("assembled automatic activity creation prepares private Sheets before catal
 });
 
 test("assembled creation failures leave the existing catalog unchanged", async (t) => {
-  for (const stage of ["create", "initialize", "event", "catalog"]) {
+  for (const stage of ["create", "initialize", "event", "catalog", "catalog-post-write"]) {
     await t.test(stage, async () => {
       const system = await createSystem({ failActivityCreationStage: stage });
       const before = JSON.stringify(rows(system.registrySheets["活动目录"]));
+      if (stage === "catalog-post-write") {
+        system.registrySheets["活动目录"].afterNextWrite(() => {
+          throw new Error("injected catalog post-write failure");
+        });
+      }
 
       const result = system.staffContext.saveAdminEvent({
         title: `Failed ${stage}`,
@@ -480,6 +532,71 @@ test("assembled creation failures leave the existing catalog unchanged", async (
       assert.equal(JSON.stringify(rows(system.registrySheets["活动目录"])), before);
     });
   }
+});
+
+test("existing event catalog post-write failure restores both catalog and activity state", async () => {
+  const system = await createSystem();
+  const beforeCatalog = JSON.stringify(rows(system.registrySheets["活动目录"]));
+  const beforeEvent = JSON.stringify(rows(system.sheets["活动"]));
+  const beforeSettings = JSON.stringify(rows(system.registrySheets["系统设置"]));
+  const beforeAudit = JSON.stringify(rows(system.sheets["操作记录"]));
+  system.registrySheets["活动目录"].afterNextWrite(() => {
+    throw new Error("injected existing catalog post-write failure");
+  });
+
+  const result = system.staffContext.saveAdminEvent({
+    eventId: "event-1",
+    title: "Must roll back"
+  });
+
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.equal(JSON.stringify(rows(system.registrySheets["活动目录"])), beforeCatalog);
+  assert.equal(JSON.stringify(rows(system.sheets["活动"])), beforeEvent);
+  assert.equal(JSON.stringify(rows(system.registrySheets["系统设置"])), beforeSettings);
+  assert.equal(JSON.stringify(rows(system.sheets["操作记录"])), beforeAudit);
+});
+
+test("seat-plan changes publish catalog summaries and roll back after a post-write catalog failure", async (t) => {
+  await t.test("success", async () => {
+    const system = await createSystem();
+    const result = system.staffContext.saveAdminSeatPlan({
+      eventId: "event-1",
+      action: "generate",
+      mode: "zone",
+      zones: [{ name: "Balcony", rows: 1, seatsPerRow: 1 }]
+    });
+
+    assert.equal(result.ok, true, JSON.stringify(result));
+    const event = rows(system.sheets["活动"])[0];
+    const catalog = rows(system.registrySheets["活动目录"])[0];
+    assert.equal(event.seatMode, "zone");
+    assert.equal(catalog.seatMode, "zone");
+    assert.deepEqual(JSON.parse(catalog.seatZones), ["Balcony"]);
+  });
+
+  await t.test("post-write failure", async () => {
+    const system = await createSystem();
+    const beforeCatalog = JSON.stringify(rows(system.registrySheets["活动目录"]));
+    const beforeEvent = JSON.stringify(rows(system.sheets["活动"]));
+    const beforeSeats = JSON.stringify(rows(system.sheets["座位"]));
+    const beforeAudit = JSON.stringify(rows(system.sheets["操作记录"]));
+    system.registrySheets["活动目录"].afterNextWrite(() => {
+      throw new Error("injected seat-plan catalog post-write failure");
+    });
+
+    const result = system.staffContext.saveAdminSeatPlan({
+      eventId: "event-1",
+      action: "generate",
+      mode: "zone",
+      zones: [{ name: "Balcony", rows: 1, seatsPerRow: 1 }]
+    });
+
+    assert.equal(result.ok, false, JSON.stringify(result));
+    assert.equal(JSON.stringify(rows(system.registrySheets["活动目录"])), beforeCatalog);
+    assert.equal(JSON.stringify(rows(system.sheets["活动"])), beforeEvent);
+    assert.equal(JSON.stringify(rows(system.sheets["座位"])), beforeSeats);
+    assert.equal(JSON.stringify(rows(system.sheets["操作记录"])), beforeAudit);
+  });
 });
 
 test("assembled staff check-in and administrator writes share the public backend lock", async () => {

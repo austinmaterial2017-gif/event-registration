@@ -25,7 +25,10 @@ const headers = {
 class FakeSheet {
   constructor(name, records = []) {
     this.name = name;
-    this.rows = [headers[name], ...records.map((record) => headers[name].map((key) => record[key] ?? ""))];
+    const sheetHeaders = headers[name];
+    this.rows = sheetHeaders
+      ? [sheetHeaders, ...records.map((record) => sheetHeaders.map((key) => record[key] ?? ""))]
+      : [];
     this.writeCount = 0;
     this.writeAttemptCount = 0;
     this.writeErrorsByAttempt = new Map();
@@ -60,8 +63,14 @@ class FakeSheet {
     if (callback) callback();
   }
   getName() { return this.name; }
+  setName(name) {
+    const previous = this.name;
+    this.name = name;
+    this.onRename?.(previous, name, this);
+    return this;
+  }
   getLastRow() { return this.rows.length; }
-  getLastColumn() { return this.rows[0]?.length || headers[this.name].length; }
+  getLastColumn() { return this.rows[0]?.length || (headers[this.name] || []).length; }
   insertRowsBefore(row, count) {
     this.consumeWriteFailure();
     this.writeCount += 1;
@@ -321,6 +330,20 @@ async function createHarness(options = {}) {
         if (options.createActivityError) throw options.createActivityError;
         const spreadsheetId = `created-activity-${++createCount}`;
         const createdSheets = {};
+        const registerCreatedSheet = (sheet) => {
+          sheet.onRename = (previous, next) => {
+            delete createdSheets[previous];
+            createdSheets[next] = sheet;
+            if (options.failCreatedEventWrite && next === "活动") {
+              sheet.failWriteOnAttempt(2, options.failCreatedEventWrite);
+            }
+          };
+          createdSheets[sheet.getName()] = sheet;
+          if (options.failCreatedEventWrite && sheet.getName() === "活动") {
+            sheet.failWriteOnAttempt(2, options.failCreatedEventWrite);
+          }
+          return sheet;
+        };
         const spreadsheet = {
           id: spreadsheetId,
           name,
@@ -329,21 +352,19 @@ async function createHarness(options = {}) {
           getId: () => spreadsheetId,
           getName: () => name,
           getSheetByName: (sheetName) => createdSheets[sheetName] || null,
+          getSheets: () => Object.values(createdSheets),
           insertSheet: (sheetName) => {
             if (options.initializeActivityError) throw options.initializeActivityError;
             const sheet = new FakeSheet(sheetName, []);
             sheet.rows = [];
-            if (options.failCreatedEventWrite && sheetName === "活动") {
-              sheet.failWriteOnAttempt(2, options.failCreatedEventWrite);
-            }
-            createdSheets[sheetName] = sheet;
-            return sheet;
+            return registerCreatedSheet(sheet);
           },
           addEditor: (email) => {
             spreadsheet.editors.push(email);
             return spreadsheet;
           }
         };
+        registerCreatedSheet(new FakeSheet("Sheet1", []));
         spreadsheets[spreadsheetId] = spreadsheet;
         createdSpreadsheets.push(spreadsheet);
         return spreadsheet;
@@ -634,13 +655,24 @@ test("registry and event initializers keep their private schemas separate", asyn
   assert.equal(sheets["活动"], undefined);
 
   const eventSheets = {};
+  const registerEventSheet = (sheet) => {
+    sheet.onRename = (previous, next) => {
+      delete eventSheets[previous];
+      eventSheets[next] = sheet;
+    };
+    eventSheets[sheet.getName()] = sheet;
+    return sheet;
+  };
+  registerEventSheet(new FakeSheet("Sheet1", []));
+  const notesSheet = registerEventSheet(new FakeSheet("Notes", []));
+  notesSheet.rows = [["keep me"]];
   const eventSpreadsheet = {
     getSheetByName: (name) => eventSheets[name] || null,
+    getSheets: () => Object.values(eventSheets),
     insertSheet: (name) => {
       const sheet = new FakeSheet(name, []);
       sheet.rows = [];
-      eventSheets[name] = sheet;
-      return sheet;
+      return registerEventSheet(sheet);
     }
   };
   context.initializeEventSpreadsheet_(eventSpreadsheet);
@@ -648,6 +680,11 @@ test("registry and event initializers keep their private schemas separate", asyn
   assert.equal(eventSheets["活动"].rows.length, 1);
   assert.equal(eventSheets["活动目录"], undefined);
   assert.equal(eventSheets["票券索引"], undefined);
+  assert.deepEqual(
+    Object.keys(eventSheets).sort(),
+    ["Notes", "活动", "场次", "座位", "报名问题", "参加者", "报名项目", "签到记录", "操作记录"].sort()
+  );
+  assert.deepEqual(eventSheets.Notes.rows, [["keep me"]]);
 });
 
 test("registry routing resolves one validated activity and ticket route without raw tokens", async () => {
@@ -828,10 +865,12 @@ test("new activities create distinct initialized private Sheets and publish only
   assert.equal(harness.createdSpreadsheets[0].getName().length <= 100, true);
   assert.doesNotMatch(harness.createdSpreadsheets[0].getName(), /[\u0000-\u001f\u007f-\u009f]/);
   for (const spreadsheet of harness.createdSpreadsheets) {
-    for (const sheetName of [
+    const expectedSheetNames = [
       "活动", "场次", "座位", "报名问题", "参加者",
       "报名项目", "签到记录", "操作记录"
-    ]) {
+    ];
+    assert.deepEqual(Object.keys(spreadsheet.sheets).sort(), expectedSheetNames.sort());
+    for (const sheetName of expectedSheetNames) {
       assert.deepEqual(Array.from(spreadsheet.sheets[sheetName].rows[0]), headers[sheetName]);
     }
   }
@@ -851,7 +890,8 @@ test("failed activity preparation never publishes a catalog entry or changes exi
     ["create", { createActivityError: new Error("injected create failure") }],
     ["initialize", { initializeActivityError: new Error("injected initialize failure") }],
     ["event write", { failCreatedEventWrite: new Error("injected event write failure") }],
-    ["catalog write", {}]
+    ["catalog write", {}],
+    ["catalog post-write", {}]
   ];
 
   for (const [stage, options] of stages) {
@@ -862,6 +902,11 @@ test("failed activity preparation never publishes a catalog entry or changes exi
         harness.sourceSheets["活动目录"].failNextWrite(
           new Error("injected catalog write failure")
         );
+      }
+      if (stage === "catalog post-write") {
+        harness.sourceSheets["活动目录"].afterNextWrite(() => {
+          throw new Error("injected catalog post-write failure");
+        });
       }
 
       const result = harness.context.saveAdminEvent({
@@ -957,6 +1002,10 @@ test("protected dashboard and mutations route only through the selected activity
     mode: "self",
     zones: [{ name: "B", rows: 1, seatsPerRow: 1 }]
   }).ok, true);
+  const catalogAfterSeatPlan = records(harness.sourceSheets["活动目录"])
+    .find((entry) => entry.eventId === "event-2");
+  assert.equal(catalogAfterSeatPlan.seatMode, "self");
+  assert.deepEqual(JSON.parse(catalogAfterSeatPlan.seatZones), ["B"]);
   assert.equal(harness.context.adminRecordAction({
     eventId: "event-2",
     registrationId: "registration-1",
@@ -968,6 +1017,181 @@ test("protected dashboard and mutations route only through the selected activity
   assert.equal(records(harness.sourceSheets["活动"])[0].title, "Ideas Forum");
   assert.equal(records(event2Sheets["报名项目"])[0].status, "cancelled");
   assert.equal(records(harness.sourceSheets["报名项目"])[0].status, "active");
+});
+
+test("session, question, and seat IDs fail closed when stray cross-event rows share the selected Sheet", async (t) => {
+  async function harnessFor(event2Sheets) {
+    const rows = baseRows();
+    rows["活动目录"].push({
+      ...records(event2Sheets["活动"])[0],
+      spreadsheetId: "event-2-sheet",
+      sheetName: "活动"
+    });
+    return createHarness({
+      rows,
+      additionalSpreadsheets: { "event-2-sheet": event2Sheets }
+    });
+  }
+
+  await t.test("session update", async () => {
+    const event2Sheets = eventSpreadsheetSheets("event-2", "Second Activity");
+    event2Sheets["场次"].rows.push(headers["场次"].map((key) => ({
+      sessionId: "stray-session",
+      eventId: "event-1",
+      title: "Stray session",
+      status: "open",
+      createdAt: "2026-07-01T00:00:00Z",
+      updatedAt: "2026-07-01T00:00:00Z"
+    })[key] ?? ""));
+    const harness = await harnessFor(event2Sheets);
+    const before = JSON.stringify(records(event2Sheets["场次"]));
+
+    const result = harness.context.saveAdminSession({
+      eventId: "event-2",
+      sessionId: "stray-session",
+      title: "Must not move",
+      status: "open"
+    });
+
+    assert.equal(result.code, "CONFLICT");
+    assert.equal(JSON.stringify(records(event2Sheets["场次"])), before);
+  });
+
+  await t.test("duplicate question ID", async () => {
+    const event2Sheets = eventSpreadsheetSheets("event-2", "Second Activity");
+    const existing = records(event2Sheets["报名问题"])[0];
+    event2Sheets["报名问题"].rows.push(headers["报名问题"].map((key) => ({
+      ...existing,
+      eventId: "event-1"
+    })[key] ?? ""));
+    const harness = await harnessFor(event2Sheets);
+    const before = JSON.stringify(records(event2Sheets["报名问题"]));
+
+    const result = harness.context.saveAdminQuestion({
+      eventId: "event-2",
+      questionId: existing.questionId,
+      label: "Must not update"
+    });
+
+    assert.equal(result.code, "INTEGRITY_ERROR");
+    assert.equal(JSON.stringify(records(event2Sheets["报名问题"])), before);
+  });
+
+  await t.test("duplicate seat ID", async () => {
+    const event2Sheets = eventSpreadsheetSheets("event-2", "Second Activity");
+    const existing = records(event2Sheets["座位"])
+      .find((seat) => seat.seatId === "seat-new");
+    event2Sheets["座位"].rows.push(headers["座位"].map((key) => ({
+      ...existing,
+      eventId: "event-1"
+    })[key] ?? ""));
+    const harness = await harnessFor(event2Sheets);
+    const before = JSON.stringify(records(event2Sheets["座位"]));
+
+    const result = harness.context.saveAdminSeatPlan({
+      eventId: "event-2",
+      action: "reserve",
+      seatId: existing.seatId
+    });
+
+    assert.equal(result.code, "INTEGRITY_ERROR");
+    assert.equal(JSON.stringify(records(event2Sheets["座位"])), before);
+  });
+
+  await t.test("seat generation session ID", async () => {
+    const event2Sheets = eventSpreadsheetSheets("event-2", "Second Activity");
+    event2Sheets["场次"].rows.push(headers["场次"].map((key) => ({
+      sessionId: "stray-session",
+      eventId: "event-1",
+      title: "Stray session",
+      status: "open",
+      createdAt: "2026-07-01T00:00:00Z",
+      updatedAt: "2026-07-01T00:00:00Z"
+    })[key] ?? ""));
+    const harness = await harnessFor(event2Sheets);
+    const beforeSeats = JSON.stringify(records(event2Sheets["座位"]));
+    const beforeEvent = JSON.stringify(records(event2Sheets["活动"]));
+
+    const result = harness.context.saveAdminSeatPlan({
+      eventId: "event-2",
+      sessionId: "stray-session",
+      action: "generate",
+      mode: "self",
+      zones: [{ name: "", rows: 1, seatsPerRow: 1 }]
+    });
+
+    assert.equal(result.code, "CONFLICT");
+    assert.equal(JSON.stringify(records(event2Sheets["座位"])), beforeSeats);
+    assert.equal(JSON.stringify(records(event2Sheets["活动"])), beforeEvent);
+  });
+});
+
+test("record cancellation and seat adjustment ignore stray cross-event seats", async (t) => {
+  async function harnessFor(event2Sheets) {
+    const rows = baseRows();
+    rows["活动目录"].push({
+      ...records(event2Sheets["活动"])[0],
+      spreadsheetId: "event-2-sheet",
+      sheetName: "活动"
+    });
+    return createHarness({
+      rows,
+      additionalSpreadsheets: { "event-2-sheet": event2Sheets }
+    });
+  }
+
+  function addStraySeat(event2Sheets) {
+    event2Sheets["座位"].rows.push(headers["座位"].map((key) => ({
+      seatId: "stray-seat",
+      eventId: "event-1",
+      sessionId: "session-1",
+      label: "X-01",
+      zone: "X",
+      status: "registered",
+      holderRegistrationId: "registration-1",
+      createdAt: "2026-07-01T00:00:00Z",
+      updatedAt: "2026-07-01T00:00:00Z"
+    })[key] ?? ""));
+  }
+
+  await t.test("cancellation", async () => {
+    const event2Sheets = eventSpreadsheetSheets("event-2", "Second Activity");
+    addStraySeat(event2Sheets);
+    const harness = await harnessFor(event2Sheets);
+
+    const result = harness.context.adminRecordAction({
+      eventId: "event-2",
+      action: "cancel_registration",
+      registrationId: "registration-1",
+      confirm: true
+    });
+
+    assert.equal(result.ok, true, JSON.stringify(result));
+    const stray = records(event2Sheets["座位"])
+      .find((seat) => seat.seatId === "stray-seat");
+    assert.equal(stray.status, "registered");
+    assert.equal(stray.holderRegistrationId, "registration-1");
+  });
+
+  await t.test("seat adjustment", async () => {
+    const event2Sheets = eventSpreadsheetSheets("event-2", "Second Activity");
+    addStraySeat(event2Sheets);
+    const harness = await harnessFor(event2Sheets);
+
+    const result = harness.context.adminRecordAction({
+      eventId: "event-2",
+      action: "adjust_seat",
+      registrationId: "registration-1",
+      seatId: "seat-new",
+      confirm: true
+    });
+
+    assert.equal(result.ok, true, JSON.stringify(result));
+    const stray = records(event2Sheets["座位"])
+      .find((seat) => seat.seatId === "stray-seat");
+    assert.equal(stray.status, "registered");
+    assert.equal(stray.holderRegistrationId, "registration-1");
+  });
 });
 
 function postPublic(context, action, payload) {

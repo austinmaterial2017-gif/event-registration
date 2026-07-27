@@ -244,6 +244,10 @@ async function createHarness(options = {}) {
   }
   const sourceSheets = Object.fromEntries(Object.entries(sourceRows)
     .map(([name, values]) => [name, new FakeSheet(name, values)]));
+  if (options.seedTicketRouting === true) {
+    addPublicEventRoute(sourceSheets, sourceSheets, "source-event-sheet-id");
+    addTicketRoute(sourceSheets, sourceSheets);
+  }
   const targetSheets = Object.fromEntries(Object.entries(cloneRows(options.targetRows || baseRows()))
     .map(([name, values]) => [name, new FakeSheet(name, values)]));
   const spreadsheets = {
@@ -256,6 +260,11 @@ async function createHarness(options = {}) {
       getId: () => "target-sheet-id",
       getName: () => "Target Registration Data",
       getSheetByName: (name) => targetSheets[name] || null
+    },
+    "source-event-sheet-id": {
+      getId: () => "source-event-sheet-id",
+      getName: () => "Source Activity Data",
+      getSheetByName: (name) => sourceSheets[name] || null
     }
   };
   const locks = [];
@@ -327,14 +336,18 @@ async function createHarness(options = {}) {
     "admin.switchSheet": (payload, actor) => context.switchAdminSheet_(payload, actor),
     "staff.getTicket": (payload) => {
       const registry = context.getRootConfiguredSpreadsheet_();
-      const spreadsheet = context.getConfiguredSpreadsheet_(registry);
-      return context.staffTicketProjection_(context.findStaffTicket_(spreadsheet, payload?.token));
+      const route = context.getTicketRouteByToken_(registry, payload?.token);
+      const spreadsheet = context.getEventSpreadsheet_(registry, route.eventId);
+      return context.staffTicketProjection_(
+        context.findStaffTicket_(spreadsheet, payload?.token, route)
+      );
     },
     "staff.checkIn": (payload, actor) => {
       const registry = context.getRootConfiguredSpreadsheet_();
       context.requireNoSwitchMaintenance_(registry);
-      const spreadsheet = context.getConfiguredSpreadsheet_(registry);
-      const match = context.findStaffTicket_(spreadsheet, payload?.token);
+      const route = context.getTicketRouteByToken_(registry, payload?.token);
+      const spreadsheet = context.getEventSpreadsheet_(registry, route.eventId);
+      const match = context.findStaffTicket_(spreadsheet, payload?.token, route);
       if (match.status !== "active") context.staffAttendanceError_("TICKET_INACTIVE");
       if (String(match.event.status || "").toLowerCase() !== "live") {
         context.staffAttendanceError_("CHECK_IN_CLOSED");
@@ -505,6 +518,23 @@ function addPublicEventRoute(registrySheets, eventSheets, spreadsheetId = "event
     headers["活动目录"].map((key) => route[key] ?? "")
   );
   return { [spreadsheetId]: eventSheets };
+}
+
+function addTicketRoute(registrySheets, eventSheets) {
+  const registration = records(eventSheets["报名项目"])[0];
+  const stored = JSON.parse(registration.answers);
+  const route = {
+    ticketNumber: registration.ticketNumber,
+    tokenDigest: createHash("sha256").update(stored.ticketToken).digest("hex"),
+    eventId: registration.eventId,
+    registrationId: registration.registrationId,
+    status: registration.status,
+    createdAt: registration.createdAt,
+    updatedAt: registration.updatedAt
+  };
+  registrySheets["票券索引"].rows.push(
+    headers["票券索引"].map((key) => route[key] ?? "")
+  );
 }
 
 function assertPublicCode(action, code) {
@@ -732,6 +762,7 @@ async function createPublicMaintenanceHarness(expiresAt) {
   const harness = await createHarness({ nowIso: "2026-08-10T04:00:00Z" });
   setSwitchMaintenance(harness, expiresAt);
   const eventRoute = addPublicEventRoute(harness.sourceSheets, harness.sourceSheets);
+  addTicketRoute(harness.sourceSheets, harness.sourceSheets);
   const publicContext = await createPublicRegistrationContext(
     harness.sourceSheets,
     {},
@@ -1260,7 +1291,7 @@ test("a staff lookup pins one active spreadsheet even when the root pointer chan
   const rows = baseRows();
   const targetRows = baseRows();
   targetRows["活动"] = [];
-  const harness = await createHarness({ rows, targetRows });
+  const harness = await createHarness({ rows, targetRows, seedTicketRouting: true });
   harness.sourceSheets["报名项目"].afterNextRead(() => {
     harness.sourceSheets["系统设置"].appendRow([
       "ACTIVE_SPREADSHEET_ID",
@@ -1681,7 +1712,8 @@ test("exact and elapsed maintenance expiry permit registration, cancellation, ex
       const harness = await createHarness({
         rows,
         nowIso: "2026-08-16T09:30:00Z",
-        staffAllowlist: ["admin@example.com"]
+        staffAllowlist: ["admin@example.com"],
+        seedTicketRouting: true
       });
       setSwitchMaintenance(harness, boundary.staffExpiresAt);
 

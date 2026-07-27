@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 
 const headers = {
   "活动": ["eventId", "title", "description", "status", "opensAt", "closesAt", "location", "selectionMode", "minChoices", "maxChoices", "seatMode", "seatZones", "createdAt", "updatedAt"],
@@ -37,38 +38,42 @@ class FakeSheet {
 
 function fixture(overrides = {}) {
   const token = overrides.token || "opaque-token";
+  const eventId = overrides.eventId || "event-1";
+  const registrationId = overrides.registrationId || "reg-1";
+  const participantId = overrides.participantId || "person-1";
+  const ticketNumber = overrides.ticketNumber || "EVT-1";
   return {
     token,
     rows: {
       "活动": [{
-        eventId: "event-1", title: "Ideas", status: overrides.eventStatus || "live",
+        eventId, title: overrides.title || "Ideas", status: overrides.eventStatus || "live",
         location: "Main Hall", opensAt: "", closesAt: ""
       }],
       "场次": [
         {
-          sessionId: "s1", eventId: "event-1", title: "One", speaker: "Lin",
+          sessionId: "s1", eventId, title: "One", speaker: "Lin",
           startsAt: "2026-08-16T09:00:00Z", endsAt: "2026-08-16T10:00:00Z",
           status: overrides.sessionStatus || "live"
         },
         {
-          sessionId: "s2", eventId: "event-1", title: "Two", speaker: "Nan",
+          sessionId: "s2", eventId, title: "Two", speaker: "Nan",
           startsAt: "2026-08-16T10:00:00Z", endsAt: "2026-08-16T11:00:00Z",
           status: overrides.sessionStatus || "live"
         }
       ],
       "座位": [
-        { seatId: "seat-1", eventId: "event-1", sessionId: "s1", label: "A-01", holderRegistrationId: "reg-1", status: "registered" },
-        { seatId: "seat-2", eventId: "event-1", sessionId: "s2", label: "B-02", holderRegistrationId: "reg-1", status: "registered" }
+        { seatId: "seat-1", eventId, sessionId: "s1", label: "A-01", holderRegistrationId: registrationId, status: "registered" },
+        { seatId: "seat-2", eventId, sessionId: "s2", label: "B-02", holderRegistrationId: registrationId, status: "registered" }
       ],
-      "参加者": [{ participantId: "person-1", name: "Alice Chan", phone: "0123456789", email: "alice@example.com" }],
+      "参加者": [{ participantId, name: "Alice Chan", phone: "0123456789", email: "alice@example.com" }],
       "报名项目": [
         {
-          registrationId: "reg-1", eventId: "event-1", participantId: "person-1", ticketNumber: "EVT-1",
+          registrationId, eventId, participantId, ticketNumber,
           status: overrides.ticketStatus || "active", sessionIds: JSON.stringify(["s1"]),
           answers: JSON.stringify({ ticketToken: token, values: { email: "alice@example.com" } })
         },
         {
-          registrationId: "reg-1", eventId: "event-1", participantId: "person-1", ticketNumber: "EVT-1",
+          registrationId, eventId, participantId, ticketNumber,
           status: overrides.ticketStatus || "active", sessionIds: JSON.stringify(["s2"]),
           answers: JSON.stringify({ ticketToken: token, values: { email: "alice@example.com" } })
         }
@@ -82,10 +87,36 @@ async function createHarness(options = {}) {
   const data = options.data || fixture();
   const writes = [];
   const locks = [];
+  const openedEventIds = [];
   let lockDepth = 0;
   let uuid = 0;
-  const sheets = Object.fromEntries(Object.entries(data.rows).map(([name, rows]) => [name, new FakeSheet(name, rows, writes)]));
-  const spreadsheet = { getSheetByName: (name) => sheets[name] };
+  const sheetsBySpreadsheet = new Map();
+  const eventSpreadsheets = {};
+  const eventSheetsById = {};
+  const eventDataById = options.eventDataById || {
+    [data.rows["活动"][0].eventId]: data
+  };
+  Object.entries(eventDataById).forEach(([eventId, eventData]) => {
+    const activitySheets = Object.fromEntries(Object.entries(eventData.rows)
+      .map(([name, records]) => [name, new FakeSheet(name, records, writes)]));
+    const activitySpreadsheet = { getSheetByName: (name) => activitySheets[name] };
+    sheetsBySpreadsheet.set(activitySpreadsheet, activitySheets);
+    eventSpreadsheets[eventId] = activitySpreadsheet;
+    eventSheetsById[eventId] = activitySheets;
+  });
+  const firstEventId = Object.keys(eventSpreadsheets)[0];
+  const spreadsheet = eventSpreadsheets[firstEventId];
+  const sheets = eventSheetsById[firstEventId];
+  const registry = {};
+  const routes = options.routes || Object.entries(eventDataById).map(([eventId, eventData]) => ({
+    ticketNumber: eventData.rows["报名项目"][0].ticketNumber,
+    tokenDigest: createHash("sha256").update(eventData.token.trim()).digest("hex"),
+    eventId,
+    registrationId: eventData.rows["报名项目"][0].registrationId,
+    status: eventData.rows["报名项目"][0].status,
+    createdAt: "2026-08-01T00:00:00.000Z",
+    updatedAt: "2026-08-01T00:00:00.000Z"
+  }));
   const RealDate = Date;
   const now = options.now || "2026-08-16T09:30:00Z";
   class ServerDate extends RealDate {
@@ -93,12 +124,34 @@ async function createHarness(options = {}) {
     static now() { return RealDate.parse(now); }
   }
   const getConfiguredSpreadsheet = () => spreadsheet;
-  const getRequiredSheet = (_spreadsheet, name) => sheets[name];
+  const getRequiredSheet = (targetSpreadsheet, name) =>
+    (sheetsBySpreadsheet.get(targetSpreadsheet) || sheets)[name];
   const normalizeRow = (name, row) => headers[name].map((key) => row[key] ?? "");
-  const readRows = (_spreadsheet, name) => sheets[name].rows.slice(1).map((values, index) => ({
+  const readRows = (targetSpreadsheet, name) =>
+    (sheetsBySpreadsheet.get(targetSpreadsheet) || sheets)[name].rows.slice(1).map((values, index) => ({
     rowNumber: index + 2,
     ...Object.fromEntries(headers[name].map((key, column) => [key, values[column]]))
   }));
+  const routingError = (code) => {
+    const error = new Error("private ticket routing failed");
+    error.publicCode = code;
+    throw error;
+  };
+  const getTicketRouteByToken = (_registry, token) => {
+    const normalized = typeof token === "string" ? token.trim() : "";
+    if (!normalized) routingError("TICKET_NOT_FOUND");
+    const digest = createHash("sha256").update(normalized).digest("hex");
+    const matches = routes.filter((route) => route.tokenDigest === digest);
+    if (!matches.length) routingError("TICKET_NOT_FOUND");
+    if (matches.length !== 1) routingError("INTEGRITY_ERROR");
+    return matches[0];
+  };
+  const getEventSpreadsheet = (_registry, eventId) => {
+    openedEventIds.push(eventId);
+    const routed = eventSpreadsheets[eventId];
+    if (!routed) routingError("INTEGRITY_ERROR");
+    return routed;
+  };
   const withScriptLock = (callback) => {
     assert.equal(lockDepth, 0, "nested lock");
     lockDepth += 1;
@@ -108,10 +161,13 @@ async function createHarness(options = {}) {
   };
   const repositoryBindings = options.staffProject
       ? {
-        getRegistrySpreadsheet_: getConfiguredSpreadsheet,
+        getRegistrySpreadsheet_: () => registry,
         getConfiguredSpreadsheet,
         getRootConfiguredSpreadsheet_: getConfiguredSpreadsheet,
         getConfiguredSpreadsheet_: getConfiguredSpreadsheet,
+        getEventSpreadsheet_: getEventSpreadsheet,
+        getTicketRouteByToken_: getTicketRouteByToken,
+        digestTicketToken_: (token) => createHash("sha256").update(String(token || "").trim()).digest("hex"),
         getRequiredSheet_: getRequiredSheet,
         normalizeRow_: normalizeRow,
         readRows,
@@ -121,8 +177,11 @@ async function createHarness(options = {}) {
         withScriptLock_: withScriptLock
       }
       : {
-        getRegistrySpreadsheet_: getConfiguredSpreadsheet,
+        getRegistrySpreadsheet_: () => registry,
         getConfiguredSpreadsheet,
+        getEventSpreadsheet_: getEventSpreadsheet,
+        getTicketRouteByToken_: getTicketRouteByToken,
+        digestTicketToken_: (token) => createHash("sha256").update(String(token || "").trim()).digest("hex"),
         getRequiredSheet_: getRequiredSheet,
         normalizeRow_: normalizeRow,
         readRows,
@@ -154,7 +213,17 @@ async function createHarness(options = {}) {
     const staffServiceUrl = new URL("../staff-apps-script/AttendanceService.gs", import.meta.url);
     vm.runInContext(await readFile(staffServiceUrl, "utf8"), context);
   }
-  return { context, sheets, writes, locks };
+  return {
+    context,
+    sheets,
+    writes,
+    locks,
+    registry,
+    routes,
+    openedEventIds,
+    eventSpreadsheets,
+    eventSheetsById
+  };
 }
 
 function rows(sheet) {
@@ -183,6 +252,83 @@ test("public verification reports cancellation and event-ended states without mu
   assert.equal(cancelled.context.verifyTicket({ token: "opaque-token" }).data.status, "cancelled");
   assert.equal(ended.context.verifyTicket({ token: "opaque-token" }).data.status, "ended");
   assert.equal(cancelled.writes.length + ended.writes.length, 0);
+});
+
+test("token verification and check-in open only the indexed activity Sheet, while unknown tokens open none", async () => {
+  const eventDataById = {
+    "event-a": fixture({
+      eventId: "event-a",
+      registrationId: "reg-a",
+      participantId: "person-a",
+      ticketNumber: "EVT-A",
+      token: "token-a",
+      title: "Activity A"
+    }),
+    "event-b": fixture({
+      eventId: "event-b",
+      registrationId: "reg-b",
+      participantId: "person-b",
+      ticketNumber: "EVT-B",
+      token: "token-b",
+      title: "Activity B"
+    })
+  };
+  const publicHarness = await createHarness({ eventDataById });
+  const verified = publicHarness.context.verifyTicket({ token: "token-a" });
+  assert.equal(verified.ok, true, JSON.stringify(verified));
+  assert.equal(verified.data.event.title, "Activity A");
+  assert.deepEqual(publicHarness.openedEventIds, ["event-a"]);
+
+  const staffHarness = await createHarness({
+    eventDataById,
+    staffProject: true,
+    sessionEmail: "staff@example.com"
+  });
+  const checkedIn = staffHarness.context.checkIn({ token: "token-a", sessionId: "s1" });
+  assert.equal(checkedIn.ok, true, JSON.stringify(checkedIn));
+  assert.deepEqual(staffHarness.openedEventIds, ["event-a"]);
+  assert.equal(rows(staffHarness.eventSheetsById["event-a"]["签到记录"]).length, 1);
+  assert.equal(rows(staffHarness.eventSheetsById["event-b"]["签到记录"]).length, 0);
+
+  const unknown = await createHarness({ eventDataById });
+  const invalid = unknown.context.verifyTicket({ token: "unknown-token" });
+  assert.equal(invalid.ok, false);
+  assert.equal(invalid.code, "TOKEN_INVALID");
+  assert.deepEqual(unknown.openedEventIds, []);
+  assert.equal(unknown.writes.length, 0);
+});
+
+test("public and staff ticket readers reject a route that does not match the activity registration", async () => {
+  const data = fixture();
+  const wrongRoute = {
+    ticketNumber: "EVT-1",
+    tokenDigest: createHash("sha256").update(data.token).digest("hex"),
+    eventId: "event-1",
+    registrationId: "wrong-registration",
+    status: "active",
+    createdAt: "2026-08-01T00:00:00.000Z",
+    updatedAt: "2026-08-01T00:00:00.000Z"
+  };
+  const publicHarness = await createHarness({ data, routes: [wrongRoute] });
+  const result = publicHarness.context.verifyTicket({ token: data.token });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "INTERNAL");
+  assert.equal(publicHarness.writes.length, 0);
+
+  const staffHarness = await createHarness({
+    data,
+    routes: [wrongRoute],
+    staffProject: true,
+    sessionEmail: "staff@example.com"
+  });
+  assert.throws(
+    () => staffHarness.context.findStaffTicket_(
+      staffHarness.eventSpreadsheets["event-1"],
+      data.token,
+      wrongRoute
+    ),
+    (error) => error.publicCode === "INTEGRITY_ERROR"
+  );
 });
 
 test("blank and non-allowlisted Google sessions receive the same generic rejection", async () => {

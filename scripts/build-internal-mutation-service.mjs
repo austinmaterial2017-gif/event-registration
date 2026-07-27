@@ -37,8 +37,11 @@ function executeInternalActionLocked_(action, payload, actor) {
   var handlers = {
     'staff.getTicket': function() {
       var registry = getRegistrySpreadsheet_();
-      var spreadsheet = getConfiguredSpreadsheet(registry);
-      return attendancePublicProjection_(findAttendanceTicket_(spreadsheet, payload && payload.token));
+      var route = requireAttendanceTicketRoute_(registry, payload && payload.token);
+      var spreadsheet = getEventSpreadsheet_(registry, route.eventId);
+      return attendancePublicProjection_(
+        findAttendanceTicket_(spreadsheet, payload && payload.token, route)
+      );
     },
     'staff.checkIn': function() {
       return internalStaffCheckInLocked_(payload, actor);
@@ -206,12 +209,13 @@ function openSpreadsheetById_(spreadsheetId) {
 function internalStaffCheckInLocked_(payload, actor) {
   var registry = getRegistrySpreadsheet_();
   requireNoSwitchMaintenance_(registry);
-  var spreadsheet = getConfiguredSpreadsheet(registry);
   if (!payload || typeof payload !== 'object' ||
       typeof payload.sessionId !== 'string' || !payload.sessionId.trim()) {
     adminError_('INVALID_REQUEST');
   }
-  var match = findAttendanceTicket_(spreadsheet, payload.token);
+  var route = requireAttendanceTicketRoute_(registry, payload.token);
+  var spreadsheet = getEventSpreadsheet_(registry, route.eventId);
+  var match = findAttendanceTicket_(spreadsheet, payload.token, route);
   if (match.status !== 'active') adminError_('TICKET_INACTIVE');
   if (String(match.event.status || '').toLowerCase() !== 'live') {
     adminError_('CHECK_IN_CLOSED');

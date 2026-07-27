@@ -7,11 +7,12 @@ function lookupTicket(payload) {
   return runTicketService_(function() {
     return withScriptLock(function() {
       var registry = getRegistrySpreadsheet_();
-      var spreadsheet = getConfiguredSpreadsheet(registry);
+      var route = requireTicketNumberRoute_(registry, payload);
+      var spreadsheet = getEventSpreadsheet_(registry, route.eventId);
       recoverPendingTransactions_(spreadsheet);
       cleanupStaleTicketSeats_(spreadsheet);
       var match = requireVerifiedTicket_(
-        spreadsheet, registry, payload, readRows(spreadsheet, '报名项目')
+        spreadsheet, registry, payload, readRows(spreadsheet, '报名项目'), route
       );
       return ticketProjectionFromRecords_(match);
     });
@@ -28,14 +29,35 @@ function cancelRegistration(payload) {
     return withScriptLock(function() {
       var registry = getRegistrySpreadsheet_();
       requireNoSwitchMaintenance_(registry);
-      var spreadsheet = getConfiguredSpreadsheet(registry);
+      var route = requireTicketNumberRoute_(registry, payload);
+      var spreadsheet = getEventSpreadsheet_(registry, route.eventId);
       var recoveryFailures = recoverPendingTransactions_(spreadsheet);
       if (recoveryFailures.length) ticketError_('INTEGRITY_ERROR');
       cleanupStaleTicketSeats_(spreadsheet);
       var match = requireVerifiedTicket_(
-        spreadsheet, registry, payload, readRows(spreadsheet, '报名项目')
+        spreadsheet, registry, payload, readRows(spreadsheet, '报名项目'), route
       );
+      var routeSnapshot = snapshotTicketRoute_(registry, route);
       if (match.records.every(function(record) { return record.status === 'cancelled'; })) {
+        if (route.status !== 'cancelled') {
+          try {
+            updateTicketRouteSnapshot_(registry, routeSnapshot, {
+              status: 'cancelled',
+              updatedAt: new Date().toISOString()
+            });
+          } catch (routeError) {
+            var idempotentRestoreFailures = restoreTicketSnapshots_([routeSnapshot]);
+            if (idempotentRestoreFailures.length) {
+              raiseTicketIntegrityError_(
+                spreadsheet,
+                match.registrationId,
+                'CANCEL_ROUTE_REPAIR',
+                idempotentRestoreFailures
+              );
+            }
+            throw routeError;
+          }
+        }
         return ticketProjectionFromRecords_(match);
       }
       if (!match.policy.cancellationEnabled) ticketError_('CANCELLATION_DISABLED');
@@ -45,21 +67,30 @@ function cancelRegistration(payload) {
       });
       var seatSnapshots = snapshotTicketRows_(spreadsheet, '座位', occupiedSeats);
       var auditSnapshot = null;
+      var routeWriteAttempted = false;
       try {
+        var cancelledAt = new Date().toISOString();
         updateTicketRegistrationRows_(spreadsheet, match.records, function(record) {
           record.status = 'cancelled';
-          record.updatedAt = new Date().toISOString();
+          record.updatedAt = cancelledAt;
           return record;
         });
         releaseTicketSeats_(spreadsheet, occupiedSeats);
         auditSnapshot = appendTicketAudit_(spreadsheet, 'CANCEL_REGISTRATION', match.registrationId, {
           eventId: match.event.eventId
         });
+        routeWriteAttempted = true;
+        updateTicketRouteSnapshot_(registry, routeSnapshot, {
+          status: 'cancelled',
+          updatedAt: cancelledAt
+        });
         match.records.forEach(function(record) { record.status = 'cancelled'; });
         match.status = 'cancelled';
         return ticketProjectionFromRecords_(match);
       } catch (error) {
-        var restoreFailures = restoreTicketSnapshots_(registrationSnapshots.concat(seatSnapshots));
+        var rollbackSnapshots = registrationSnapshots.concat(seatSnapshots);
+        if (routeWriteAttempted) rollbackSnapshots.push(routeSnapshot);
+        var restoreFailures = restoreTicketSnapshots_(rollbackSnapshots);
         var auditRollbackFailure = rollbackTicketAudit_(auditSnapshot);
         if (auditRollbackFailure) restoreFailures.push(auditRollbackFailure);
         if (restoreFailures.length) {
@@ -82,12 +113,13 @@ function exchangeSeat(payload) {
     return withScriptLock(function() {
       var registry = getRegistrySpreadsheet_();
       requireNoSwitchMaintenance_(registry);
-      var spreadsheet = getConfiguredSpreadsheet(registry);
+      var route = requireTicketNumberRoute_(registry, payload);
+      var spreadsheet = getEventSpreadsheet_(registry, route.eventId);
       var recoveryFailures = recoverPendingTransactions_(spreadsheet);
       if (recoveryFailures.length) ticketError_('INTEGRITY_ERROR');
       var cleanupFailures = cleanupStaleTicketSeats_(spreadsheet);
       var match = requireVerifiedTicket_(
-        spreadsheet, registry, payload, readRows(spreadsheet, '报名项目')
+        spreadsheet, registry, payload, readRows(spreadsheet, '报名项目'), route
       );
       if (cleanupFailures[match.registrationId]) ticketError_('EXCHANGE_PENDING_CLEANUP');
       var policy = getRegistrationPolicy_(getAdminSettings(registry), match.event.eventId);
@@ -117,15 +149,24 @@ function exchangeSeat(payload) {
 
       var registrationSnapshots = snapshotTicketRows_(spreadsheet, '报名项目', match.records);
       var newSeatSnapshots = snapshotTicketRows_(spreadsheet, '座位', [newSeat]);
+      var routeSnapshot = snapshotTicketRoute_(registry, route);
       var rotatedToken = rotateTicketToken_(match.records);
       var newSeatClaimed = false;
+      var routeWriteAttempted = false;
       try {
         claimExchangedSeat_(spreadsheet, newSeat, match.registrationId);
         newSeatClaimed = true;
         updateExchangeRegistrationRows_(spreadsheet, match.records, oldSeat.seatId, newSeat.seatId, rotatedToken);
+        routeWriteAttempted = true;
+        updateTicketRouteSnapshot_(registry, routeSnapshot, {
+          tokenDigest: digestTicketToken_(rotatedToken),
+          updatedAt: new Date().toISOString()
+        });
       } catch (error) {
-        var restoreFailures = newSeatClaimed
-          ? restoreExchangeSnapshots_(registrationSnapshots.concat(newSeatSnapshots))
+        var exchangeRollbackSnapshots = registrationSnapshots.concat(newSeatSnapshots);
+        if (routeWriteAttempted) exchangeRollbackSnapshots.push(routeSnapshot);
+        var restoreFailures = newSeatClaimed || routeWriteAttempted
+          ? restoreExchangeSnapshots_(exchangeRollbackSnapshots)
           : [];
         if (restoreFailures.length) {
           raiseTicketIntegrityError_(spreadsheet, match.registrationId, 'EXCHANGE_PRECOMMIT', restoreFailures);
@@ -193,20 +234,37 @@ function ticketError_(code) {
   throw error;
 }
 
-function requireVerifiedTicket_(spreadsheet, registry, payload, registrations) {
+function requireTicketNumberRoute_(registry, payload) {
   if (!payload || typeof payload !== 'object' ||
       typeof payload.ticketNumber !== 'string' || !payload.ticketNumber.trim() ||
       typeof payload.verificationValue !== 'string' || !payload.verificationValue.trim()) {
     ticketError_('INVALID_REQUEST');
   }
+  return getTicketRouteByNumber_(registry, payload.ticketNumber);
+}
+
+function requireVerifiedTicket_(spreadsheet, registry, payload, registrations, route) {
+  if (!payload || typeof payload !== 'object' ||
+      typeof payload.ticketNumber !== 'string' || !payload.ticketNumber.trim() ||
+      typeof payload.verificationValue !== 'string' || !payload.verificationValue.trim()) {
+    ticketError_('INVALID_REQUEST');
+  }
+  var normalizedRoute = normalizeTicketRoute_(route, payload.ticketNumber);
   var records = registrations.filter(function(record) {
     return record.ticketNumber === payload.ticketNumber.trim() &&
       record.status !== 'pending';
   });
   if (!records.length) ticketError_('TICKET_NOT_FOUND');
+  if (records.some(function(record) {
+    return record.ticketNumber !== normalizedRoute.ticketNumber ||
+      record.registrationId !== normalizedRoute.registrationId ||
+      record.eventId !== normalizedRoute.eventId;
+  })) {
+    ticketError_('INTEGRITY_ERROR');
+  }
 
   var event = readRows(spreadsheet, '活动').filter(function(candidate) {
-    return candidate.eventId === records[0].eventId;
+    return candidate.eventId === normalizedRoute.eventId;
   })[0];
   if (!event) ticketError_('TICKET_NOT_FOUND');
   var policy = getRegistrationPolicy_(getAdminSettings(registry), event.eventId);
@@ -215,6 +273,10 @@ function requireVerifiedTicket_(spreadsheet, registry, payload, registrations) {
   if (!verificationField ||
       normalizeIdentityValue_(stored.values[verificationField]) !== normalizeIdentityValue_(payload.verificationValue)) {
     ticketError_('TICKET_VERIFICATION_FAILED');
+  }
+  if (!stored.ticketToken ||
+      digestTicketToken_(stored.ticketToken) !== normalizedRoute.tokenDigest) {
+    ticketError_('INTEGRITY_ERROR');
   }
   var participant = readRows(spreadsheet, '参加者').filter(function(candidate) {
     return candidate.participantId === records[0].participantId;
@@ -247,8 +309,31 @@ function requireVerifiedTicket_(spreadsheet, registry, payload, registrations) {
     allSeats: allSeats,
     policy: policy,
     ticketFields: ticketFields,
-    records: records
+    records: records,
+    route: normalizedRoute
   };
+}
+
+function normalizeTicketRoute_(route, expectedTicketNumber) {
+  var normalized = {
+    ticketNumber: route && typeof route.ticketNumber === 'string' ? route.ticketNumber.trim() : '',
+    tokenDigest: route && typeof route.tokenDigest === 'string'
+      ? route.tokenDigest.trim().toLowerCase() : '',
+    eventId: route && typeof route.eventId === 'string' ? route.eventId.trim() : '',
+    registrationId: route && typeof route.registrationId === 'string'
+      ? route.registrationId.trim() : '',
+    status: route && typeof route.status === 'string' ? route.status.trim() : '',
+    createdAt: route && typeof route.createdAt === 'string' ? route.createdAt.trim() : '',
+    updatedAt: route && typeof route.updatedAt === 'string' ? route.updatedAt.trim() : ''
+  };
+  if (!normalized.ticketNumber ||
+      normalized.ticketNumber !== String(expectedTicketNumber || '').trim() ||
+      !/^[a-f0-9]{64}$/.test(normalized.tokenDigest) ||
+      !normalized.eventId || !normalized.registrationId || !normalized.status ||
+      !normalized.createdAt || !normalized.updatedAt) {
+    ticketError_('INTEGRITY_ERROR');
+  }
+  return normalized;
 }
 
 function seatBelongsToRegistration_(seat, registrationId) {
@@ -378,6 +463,57 @@ function maskPrivateValue_(value) {
     return parts[0].slice(0, 1) + '***@' + parts.slice(1).join('@');
   }
   return text.length <= 4 ? '****' : text.slice(0, 2) + '****' + text.slice(-2);
+}
+
+function snapshotTicketRoute_(registry, route) {
+  var normalizedRoute = normalizeTicketRoute_(route, route && route.ticketNumber);
+  var matches = readRows(registry, '票券索引').filter(function(candidate) {
+    return String(candidate.ticketNumber || '').trim() === normalizedRoute.ticketNumber;
+  });
+  if (matches.length !== 1) ticketError_('INTEGRITY_ERROR');
+  var storedRoute = normalizeTicketRoute_(matches[0], normalizedRoute.ticketNumber);
+  if (storedRoute.tokenDigest !== normalizedRoute.tokenDigest ||
+      storedRoute.eventId !== normalizedRoute.eventId ||
+      storedRoute.registrationId !== normalizedRoute.registrationId ||
+      storedRoute.status !== normalizedRoute.status ||
+      storedRoute.createdAt !== normalizedRoute.createdAt ||
+      storedRoute.updatedAt !== normalizedRoute.updatedAt) {
+    ticketError_('INTEGRITY_ERROR');
+  }
+  return {
+    sheet: getRequiredSheet_(registry, '票券索引'),
+    row: matches[0].rowNumber,
+    values: normalizeRow_('票券索引', storedRoute),
+    route: storedRoute
+  };
+}
+
+function updateTicketRouteSnapshot_(registry, snapshot, changes) {
+  var current = snapshot && snapshot.route;
+  if (!current || !snapshot.sheet || !Number.isInteger(snapshot.row)) {
+    ticketError_('INTEGRITY_ERROR');
+  }
+  var updated = {
+    ticketNumber: current.ticketNumber,
+    tokenDigest: changes && changes.tokenDigest !== undefined
+      ? changes.tokenDigest : current.tokenDigest,
+    eventId: current.eventId,
+    registrationId: current.registrationId,
+    status: changes && changes.status !== undefined ? changes.status : current.status,
+    createdAt: current.createdAt,
+    updatedAt: changes && changes.updatedAt !== undefined
+      ? changes.updatedAt : current.updatedAt
+  };
+  updated = normalizeTicketRoute_(updated, current.ticketNumber);
+  var digestCollision = readRows(registry, '票券索引').some(function(candidate) {
+    return candidate.rowNumber !== snapshot.row &&
+      String(candidate.tokenDigest || '').trim().toLowerCase() === updated.tokenDigest;
+  });
+  if (digestCollision) ticketError_('INTEGRITY_ERROR');
+  snapshot.sheet.getRange(
+    snapshot.row, 1, 1, SHEET_DEFINITIONS['票券索引'].length
+  ).setValues([normalizeRow_('票券索引', updated)]);
+  return updated;
 }
 
 function snapshotTicketRows_(spreadsheet, sheetName, rows) {

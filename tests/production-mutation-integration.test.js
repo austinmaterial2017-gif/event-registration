@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 const publicRoot = new URL("../apps-script/", import.meta.url);
@@ -10,6 +10,8 @@ const sharedSecret = "production-integration-shared-secret-32";
 
 const headers = {
   "系统设置": ["key", "value", "updatedAt"],
+  "活动目录": ["eventId", "spreadsheetId", "sheetName", "title", "description", "status", "opensAt", "closesAt", "location", "selectionMode", "minChoices", "maxChoices", "seatMode", "seatZones", "createdAt", "updatedAt"],
+  "票券索引": ["ticketNumber", "tokenDigest", "eventId", "registrationId", "status", "createdAt", "updatedAt"],
   "活动": ["eventId", "title", "description", "status", "opensAt", "closesAt", "location", "selectionMode", "minChoices", "maxChoices", "seatMode", "seatZones", "createdAt", "updatedAt"],
   "场次": ["sessionId", "eventId", "title", "speaker", "startsAt", "endsAt", "required", "capacity", "status", "createdAt", "updatedAt"],
   "座位": ["seatId", "eventId", "sessionId", "label", "zone", "status", "holderRegistrationId", "createdAt", "updatedAt"],
@@ -162,6 +164,9 @@ function utilityService() {
   let uuid = 0;
   return {
     getUuid: () => `00000000-0000-4000-8000-${String(++uuid).padStart(12, "0")}`,
+    DigestAlgorithm: { SHA_256: "SHA_256" },
+    Charset: { UTF_8: "UTF_8" },
+    computeDigest: (_algorithm, value) => Array.from(createHash("sha256").update(value).digest()),
     computeHmacSha256Signature: (value, key) =>
       Array.from(createHmac("sha256", key).update(value).digest()),
     base64EncodeWebSafe: (bytes) => Buffer.from(bytes).toString("base64url")
@@ -191,7 +196,47 @@ async function createSystem({ onWrite } = {}) {
   let arrivalHook = null;
   let arrivalTriggered = false;
   const data = fixture();
-  const sheets = Object.fromEntries(Object.entries(data).map(([name, records]) => [
+  const settingsRows = data["系统设置"];
+  delete data["系统设置"];
+  const registryData = {
+    "系统设置": [
+      ...settingsRows,
+      {
+        key: "ACTIVE_SPREADSHEET_ID",
+        value: "activity-sheet",
+        updatedAt: "2026-08-16T08:00:00.000Z"
+      }
+    ],
+    "活动目录": [{
+      eventId: "event-1",
+      spreadsheetId: "activity-sheet",
+      sheetName: "活动",
+      title: "Live Forum",
+      description: "",
+      status: "live",
+      opensAt: "2026-01-01T00:00:00.000Z",
+      closesAt: "2026-08-15T00:00:00.000Z",
+      location: "Hall",
+      selectionMode: "single",
+      minChoices: 1,
+      maxChoices: 1,
+      seatMode: "none",
+      seatZones: "[]",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    }],
+    "票券索引": [{
+      ticketNumber: "EVT-ONE",
+      tokenDigest: createHash("sha256").update("physical-camera-token").digest("hex"),
+      eventId: "event-1",
+      registrationId: "registration-1",
+      status: "active",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    }],
+    "操作记录": []
+  };
+  const createSheets = (source) => Object.fromEntries(Object.entries(source).map(([name, records]) => [
     name,
     new FakeSheet(name, records, (sheetName) => {
       assert.equal(publicLockDepth, 1, `${sheetName} changed outside the public lock`);
@@ -202,10 +247,17 @@ async function createSystem({ onWrite } = {}) {
       }
     })
   ]));
-  const spreadsheet = {
+  const sheets = createSheets(data);
+  const registrySheets = createSheets(registryData);
+  const activitySpreadsheet = {
+    getId: () => "activity-sheet",
+    getName: () => "Activity",
+    getSheetByName: (name) => sheets[name] || null
+  };
+  const registrySpreadsheet = {
     getId: () => "registry-sheet",
     getName: () => "Registry",
-    getSheetByName: (name) => sheets[name] || null
+    getSheetByName: (name) => registrySheets[name] || null
   };
   const publicContext = vm.createContext({
     console,
@@ -214,8 +266,9 @@ async function createSystem({ onWrite } = {}) {
     PropertiesService: { getScriptProperties: () => publicPropertyStore },
     SpreadsheetApp: {
       openById: (id) => {
-        if (id !== "registry-sheet") throw new Error("missing spreadsheet");
-        return spreadsheet;
+        if (id === "registry-sheet") return registrySpreadsheet;
+        if (id === "activity-sheet") return activitySpreadsheet;
+        throw new Error("missing spreadsheet");
       }
     },
     LockService: {
@@ -314,6 +367,7 @@ async function createSystem({ onWrite } = {}) {
     publicContext,
     staffContext,
     sheets,
+    registrySheets,
     lockEvents,
     waiting,
     setArrivalHook: (hook) => { arrivalHook = hook; arrivalTriggered = false; },
@@ -403,7 +457,7 @@ test("assembled administrator mutations roll back rows, settings, appends, and a
   });
   const eventSheet = Object.values(eventSystem.sheets)
     .find((sheet) => headers[sheet.name].includes("eventId") && headers[sheet.name].includes("title"));
-  const settingsSheet = Object.values(eventSystem.sheets)
+  const settingsSheet = Object.values(eventSystem.registrySheets)
     .find((sheet) => headers[sheet.name].includes("key"));
   const auditSheet = Object.values(eventSystem.sheets)
     .find((sheet) => headers[sheet.name].includes("auditId"));

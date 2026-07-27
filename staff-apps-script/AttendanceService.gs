@@ -78,19 +78,30 @@ function isAllowlistedStaffIdentity_(identity) {
   });
 }
 
-function findStaffTicket_(spreadsheet, token) {
+function findStaffTicket_(spreadsheet, token, route) {
   if (typeof token !== 'string' || !token.trim() || token.length > 512) {
     staffAttendanceError_('TOKEN_INVALID');
   }
   var normalizedToken = token.trim();
+  var normalizedRoute = normalizeStaffAttendanceRoute_(route);
+  if (digestTicketToken_(normalizedToken) !== normalizedRoute.tokenDigest) {
+    staffAttendanceError_('INTEGRITY_ERROR');
+  }
   var records = readRows_(spreadsheet, '报名项目').filter(function(record) {
     if (String(record.status || '').toLowerCase() === 'pending') return false;
     return storedStaffTicketToken_(record.answers) === normalizedToken;
   });
   if (!records.length) staffAttendanceError_('TOKEN_INVALID');
+  if (records.some(function(record) {
+    return record.registrationId !== normalizedRoute.registrationId ||
+      record.ticketNumber !== normalizedRoute.ticketNumber ||
+      record.eventId !== normalizedRoute.eventId;
+  })) {
+    staffAttendanceError_('INTEGRITY_ERROR');
+  }
 
-  var registrationId = records[0].registrationId;
-  var eventId = records[0].eventId;
+  var registrationId = normalizedRoute.registrationId;
+  var eventId = normalizedRoute.eventId;
   records = records.filter(function(record) {
     return record.registrationId === registrationId && record.eventId === eventId;
   });
@@ -127,6 +138,22 @@ function findStaffTicket_(spreadsheet, token) {
     seats: seats,
     status: status
   };
+}
+
+function normalizeStaffAttendanceRoute_(route) {
+  var normalized = {
+    ticketNumber: route && typeof route.ticketNumber === 'string' ? route.ticketNumber.trim() : '',
+    tokenDigest: route && typeof route.tokenDigest === 'string'
+      ? route.tokenDigest.trim().toLowerCase() : '',
+    eventId: route && typeof route.eventId === 'string' ? route.eventId.trim() : '',
+    registrationId: route && typeof route.registrationId === 'string'
+      ? route.registrationId.trim() : ''
+  };
+  if (!normalized.ticketNumber || !/^[a-f0-9]{64}$/.test(normalized.tokenDigest) ||
+      !normalized.eventId || !normalized.registrationId) {
+    staffAttendanceError_('INTEGRITY_ERROR');
+  }
+  return normalized;
 }
 
 function storedStaffTicketToken_(serialized) {

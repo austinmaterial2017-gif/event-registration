@@ -121,6 +121,30 @@ async function createHarness({
   const registry = registryHarness.spreadsheet;
   const locks = [];
   const routedEventIds = [];
+  const routingFailure = (code) => {
+    const error = new Error("private ticket routing failed");
+    error.publicCode = code;
+    throw error;
+  };
+  const getTicketRouteByNumber = (_registry, ticketNumber) => {
+    const normalized = typeof ticketNumber === "string" ? ticketNumber.trim() : "";
+    if (!normalized) routingFailure("TICKET_NOT_FOUND");
+    const matches = sheetObjects(registryHarness.sheets["票券索引"])
+      .filter((route) => route.ticketNumber === normalized);
+    if (!matches.length) routingFailure("TICKET_NOT_FOUND");
+    if (matches.length !== 1) routingFailure("INTEGRITY_ERROR");
+    return matches[0];
+  };
+  const getTicketRouteByToken = (_registry, token) => {
+    const normalized = typeof token === "string" ? token.trim() : "";
+    if (!normalized) routingFailure("TICKET_NOT_FOUND");
+    const digest = createHash("sha256").update(normalized).digest("hex");
+    const matches = sheetObjects(registryHarness.sheets["票券索引"])
+      .filter((route) => route.tokenDigest === digest);
+    if (!matches.length) routingFailure("TICKET_NOT_FOUND");
+    if (matches.length !== 1) routingFailure("INTEGRITY_ERROR");
+    return matches[0];
+  };
   let lockDepth = 0;
   let uuid = 0;
   const context = vm.createContext({
@@ -145,6 +169,8 @@ async function createHarness({
       routedEventIds.push(eventId);
       return eventSpreadsheets[eventId] || spreadsheet;
     },
+    getTicketRouteByNumber_: getTicketRouteByNumber,
+    getTicketRouteByToken_: getTicketRouteByToken,
     digestTicketToken_: (token) => createHash("sha256").update(String(token || "").trim()).digest("hex"),
     upsertTicketRoute_: (_registry, route) => {
       const routeSheet = registryHarness.sheets["票券索引"];
@@ -292,6 +318,35 @@ test("registrations write only to their routed activity sheets and publish diges
   assert.equal(serializedRoutes.includes("bob@example.com"), false);
 });
 
+test("owner ticket lookup resolves Sheet B from the private index without reading Sheet A", async () => {
+  const harness = await createHarness({
+    eventRowsById: {
+      "event-a": rowsForEvent("event-a", "Activity A"),
+      "event-b": rowsForEvent("event-b", "Activity B")
+    }
+  });
+  harness.context.createRegistration(registrationPayload({
+    eventId: "event-a",
+    sessionIds: ["event-a-session"],
+    answers: { name: "Alice", email: "alice@example.com" }
+  }));
+  const ticketB = harness.context.createRegistration(registrationPayload({
+    eventId: "event-b",
+    sessionIds: ["event-b-session"],
+    answers: { name: "Bob", email: "bob@example.com" }
+  }));
+  harness.routedEventIds.length = 0;
+
+  const lookup = harness.context.lookupTicket({
+    ticketNumber: ticketB.data.ticketNumber,
+    verificationValue: "bob@example.com"
+  });
+
+  assert.equal(lookup.ok, true, JSON.stringify(lookup));
+  assert.equal(lookup.data.eventId, "event-b");
+  assert.deepEqual(harness.routedEventIds, ["event-b"]);
+});
+
 test("ticket route publication failure compensates the activity registration and restores its seat", async () => {
   const eventRows = rowsForEvent("event-a", "Activity A");
   eventRows["活动"][0].seatMode = "self";
@@ -404,7 +459,7 @@ test("owner ticket projections mask names and contacts and never return dynamic 
 });
 
 test("owner ticket lookup includes session display details and derives ended status from the event", async () => {
-  const { context } = await createHarness({
+  const { context, registrySheets } = await createHarness({
     rows: baseRows({
       event: { status: "ended", location: "Main Hall" },
       sessions: [{
@@ -418,7 +473,18 @@ test("owner ticket lookup includes session display details and derives ended sta
         status: "active", sessionIds: JSON.stringify(["s1"]),
         answers: JSON.stringify({ ticketToken: "token-1", verificationField: "email", values: { email: "alice@example.com" } })
       }]
-    })
+    }),
+    registryRows: {
+      "票券索引": [{
+        ticketNumber: "EVT-1",
+        tokenDigest: createHash("sha256").update("token-1").digest("hex"),
+        eventId: "event-1",
+        registrationId: "r1",
+        status: "active",
+        createdAt: "2026-08-01T00:00:00.000Z",
+        updatedAt: "2026-08-01T00:00:00.000Z"
+      }]
+    }
   });
   const result = context.lookupTicket({ ticketNumber: "EVT-1", verificationValue: "alice@example.com" });
   assert.equal(result.ok, true);
@@ -432,6 +498,8 @@ test("owner ticket lookup includes session display details and derives ended sta
     endsAt: "2030-01-01T10:00:00Z",
     location: "Main Hall"
   });
+  assert.equal(sheetObjects(registrySheets["票券索引"]).length, 1);
+  assert.equal(sheetObjects(registrySheets["票券索引"])[0].status, "active");
 });
 
 test("one blank-session seat is shared by all selected sessions while session seats allocate one per session", async () => {
@@ -736,7 +804,7 @@ test("an explicit empty event identity policy allows repeated registrations with
 });
 
 test("lookup takes a lock and cancellation preserves rows while releasing the seat", async () => {
-  const { context, locks, sheets } = await createHarness({
+  const { context, locks, sheets, registry, registrySheets } = await createHarness({
     rows: baseRows({
       event: { seatMode: "self" },
       seats: [{ seatId: "shared-a1", eventId: "event-1", sessionId: "", label: "A1", zone: "front", status: "available" }]
@@ -756,10 +824,75 @@ test("lookup takes a lock and cancellation preserves rows while releasing the se
   assert.equal(sheetObjects(sheets["参加者"]).length, participantCount);
   assert.equal(sheetObjects(sheets["报名项目"])[0].status, "cancelled");
   assert.equal(sheetObjects(sheets["座位"])[0].holderRegistrationId, "");
+  assert.equal(context.getTicketRouteByNumber_(registry, created.data.ticketNumber).status, "cancelled");
+  assert.equal(sheetObjects(registrySheets["票券索引"]).length, 1);
+});
+
+test("a failed cancellation index update restores the active registration and occupied seat", async () => {
+  let phase = "create";
+  let failRouteUpdateOnce = true;
+  const harness = await createHarness({
+    rows: baseRows({
+      event: { seatMode: "self" },
+      seats: [
+        { seatId: "a1", eventId: "event-1", sessionId: "", label: "A1", zone: "front", status: "available" }
+      ]
+    }),
+    onWrite: ({ sheet }) => {
+      if (phase === "cancel" && failRouteUpdateOnce && sheet.name === "票券索引") {
+        failRouteUpdateOnce = false;
+        throw new Error("index update failed");
+      }
+    }
+  });
+  const created = harness.context.createRegistration(registrationPayload({ seatChoices: ["A1"] }));
+  phase = "cancel";
+
+  const failed = harness.context.cancelRegistration({
+    ticketNumber: created.data.ticketNumber,
+    verificationValue: "alice@example.com"
+  });
+
+  assert.equal(failed.ok, false);
+  assert.equal(sheetObjects(harness.sheets["报名项目"])[0].status, "active");
+  assert.equal(
+    sheetObjects(harness.sheets["座位"])[0].holderRegistrationId,
+    created.data.registrationId
+  );
+  assert.equal(
+    harness.context.getTicketRouteByNumber_(harness.registry, created.data.ticketNumber).status,
+    "active"
+  );
+});
+
+test("cancellation rejects a route identity mismatch before changing ticket or seat state", async () => {
+  const harness = await createHarness({
+    rows: baseRows({
+      event: { seatMode: "self" },
+      seats: [
+        { seatId: "a1", eventId: "event-1", sessionId: "", label: "A1", zone: "front", status: "available" }
+      ]
+    })
+  });
+  const created = harness.context.createRegistration(registrationPayload({ seatChoices: ["A1"] }));
+  const routeSheet = harness.registrySheets["票券索引"];
+  routeSheet.rows[1][headers["票券索引"].indexOf("registrationId")] = "wrong-registration";
+  const beforeRegistrations = JSON.stringify(sheetObjects(harness.sheets["报名项目"]));
+  const beforeSeats = JSON.stringify(sheetObjects(harness.sheets["座位"]));
+
+  const failed = harness.context.cancelRegistration({
+    ticketNumber: created.data.ticketNumber,
+    verificationValue: "alice@example.com"
+  });
+
+  assert.equal(failed.ok, false);
+  assert.equal(failed.code, "INTEGRITY_ERROR");
+  assert.equal(JSON.stringify(sheetObjects(harness.sheets["报名项目"])), beforeRegistrations);
+  assert.equal(JSON.stringify(sheetObjects(harness.sheets["座位"])), beforeSeats);
 });
 
 test("seat exchange rotates the token so the persisted old QR is invalid", async () => {
-  const { context, sheets } = await createHarness({
+  const { context, sheets, registry } = await createHarness({
     rows: baseRows({
       event: { seatMode: "self" },
       seats: [
@@ -770,6 +903,7 @@ test("seat exchange rotates the token so the persisted old QR is invalid", async
   });
   const created = context.createRegistration(registrationPayload({ seatChoices: ["A1"] }));
   const oldToken = created.data.token;
+  const before = context.getTicketRouteByToken_(registry, oldToken);
   const exchanged = context.exchangeSeat({
     ticketNumber: created.data.ticketNumber, verificationValue: "alice@example.com",
     oldSeatId: "a1", newSeatId: "a2"
@@ -779,6 +913,57 @@ test("seat exchange rotates the token so the persisted old QR is invalid", async
   const stored = sheetObjects(sheets["报名项目"]).map((row) => JSON.parse(row.answers).ticketToken);
   assert.equal(stored.includes(oldToken), false);
   assert.ok(stored.every((token) => token === exchanged.data.token));
+  assert.equal(before.eventId, "event-1");
+  assert.throws(
+    () => context.getTicketRouteByToken_(registry, oldToken),
+    (error) => error.publicCode === "TICKET_NOT_FOUND"
+  );
+  assert.equal(
+    context.getTicketRouteByToken_(registry, exchanged.data.token).eventId,
+    "event-1"
+  );
+});
+
+test("a failed exchange index update restores the old token and both seat states", async () => {
+  let phase = "create";
+  let failRouteUpdateOnce = true;
+  const harness = await createHarness({
+    rows: baseRows({
+      event: { seatMode: "self" },
+      seats: [
+        { seatId: "a1", eventId: "event-1", sessionId: "", label: "A1", zone: "front", status: "available" },
+        { seatId: "a2", eventId: "event-1", sessionId: "", label: "A2", zone: "front", status: "available" }
+      ]
+    }),
+    onWrite: ({ sheet }) => {
+      if (phase === "exchange" && failRouteUpdateOnce && sheet.name === "票券索引") {
+        failRouteUpdateOnce = false;
+        throw new Error("index update failed");
+      }
+    }
+  });
+  const created = harness.context.createRegistration(registrationPayload({ seatChoices: ["A1"] }));
+  const oldToken = created.data.token;
+  phase = "exchange";
+
+  const failed = harness.context.exchangeSeat({
+    ticketNumber: created.data.ticketNumber,
+    verificationValue: "alice@example.com",
+    oldSeatId: "a1",
+    newSeatId: "a2"
+  });
+
+  assert.equal(failed.ok, false);
+  const seats = sheetObjects(harness.sheets["座位"]);
+  assert.equal(seats.find((seat) => seat.seatId === "a1").holderRegistrationId, created.data.registrationId);
+  assert.equal(seats.find((seat) => seat.seatId === "a2").holderRegistrationId, "");
+  const storedTokens = sheetObjects(harness.sheets["报名项目"])
+    .map((row) => JSON.parse(row.answers).ticketToken);
+  assert.ok(storedTokens.every((token) => token === oldToken));
+  assert.equal(
+    harness.context.getTicketRouteByToken_(harness.registry, oldToken).registrationId,
+    created.data.registrationId
+  );
 });
 
 test("seat exchange can claim an expired hold and clears the stale owner", async () => {

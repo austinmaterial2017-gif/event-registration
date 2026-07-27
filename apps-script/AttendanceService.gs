@@ -7,8 +7,9 @@ function verifyTicket(payload) {
   return runAttendanceService_(function() {
     return withScriptLock(function() {
       var registry = getRegistrySpreadsheet_();
-      var spreadsheet = getConfiguredSpreadsheet(registry);
-      var match = findAttendanceTicket_(spreadsheet, payload && payload.token);
+      var route = requireAttendanceTicketRoute_(registry, payload && payload.token);
+      var spreadsheet = getEventSpreadsheet_(registry, route.eventId);
+      var match = findAttendanceTicket_(spreadsheet, payload && payload.token, route);
       return attendancePublicProjection_(match);
     });
   });
@@ -39,21 +40,42 @@ function attendanceError_(code) {
   throw error;
 }
 
-function findAttendanceTicket_(spreadsheet, token) {
+function requireAttendanceTicketRoute_(registry, token) {
+  if (typeof token !== 'string' || !token.trim() || token.length > 512) attendanceError_('TOKEN_INVALID');
+  try {
+    return getTicketRouteByToken_(registry, token);
+  } catch (error) {
+    if (error && error.publicCode === 'TICKET_NOT_FOUND') attendanceError_('TOKEN_INVALID');
+    throw error;
+  }
+}
+
+function findAttendanceTicket_(spreadsheet, token, route) {
   if (typeof token !== 'string' || !token.trim() || token.length > 512) attendanceError_('TOKEN_INVALID');
   var normalizedToken = token.trim();
+  var normalizedRoute = normalizeAttendanceTicketRoute_(route);
+  if (digestTicketToken_(normalizedToken) !== normalizedRoute.tokenDigest) {
+    attendanceError_('INTEGRITY_ERROR');
+  }
   var records = readRows(spreadsheet, '报名项目').filter(function(record) {
     if (String(record.status || '').toLowerCase() === 'pending') return false;
     return attendanceStoredToken_(record.answers) === normalizedToken;
   });
   if (!records.length) attendanceError_('TOKEN_INVALID');
+  if (records.some(function(record) {
+    return record.registrationId !== normalizedRoute.registrationId ||
+      record.ticketNumber !== normalizedRoute.ticketNumber ||
+      record.eventId !== normalizedRoute.eventId;
+  })) {
+    attendanceError_('INTEGRITY_ERROR');
+  }
 
-  var registrationId = records[0].registrationId;
+  var registrationId = normalizedRoute.registrationId;
   records = records.filter(function(record) {
-    return record.registrationId === registrationId && record.eventId === records[0].eventId;
+    return record.registrationId === registrationId && record.eventId === normalizedRoute.eventId;
   });
   var event = readRows(spreadsheet, '活动').filter(function(candidate) {
-    return candidate.eventId === records[0].eventId;
+    return candidate.eventId === normalizedRoute.eventId;
   })[0];
   if (!event) attendanceError_('TOKEN_INVALID');
   var participant = readRows(spreadsheet, '参加者').filter(function(candidate) {
@@ -85,6 +107,22 @@ function findAttendanceTicket_(spreadsheet, token) {
     seats: seats,
     status: status
   };
+}
+
+function normalizeAttendanceTicketRoute_(route) {
+  var normalized = {
+    ticketNumber: route && typeof route.ticketNumber === 'string' ? route.ticketNumber.trim() : '',
+    tokenDigest: route && typeof route.tokenDigest === 'string'
+      ? route.tokenDigest.trim().toLowerCase() : '',
+    eventId: route && typeof route.eventId === 'string' ? route.eventId.trim() : '',
+    registrationId: route && typeof route.registrationId === 'string'
+      ? route.registrationId.trim() : ''
+  };
+  if (!normalized.ticketNumber || !/^[a-f0-9]{64}$/.test(normalized.tokenDigest) ||
+      !normalized.eventId || !normalized.registrationId) {
+    attendanceError_('INTEGRITY_ERROR');
+  }
+  return normalized;
 }
 
 function attendanceStoredToken_(serialized) {

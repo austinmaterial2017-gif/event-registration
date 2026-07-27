@@ -114,13 +114,14 @@ function exchangeSeat(payload) {
       var registry = getRegistrySpreadsheet_();
       requireNoSwitchMaintenance_(registry);
       var route = requireTicketNumberRoute_(registry, payload);
+      requireActiveTicketRoute_(route);
       var spreadsheet = getEventSpreadsheet_(registry, route.eventId);
       var recoveryFailures = recoverPendingTransactions_(spreadsheet);
       if (recoveryFailures.length) ticketError_('INTEGRITY_ERROR');
-      var cleanupFailures = cleanupStaleTicketSeats_(spreadsheet);
       var match = requireVerifiedTicket_(
         spreadsheet, registry, payload, readRows(spreadsheet, '报名项目'), route
       );
+      var cleanupFailures = cleanupStaleTicketSeats_(spreadsheet);
       if (cleanupFailures[match.registrationId]) ticketError_('EXCHANGE_PENDING_CLEANUP');
       var policy = getRegistrationPolicy_(getAdminSettings(registry), match.event.eventId);
       if (!policy.seatExchangeEnabled) ticketError_('SEAT_EXCHANGE_DISABLED');
@@ -149,55 +150,48 @@ function exchangeSeat(payload) {
 
       var registrationSnapshots = snapshotTicketRows_(spreadsheet, '报名项目', match.records);
       var newSeatSnapshots = snapshotTicketRows_(spreadsheet, '座位', [newSeat]);
+      var oldSeatSnapshots = snapshotTicketRows_(spreadsheet, '座位', [oldSeat]);
       var routeSnapshot = snapshotTicketRoute_(registry, route);
       var rotatedToken = rotateTicketToken_(match.records);
-      var newSeatClaimed = false;
+      var exchangeMutationStarted = false;
       var routeWriteAttempted = false;
+      var auditSnapshot = null;
       try {
+        exchangeMutationStarted = true;
         claimExchangedSeat_(spreadsheet, newSeat, match.registrationId);
-        newSeatClaimed = true;
         updateExchangeRegistrationRows_(spreadsheet, match.records, oldSeat.seatId, newSeat.seatId, rotatedToken);
         routeWriteAttempted = true;
         updateTicketRouteSnapshot_(registry, routeSnapshot, {
           tokenDigest: digestTicketToken_(rotatedToken),
           updatedAt: new Date().toISOString()
         });
+        releaseTicketSeats_(spreadsheet, [oldSeat]);
+        auditSnapshot = appendTicketAudit_(spreadsheet, 'EXCHANGE_SEAT', match.registrationId, {
+          oldSeatId: oldSeat.seatId,
+          newSeatId: newSeat.seatId
+        });
+        match.token = rotatedToken;
+        newSeat.holderRegistrationId = match.registrationId;
+        newSeat.status = 'registered';
+        match.seats = readRows(spreadsheet, '座位').filter(function(seat) {
+          return seatBelongsToRegistration_(seat, match.registrationId);
+        });
+        return ticketProjectionFromRecords_(match);
       } catch (error) {
-        var exchangeRollbackSnapshots = registrationSnapshots.concat(newSeatSnapshots);
+        var exchangeRollbackSnapshots = registrationSnapshots
+          .concat(newSeatSnapshots)
+          .concat(oldSeatSnapshots);
         if (routeWriteAttempted) exchangeRollbackSnapshots.push(routeSnapshot);
-        var restoreFailures = newSeatClaimed || routeWriteAttempted
+        var restoreFailures = exchangeMutationStarted || routeWriteAttempted
           ? restoreExchangeSnapshots_(exchangeRollbackSnapshots)
           : [];
+        var auditRollbackFailure = rollbackTicketAudit_(auditSnapshot);
+        if (auditRollbackFailure) restoreFailures.push(auditRollbackFailure);
         if (restoreFailures.length) {
-          raiseTicketIntegrityError_(spreadsheet, match.registrationId, 'EXCHANGE_PRECOMMIT', restoreFailures);
+          raiseTicketIntegrityError_(spreadsheet, match.registrationId, 'EXCHANGE_TRANSACTION', restoreFailures);
         }
         throw error;
       }
-
-      match.token = rotatedToken;
-      newSeat.holderRegistrationId = match.registrationId;
-      newSeat.status = 'registered';
-      var releaseFailed = false;
-      try {
-        releaseTicketSeats_(spreadsheet, [oldSeat]);
-      } catch (releaseError) {
-        releaseFailed = true;
-        appendTicketAuditSafely_(spreadsheet, 'SEAT_RELEASE_RETRY', match.registrationId, {
-          oldSeatId: oldSeat.seatId,
-          newSeatId: newSeat.seatId
-        });
-      }
-      if (!releaseFailed) {
-        appendTicketAuditSafely_(spreadsheet, 'EXCHANGE_SEAT', match.registrationId, {
-          oldSeatId: oldSeat.seatId,
-          newSeatId: newSeat.seatId
-        });
-      }
-      match.seats = readRows(spreadsheet, '座位').filter(function(seat) {
-        return seatBelongsToRegistration_(seat, match.registrationId);
-      });
-      if (releaseFailed) ticketError_('EXCHANGE_PENDING_CLEANUP');
-      return ticketProjectionFromRecords_(match);
     });
   });
 }
@@ -217,6 +211,7 @@ function ticketFailure_(code) {
     INVALID_REQUEST: '提交信息无效，请检查后重试。',
     TICKET_NOT_FOUND: '未找到对应凭证。',
     TICKET_VERIFICATION_FAILED: '验证信息不匹配。',
+    TICKET_INACTIVE: '该凭证当前不可更换座位。',
     SEAT_EXCHANGE_DISABLED: '该活动不允许更换座位。',
     SEAT_UNAVAILABLE: '所选座位不可用。',
     INTEGRITY_ERROR: '数据一致性检查失败，请联系管理员。',
@@ -243,6 +238,12 @@ function requireTicketNumberRoute_(registry, payload) {
   return getTicketRouteByNumber_(registry, payload.ticketNumber);
 }
 
+function requireActiveTicketRoute_(route) {
+  if (String(route && route.status || '').trim().toLowerCase() !== 'active') {
+    ticketError_('TICKET_INACTIVE');
+  }
+}
+
 function requireVerifiedTicket_(spreadsheet, registry, payload, registrations, route) {
   if (!payload || typeof payload !== 'object' ||
       typeof payload.ticketNumber !== 'string' || !payload.ticketNumber.trim() ||
@@ -260,6 +261,9 @@ function requireVerifiedTicket_(spreadsheet, registry, payload, registrations, r
       record.registrationId !== normalizedRoute.registrationId ||
       record.eventId !== normalizedRoute.eventId;
   })) {
+    ticketError_('INTEGRITY_ERROR');
+  }
+  if (String(normalizedRoute.status || '').toLowerCase() !== ticketRegistrationRouteStatus_(records)) {
     ticketError_('INTEGRITY_ERROR');
   }
 
@@ -312,6 +316,20 @@ function requireVerifiedTicket_(spreadsheet, registry, payload, registrations, r
     records: records,
     route: normalizedRoute
   };
+}
+
+function ticketRegistrationRouteStatus_(records) {
+  if (records.every(function(record) {
+    return String(record.status || '').toLowerCase() === 'cancelled';
+  })) {
+    return 'cancelled';
+  }
+  if (records.every(function(record) {
+    return REGISTRATION_ACTIVE_STATUSES[String(record.status || '').toLowerCase()];
+  })) {
+    return 'active';
+  }
+  ticketError_('INTEGRITY_ERROR');
 }
 
 function normalizeTicketRoute_(route, expectedTicketNumber) {

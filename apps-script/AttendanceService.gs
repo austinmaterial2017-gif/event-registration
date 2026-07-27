@@ -69,6 +69,9 @@ function findAttendanceTicket_(spreadsheet, token, route) {
   })) {
     attendanceError_('INTEGRITY_ERROR');
   }
+  if (normalizedRoute.status !== attendanceRegistrationRouteStatus_(records)) {
+    attendanceError_('INTEGRITY_ERROR');
+  }
 
   var registrationId = normalizedRoute.registrationId;
   records = records.filter(function(record) {
@@ -116,13 +119,29 @@ function normalizeAttendanceTicketRoute_(route) {
       ? route.tokenDigest.trim().toLowerCase() : '',
     eventId: route && typeof route.eventId === 'string' ? route.eventId.trim() : '',
     registrationId: route && typeof route.registrationId === 'string'
-      ? route.registrationId.trim() : ''
+      ? route.registrationId.trim() : '',
+    status: route && typeof route.status === 'string' ? route.status.trim().toLowerCase() : ''
   };
   if (!normalized.ticketNumber || !/^[a-f0-9]{64}$/.test(normalized.tokenDigest) ||
-      !normalized.eventId || !normalized.registrationId) {
+      !normalized.eventId || !normalized.registrationId || !normalized.status) {
     attendanceError_('INTEGRITY_ERROR');
   }
   return normalized;
+}
+
+function attendanceRegistrationRouteStatus_(records) {
+  if (records.every(function(record) {
+    return String(record.status || '').toLowerCase() === 'cancelled';
+  })) {
+    return 'cancelled';
+  }
+  if (records.every(function(record) {
+    var status = String(record.status || '').toLowerCase();
+    return status === 'active' || status === 'confirmed';
+  })) {
+    return 'active';
+  }
+  attendanceError_('INTEGRITY_ERROR');
 }
 
 function attendanceStoredToken_(serialized) {

@@ -331,6 +331,44 @@ test("public and staff ticket readers reject a route that does not match the act
   );
 });
 
+test("a cancelled route cannot authorize stale active verification or staff check-in", async () => {
+  const data = fixture();
+  const cancelledRoute = {
+    ticketNumber: "EVT-1",
+    tokenDigest: createHash("sha256").update(data.token).digest("hex"),
+    eventId: "event-1",
+    registrationId: "reg-1",
+    status: "cancelled",
+    createdAt: "2026-08-01T00:00:00.000Z",
+    updatedAt: "2026-08-02T00:00:00.000Z"
+  };
+  const publicHarness = await createHarness({ data, routes: [cancelledRoute] });
+  const verified = publicHarness.context.verifyTicket({ token: data.token });
+  assert.equal(verified.ok, false);
+  assert.equal(verified.code, "INTERNAL");
+  assert.equal(publicHarness.writes.length, 0);
+
+  const staffHarness = await createHarness({
+    data,
+    routes: [cancelledRoute],
+    staffProject: true,
+    sessionEmail: "staff@example.com"
+  });
+  const checkedIn = staffHarness.context.checkIn({ token: data.token, sessionId: "s1" });
+  assert.equal(checkedIn.ok, false);
+  assert.equal(checkedIn.code, "TICKET_INACTIVE");
+  assert.deepEqual(staffHarness.openedEventIds, []);
+  assert.equal(staffHarness.writes.length, 0);
+  assert.throws(
+    () => staffHarness.context.findStaffTicket_(
+      staffHarness.eventSpreadsheets["event-1"],
+      data.token,
+      cancelledRoute
+    ),
+    (error) => error.publicCode === "INTEGRITY_ERROR"
+  );
+});
+
 test("blank and non-allowlisted Google sessions receive the same generic rejection", async () => {
   const blank = await createHarness({ staffProject: true });
   const stranger = await createHarness({ staffProject: true, sessionEmail: "stranger@example.com" });

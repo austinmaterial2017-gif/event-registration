@@ -214,6 +214,9 @@ function internalStaffCheckInLocked_(payload, actor) {
     adminError_('INVALID_REQUEST');
   }
   var route = requireAttendanceTicketRoute_(registry, payload.token);
+  if (String(route && route.status || '').trim().toLowerCase() !== 'active') {
+    adminError_('TICKET_INACTIVE');
+  }
   var spreadsheet = getEventSpreadsheet_(registry, route.eventId);
   var match = findAttendanceTicket_(spreadsheet, payload.token, route);
   if (match.status !== 'active') adminError_('TICKET_INACTIVE');

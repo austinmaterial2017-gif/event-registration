@@ -90,7 +90,10 @@ test("routing shells return safe public envelopes and the manifest has V8 scopes
   const parsed = JSON.parse(manifest);
   assert.equal(parsed.runtimeVersion, "V8");
   assert.ok(parsed.oauthScopes.includes("https://www.googleapis.com/auth/spreadsheets"));
-  assert.deepEqual(parsed.oauthScopes, ["https://www.googleapis.com/auth/spreadsheets"]);
+  assert.deepEqual(parsed.oauthScopes, [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive"
+  ]);
   assert.equal(parsed.webapp.access, "ANYONE_ANONYMOUS");
 });
 

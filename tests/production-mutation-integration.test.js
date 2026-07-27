@@ -23,7 +23,7 @@ const headers = {
 };
 
 class FakeSheet {
-  constructor(name, records, onWrite) {
+  constructor(name, records = [], onWrite) {
     this.name = name;
     this.onWrite = onWrite;
     this.rows = [
@@ -33,7 +33,11 @@ class FakeSheet {
   }
   getName() { return this.name; }
   getLastRow() { return this.rows.length; }
-  getLastColumn() { return headers[this.name].length; }
+  getLastColumn() { return this.rows[0]?.length || headers[this.name].length; }
+  insertRowsBefore(row, count) {
+    this.onWrite?.(this.name);
+    this.rows.splice(row - 1, 0, ...Array.from({ length: count }, () => []));
+  }
   getRange(row, column, rowCount, columnCount) {
     return {
       getValues: () => Array.from({ length: rowCount }, (_, y) =>
@@ -173,7 +177,7 @@ function utilityService() {
   };
 }
 
-async function createSystem({ onWrite } = {}) {
+async function createSystem({ onWrite, failActivityCreationStage } = {}) {
   let now = "2026-08-16T09:30:00.000Z";
   class ServerDate extends Date {
     constructor(value) { super(value === undefined ? now : value); }
@@ -236,10 +240,15 @@ async function createSystem({ onWrite } = {}) {
     }],
     "操作记录": []
   };
-  const createSheets = (source) => Object.fromEntries(Object.entries(source).map(([name, records]) => [
+  let catalogFailurePending = failActivityCreationStage === "catalog";
+  const createSheets = (source, kind) => Object.fromEntries(Object.entries(source).map(([name, records]) => [
     name,
     new FakeSheet(name, records, (sheetName) => {
       assert.equal(publicLockDepth, 1, `${sheetName} changed outside the public lock`);
+      if (kind === "registry" && sheetName === "活动目录" && catalogFailurePending) {
+        catalogFailurePending = false;
+        throw new Error("injected catalog failure");
+      }
       onWrite?.(sheetName);
       if (arrivalHook && !arrivalTriggered && sheetName === "活动") {
         arrivalTriggered = true;
@@ -247,8 +256,8 @@ async function createSystem({ onWrite } = {}) {
       }
     })
   ]));
-  const sheets = createSheets(data);
-  const registrySheets = createSheets(registryData);
+  const sheets = createSheets(data, "activity");
+  const registrySheets = createSheets(registryData, "registry");
   const activitySpreadsheet = {
     getId: () => "activity-sheet",
     getName: () => "Activity",
@@ -259,6 +268,9 @@ async function createSystem({ onWrite } = {}) {
     getName: () => "Registry",
     getSheetByName: (name) => registrySheets[name] || null
   };
+  const createdSpreadsheets = [];
+  const createdById = {};
+  let createdCount = 0;
   const publicContext = vm.createContext({
     console,
     JSON, Object, Array, String, Number, RegExp, Error, Math, isFinite,
@@ -268,7 +280,50 @@ async function createSystem({ onWrite } = {}) {
       openById: (id) => {
         if (id === "registry-sheet") return registrySpreadsheet;
         if (id === "activity-sheet") return activitySpreadsheet;
+        if (createdById[id]) return createdById[id];
         throw new Error("missing spreadsheet");
+      },
+      create: (name) => {
+        if (failActivityCreationStage === "create") {
+          throw new Error("injected create failure");
+        }
+        const id = `created-activity-${++createdCount}`;
+        const createdSheets = {};
+        const writeCounts = {};
+        const spreadsheet = {
+          id,
+          name,
+          editors: [],
+          sheets: createdSheets,
+          getId: () => id,
+          getName: () => name,
+          getSheetByName: (sheetName) => createdSheets[sheetName] || null,
+          insertSheet: (sheetName) => {
+            const sheet = new FakeSheet(sheetName, [], (writtenSheetName) => {
+              assert.equal(publicLockDepth, 1, `${writtenSheetName} changed outside the public lock`);
+              writeCounts[writtenSheetName] = (writeCounts[writtenSheetName] || 0) + 1;
+              if (failActivityCreationStage === "initialize" &&
+                  writeCounts[writtenSheetName] === 1) {
+                throw new Error("injected initialization failure");
+              }
+              if (failActivityCreationStage === "event" &&
+                  writtenSheetName === "活动" && writeCounts[writtenSheetName] === 2) {
+                throw new Error("injected event write failure");
+              }
+              onWrite?.(writtenSheetName);
+            });
+            sheet.rows = [];
+            createdSheets[sheetName] = sheet;
+            return sheet;
+          },
+          addEditor: (email) => {
+            spreadsheet.editors.push(email);
+            return spreadsheet;
+          }
+        };
+        createdById[id] = spreadsheet;
+        createdSpreadsheets.push(spreadsheet);
+        return spreadsheet;
       }
     },
     LockService: {
@@ -368,6 +423,7 @@ async function createSystem({ onWrite } = {}) {
     staffContext,
     sheets,
     registrySheets,
+    createdSpreadsheets,
     lockEvents,
     waiting,
     setArrivalHook: (hook) => { arrivalHook = hook; arrivalTriggered = false; },
@@ -376,6 +432,55 @@ async function createSystem({ onWrite } = {}) {
     setNow: (value) => { now = value; }
   };
 }
+
+test("assembled automatic activity creation prepares private Sheets before catalog publication", async () => {
+  const system = await createSystem();
+  const first = system.staffContext.saveAdminEvent({
+    title: `Production\u0001 Talk ${"z".repeat(160)}`,
+    status: "draft"
+  });
+  const second = system.staffContext.saveAdminEvent({
+    title: "Production Talk B",
+    status: "draft"
+  });
+
+  assert.equal(first.ok, true, JSON.stringify(first));
+  assert.equal(second.ok, true, JSON.stringify(second));
+  assert.equal(system.createdSpreadsheets.length, 2);
+  assert.notEqual(
+    system.createdSpreadsheets[0].getId(),
+    system.createdSpreadsheets[1].getId()
+  );
+  assert.equal(system.createdSpreadsheets[0].editors.includes("admin@example.com"), true);
+  assert.equal(system.createdSpreadsheets[0].getName().length <= 100, true);
+  assert.doesNotMatch(system.createdSpreadsheets[0].getName(), /[\u0000-\u001f\u007f-\u009f]/);
+
+  const catalog = rows(system.registrySheets["活动目录"]);
+  assert.equal(catalog.length, 3);
+  assert.notEqual(catalog[1].spreadsheetId, catalog[2].spreadsheetId);
+  assert.equal(JSON.stringify(first.data).includes("spreadsheetId"), false);
+  assert.equal(
+    first.data.sheetUrl,
+    `https://docs.google.com/spreadsheets/d/${encodeURIComponent(catalog[1].spreadsheetId)}/edit`
+  );
+});
+
+test("assembled creation failures leave the existing catalog unchanged", async (t) => {
+  for (const stage of ["create", "initialize", "event", "catalog"]) {
+    await t.test(stage, async () => {
+      const system = await createSystem({ failActivityCreationStage: stage });
+      const before = JSON.stringify(rows(system.registrySheets["活动目录"]));
+
+      const result = system.staffContext.saveAdminEvent({
+        title: `Failed ${stage}`,
+        status: "draft"
+      });
+
+      assert.equal(result.ok, false, JSON.stringify(result));
+      assert.equal(JSON.stringify(rows(system.registrySheets["活动目录"])), before);
+    });
+  }
+});
 
 test("assembled staff check-in and administrator writes share the public backend lock", async () => {
   const system = await createSystem();

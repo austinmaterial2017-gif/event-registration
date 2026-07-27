@@ -171,17 +171,42 @@ var ADMIN_QUESTION_TYPES_ = {
 function getAdminDashboard_(payload) {
   var request = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
   var search = typeof request.search === 'string' ? request.search.trim().toLowerCase() : '';
+  if (Object.prototype.hasOwnProperty.call(request, 'eventId') &&
+      (typeof request.eventId !== 'string' || !request.eventId.trim())) {
+    adminError_('INVALID_REQUEST');
+  }
   return withScriptLock_(function() {
     var registry = getRootConfiguredSpreadsheet_();
-    var spreadsheet = getConfiguredSpreadsheet_(registry);
     var settings = getAdminSettings_(registry);
-    var events = readAdminRows_(spreadsheet, '活动');
-    var sessions = readAdminRows_(spreadsheet, '场次');
-    var seats = readAdminRows_(spreadsheet, '座位');
-    var questions = readAdminRows_(spreadsheet, '报名问题');
-    var participants = readAdminRows_(spreadsheet, '参加者');
-    var registrations = readAdminRows_(spreadsheet, '报名项目');
-    var attendance = readAdminRows_(spreadsheet, '签到记录');
+    var catalogEntries = readAdminRows_(registry, '活动目录');
+    var events = catalogEntries.map(function(entry) {
+      var validated = getEventCatalogEntry_(registry, entry.eventId);
+      var projection = adminEventProjection_(validated, settings);
+      projection.sheetUrl = activitySheetUrl_(validated.spreadsheetId);
+      return projection;
+    });
+    var selectedEventId = typeof request.eventId === 'string'
+      ? request.eventId.trim() : '';
+    var spreadsheet = selectedEventId
+      ? getAdminEventSpreadsheet_(registry, selectedEventId) : null;
+    var sessions = spreadsheet ? readAdminRows_(spreadsheet, '场次').filter(function(session) {
+      return String(session.eventId || '') === selectedEventId;
+    }) : [];
+    var seats = spreadsheet ? readAdminRows_(spreadsheet, '座位').filter(function(seat) {
+      return String(seat.eventId || '') === selectedEventId;
+    }) : [];
+    var questions = spreadsheet ? readAdminRows_(spreadsheet, '报名问题').filter(function(question) {
+      return String(question.eventId || '') === selectedEventId;
+    }) : [];
+    var participants = spreadsheet ? readAdminRows_(spreadsheet, '参加者') : [];
+    var registrations = spreadsheet
+      ? readAdminRows_(spreadsheet, '报名项目').filter(function(registration) {
+        return String(registration.eventId || '') === selectedEventId;
+      }) : [];
+    var attendance = spreadsheet
+      ? readAdminRows_(spreadsheet, '签到记录').filter(function(record) {
+        return String(record.eventId || '') === selectedEventId;
+      }) : [];
     var participantById = {};
     participants.forEach(function(participant) {
       participantById[participant.participantId] = participant;
@@ -243,9 +268,12 @@ function getAdminDashboard_(payload) {
     return {
       connection: {
         connected: true,
-        sheetName: String(spreadsheet.getName ? spreadsheet.getName() : 'Connected')
+        sheetName: String(
+          spreadsheet && spreadsheet.getName ? spreadsheet.getName() :
+          registry.getName ? registry.getName() : 'Connected'
+        )
       },
-      events: events.map(function(event) { return adminEventProjection_(event, settings); }),
+      events: events,
       sessions: sessions.map(function(session) { return adminSessionProjection_(session, settings); }),
       seats: seats.map(adminSeatProjection_),
       questions: questions.map(function(question) { return adminQuestionProjection_(question, settings); }),
@@ -265,16 +293,35 @@ function getAdminDashboard_(payload) {
   });
 }
 
+function getAdminEventSpreadsheet_(registry, eventId) {
+  try {
+    return getEventSpreadsheet_(registry, eventId);
+  } catch (error) {
+    if (error && error.publicCode === 'EVENT_NOT_FOUND') adminError_('NOT_FOUND');
+    throw error;
+  }
+}
+
 function saveAdminEvent_(payload, actor) {
   var request = requireAdminObject_(payload);
+  var isNewEvent = !Object.prototype.hasOwnProperty.call(request, 'eventId');
+  if (!isNewEvent &&
+      (typeof request.eventId !== 'string' || !request.eventId.trim())) {
+    adminError_('INVALID_REQUEST');
+  }
+  if (isNewEvent && Object.prototype.hasOwnProperty.call(request, 'spreadsheetId')) {
+    adminError_('INVALID_REQUEST');
+  }
+  var normalizedActor = typeof actor === 'string' ? actor.trim().toLowerCase() : '';
+  if (!normalizedActor) adminError_('ADMIN_ACTION_DENIED');
   return withScriptLock_(function() {
     var registry = getRootConfiguredSpreadsheet_();
     requireNoSwitchMaintenance_(registry);
-    var spreadsheet = getConfiguredSpreadsheet_(registry);
-    var existing = request.eventId
-      ? findAdminRow_(spreadsheet, '活动', 'eventId', request.eventId)
-      : null;
-    if (request.eventId && !existing) adminError_('NOT_FOUND');
+    var spreadsheet = isNewEvent
+      ? null : getAdminEventSpreadsheet_(registry, request.eventId.trim());
+    var existing = isNewEvent
+      ? null : findAdminRow_(spreadsheet, '活动', 'eventId', request.eventId.trim());
+    if (!isNewEvent && !existing) adminError_('NOT_FOUND');
     if (request.action === 'reopen' && request.confirm !== true) {
       adminError_('CONFIRMATION_REQUIRED');
     }
@@ -333,7 +380,6 @@ function saveAdminEvent_(payload, actor) {
       createdAt: existing ? existing.createdAt : now,
       updatedAt: now
     };
-    writeAdminRow_(spreadsheet, '活动', existing && existing.rowNumber, row);
     var settings = getAdminSettings_(registry);
     var policy = ensureAdminEventPolicy_(settings, eventId);
     copyAdminBooleanField_(request, policy, 'showOpeningCountdown');
@@ -344,25 +390,36 @@ function saveAdminEvent_(payload, actor) {
     if (Object.prototype.hasOwnProperty.call(request, 'seatHoldMinutes')) {
       policy.seatHoldMinutes = adminPositiveInteger_(request.seatHoldMinutes);
     }
+    var result = adminEventProjection_(row, settings);
+    if (isNewEvent) {
+      spreadsheet = createActivitySpreadsheet_(
+        eventId,
+        title,
+        normalizedActor
+      );
+    }
+    result.sheetUrl = activitySheetUrl_(spreadsheet);
+    if (request.action === 'reopen') {
+      var registrationIds = {};
+      readAdminRows_(spreadsheet, '报名项目').forEach(function(registration) {
+        if (registration.eventId === eventId &&
+            String(registration.status || '').toLowerCase() !== 'pending') {
+          registrationIds[registration.registrationId] = true;
+        }
+      });
+      result.registrationCount = Object.keys(registrationIds).length;
+    }
+    writeAdminRow_(spreadsheet, '活动', existing && existing.rowNumber, row);
     setAdminSettings_(registry, settings);
     appendAdminAudit_(
       spreadsheet,
       request.action ? String(request.action).toUpperCase() + '_EVENT' : (existing ? 'UPDATE_EVENT' : 'CREATE_EVENT'),
       'event',
       eventId,
-      actor,
+      normalizedActor,
       { status: status }
     );
-    var result = adminEventProjection_(row, settings);
-    if (request.action === 'reopen') {
-      var registrationIds = {};
-      readAdminRows_(spreadsheet, '报名项目').forEach(function(registration) {
-        if (registration.eventId === eventId && String(registration.status || '').toLowerCase() !== 'pending') {
-          registrationIds[registration.registrationId] = true;
-        }
-      });
-      result.registrationCount = Object.keys(registrationIds).length;
-    }
+    upsertActivityCatalogEntry_(registry, row, spreadsheet);
     return result;
   });
 }
@@ -375,7 +432,7 @@ function saveAdminSession_(payload, actor) {
   return withScriptLock_(function() {
     var registry = getRootConfiguredSpreadsheet_();
     requireNoSwitchMaintenance_(registry);
-    var spreadsheet = getConfiguredSpreadsheet_(registry);
+    var spreadsheet = getAdminEventSpreadsheet_(registry, request.eventId.trim());
     if (!findAdminRow_(spreadsheet, '活动', 'eventId', request.eventId.trim())) {
       adminError_('NOT_FOUND');
     }
@@ -434,7 +491,7 @@ function saveAdminQuestion_(payload, actor) {
   return withScriptLock_(function() {
     var registry = getRootConfiguredSpreadsheet_();
     requireNoSwitchMaintenance_(registry);
-    var spreadsheet = getConfiguredSpreadsheet_(registry);
+    var spreadsheet = getAdminEventSpreadsheet_(registry, request.eventId.trim());
     if (!findAdminRow_(spreadsheet, '活动', 'eventId', request.eventId.trim())) {
       adminError_('NOT_FOUND');
     }
@@ -527,13 +584,18 @@ function saveAdminQuestion_(payload, actor) {
 function saveAdminSeatPlan_(payload, actor) {
   var request = requireAdminObject_(payload);
   var action = String(request.action || 'generate').toLowerCase();
+  if (typeof request.eventId !== 'string' || !request.eventId.trim()) {
+    adminError_('INVALID_REQUEST');
+  }
   return withScriptLock_(function() {
     var registry = getRootConfiguredSpreadsheet_();
     requireNoSwitchMaintenance_(registry);
-    var spreadsheet = getConfiguredSpreadsheet_(registry);
+    var eventId = request.eventId.trim();
+    var spreadsheet = getAdminEventSpreadsheet_(registry, eventId);
     if (action === 'reserve' || action === 'close' || action === 'reopen') {
       var seat = findAdminRow_(spreadsheet, '座位', 'seatId', request.seatId);
       if (!seat) adminError_('NOT_FOUND');
+      if (String(seat.eventId || '') !== eventId) adminError_('CONFLICT');
       if (seat.holderRegistrationId && seat.status === 'registered') adminError_('CONFLICT');
       seat.status = action === 'reserve' ? 'reserved' : action === 'close' ? 'closed' : 'available';
       seat.updatedAt = new Date().toISOString();
@@ -544,10 +606,10 @@ function saveAdminSeatPlan_(payload, actor) {
       );
       return adminSeatProjection_(seat);
     }
-    if (action !== 'generate' || typeof request.eventId !== 'string' || !request.eventId.trim()) {
+    if (action !== 'generate') {
       adminError_('INVALID_REQUEST');
     }
-    var event = findAdminRow_(spreadsheet, '活动', 'eventId', request.eventId.trim());
+    var event = findAdminRow_(spreadsheet, '活动', 'eventId', eventId);
     if (!event) adminError_('NOT_FOUND');
     var mode = String(request.mode || '').toLowerCase();
     if (!ADMIN_SEAT_MODES_[mode]) adminError_('INVALID_REQUEST');
@@ -608,15 +670,18 @@ function adminRecordAction_(payload, actor) {
   var request = requireAdminObject_(payload);
   if (request.confirm !== true) adminError_('CONFIRMATION_REQUIRED');
   var action = String(request.action || '').toLowerCase();
-  if (typeof request.registrationId !== 'string' || !request.registrationId.trim()) {
+  if (typeof request.eventId !== 'string' || !request.eventId.trim() ||
+      typeof request.registrationId !== 'string' || !request.registrationId.trim()) {
     adminError_('INVALID_REQUEST');
   }
   return withScriptLock_(function() {
     var registry = getRootConfiguredSpreadsheet_();
     requireNoSwitchMaintenance_(registry);
-    var spreadsheet = getConfiguredSpreadsheet_(registry);
+    var eventId = request.eventId.trim();
+    var spreadsheet = getAdminEventSpreadsheet_(registry, eventId);
     var registrations = readAdminRows_(spreadsheet, '报名项目').filter(function(record) {
-      return record.registrationId === request.registrationId.trim();
+      return record.registrationId === request.registrationId.trim() &&
+        String(record.eventId || '') === eventId;
     });
     if (!registrations.length) adminError_('NOT_FOUND');
     var seats = readAdminRows_(spreadsheet, '座位');

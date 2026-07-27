@@ -62,6 +62,18 @@ class FakeSheet {
   getName() { return this.name; }
   getLastRow() { return this.rows.length; }
   getLastColumn() { return this.rows[0]?.length || headers[this.name].length; }
+  insertRowsBefore(row, count) {
+    this.consumeWriteFailure();
+    this.writeCount += 1;
+    this.rows.splice(row - 1, 0, ...Array.from({ length: count }, () => []));
+    this.notifyWrite();
+  }
+  deleteRow(row) {
+    this.consumeWriteFailure();
+    this.writeCount += 1;
+    this.rows.splice(row - 1, 1);
+    this.notifyWrite();
+  }
   appendRow(values) {
     this.consumeWriteFailure();
     this.writeCount += 1;
@@ -244,8 +256,10 @@ async function createHarness(options = {}) {
   }
   const sourceSheets = Object.fromEntries(Object.entries(sourceRows)
     .map(([name, values]) => [name, new FakeSheet(name, values)]));
-  if (options.seedTicketRouting === true) {
+  if (options.seedAdminRouting !== false && records(sourceSheets["活动目录"]).length === 0) {
     addPublicEventRoute(sourceSheets, sourceSheets, "source-event-sheet-id");
+  }
+  if (options.seedTicketRouting === true) {
     addTicketRoute(sourceSheets, sourceSheets);
   }
   const targetSheets = Object.fromEntries(Object.entries(cloneRows(options.targetRows || baseRows()))
@@ -267,6 +281,15 @@ async function createHarness(options = {}) {
       getSheetByName: (name) => sourceSheets[name] || null
     }
   };
+  Object.entries(options.additionalSpreadsheets || {}).forEach(([spreadsheetId, sheets]) => {
+    spreadsheets[spreadsheetId] = {
+      getId: () => spreadsheetId,
+      getName: () => spreadsheetId,
+      getSheetByName: (name) => sheets[name] || null
+    };
+  });
+  const createdSpreadsheets = [];
+  let createCount = 0;
   const locks = [];
   let lockDepth = 0;
   let uuid = 0;
@@ -293,6 +316,37 @@ async function createHarness(options = {}) {
       openById: (spreadsheetId) => {
         if (!spreadsheets[spreadsheetId]) throw new Error("missing spreadsheet");
         return spreadsheets[spreadsheetId];
+      },
+      create: (name) => {
+        if (options.createActivityError) throw options.createActivityError;
+        const spreadsheetId = `created-activity-${++createCount}`;
+        const createdSheets = {};
+        const spreadsheet = {
+          id: spreadsheetId,
+          name,
+          editors: [],
+          sheets: createdSheets,
+          getId: () => spreadsheetId,
+          getName: () => name,
+          getSheetByName: (sheetName) => createdSheets[sheetName] || null,
+          insertSheet: (sheetName) => {
+            if (options.initializeActivityError) throw options.initializeActivityError;
+            const sheet = new FakeSheet(sheetName, []);
+            sheet.rows = [];
+            if (options.failCreatedEventWrite && sheetName === "活动") {
+              sheet.failWriteOnAttempt(2, options.failCreatedEventWrite);
+            }
+            createdSheets[sheetName] = sheet;
+            return sheet;
+          },
+          addEditor: (email) => {
+            spreadsheet.editors.push(email);
+            return spreadsheet;
+          }
+        };
+        spreadsheets[spreadsheetId] = spreadsheet;
+        createdSpreadsheets.push(spreadsheet);
+        return spreadsheet;
       }
     },
     LockService: {
@@ -393,6 +447,7 @@ async function createHarness(options = {}) {
     properties,
     sourceSheets,
     targetSheets,
+    createdSpreadsheets,
     locks,
     setNow: (value) => { serverNow = value; }
   };
@@ -514,7 +569,13 @@ function addPublicEventRoute(registrySheets, eventSheets, spreadsheetId = "event
     spreadsheetId,
     sheetName: "活动"
   };
-  registrySheets["活动目录"].rows.push(
+  const catalog = registrySheets["活动目录"];
+  const eventIdColumn = headers["活动目录"].indexOf("eventId");
+  catalog.rows = [
+    catalog.rows[0],
+    ...catalog.rows.slice(1).filter((row) => row[eventIdColumn] !== event.eventId)
+  ];
+  catalog.rows.push(
     headers["活动目录"].map((key) => route[key] ?? "")
   );
   return { [spreadsheetId]: eventSheets };
@@ -744,6 +805,171 @@ test("registry routing resolves one validated activity and ticket route without 
   });
 });
 
+test("new activities create distinct initialized private Sheets and publish only protected URLs", async () => {
+  const harness = await createHarness({ sessionEmail: " ADMIN@EXAMPLE.COM " });
+  const originalCatalog = records(harness.sourceSheets["活动目录"]);
+  const first = harness.context.saveAdminEvent({
+    title: `Talk\u0000 A ${"x".repeat(180)}`,
+    status: "draft"
+  });
+  const second = harness.context.saveAdminEvent({
+    title: "Talk B",
+    status: "draft"
+  });
+
+  assert.equal(first.ok, true, JSON.stringify(first));
+  assert.equal(second.ok, true, JSON.stringify(second));
+  assert.equal(harness.createdSpreadsheets.length, 2);
+  assert.notEqual(
+    harness.createdSpreadsheets[0].getId(),
+    harness.createdSpreadsheets[1].getId()
+  );
+  assert.equal(harness.createdSpreadsheets[0].editors.includes("admin@example.com"), true);
+  assert.equal(harness.createdSpreadsheets[0].getName().length <= 100, true);
+  assert.doesNotMatch(harness.createdSpreadsheets[0].getName(), /[\u0000-\u001f\u007f-\u009f]/);
+  for (const spreadsheet of harness.createdSpreadsheets) {
+    for (const sheetName of [
+      "活动", "场次", "座位", "报名问题", "参加者",
+      "报名项目", "签到记录", "操作记录"
+    ]) {
+      assert.deepEqual(Array.from(spreadsheet.sheets[sheetName].rows[0]), headers[sheetName]);
+    }
+  }
+
+  const catalog = records(harness.sourceSheets["活动目录"]);
+  assert.equal(catalog.length, originalCatalog.length + 2);
+  assert.notEqual(catalog.at(-2).spreadsheetId, catalog.at(-1).spreadsheetId);
+  assert.equal(JSON.stringify(first.data).includes("spreadsheetId"), false);
+  assert.equal(
+    first.data.sheetUrl,
+    `https://docs.google.com/spreadsheets/d/${encodeURIComponent(catalog.at(-2).spreadsheetId)}/edit`
+  );
+});
+
+test("failed activity preparation never publishes a catalog entry or changes existing entries", async (t) => {
+  const stages = [
+    ["create", { createActivityError: new Error("injected create failure") }],
+    ["initialize", { initializeActivityError: new Error("injected initialize failure") }],
+    ["event write", { failCreatedEventWrite: new Error("injected event write failure") }],
+    ["catalog write", {}]
+  ];
+
+  for (const [stage, options] of stages) {
+    await t.test(stage, async () => {
+      const harness = await createHarness(options);
+      const before = JSON.stringify(records(harness.sourceSheets["活动目录"]));
+      if (stage === "catalog write") {
+        harness.sourceSheets["活动目录"].failNextWrite(
+          new Error("injected catalog write failure")
+        );
+      }
+
+      const result = harness.context.saveAdminEvent({
+        title: `Unpublished ${stage}`,
+        status: "draft"
+      });
+
+      assert.equal(result.ok, false, JSON.stringify(result));
+      assert.equal(JSON.stringify(records(harness.sourceSheets["活动目录"])), before);
+    });
+  }
+});
+
+test("normal activity creation rejects a client-submitted Sheet ID", async () => {
+  const harness = await createHarness();
+  const before = JSON.stringify(records(harness.sourceSheets["活动目录"]));
+
+  const result = harness.context.saveAdminEvent({
+    title: "Must not use attacker Sheet",
+    status: "draft",
+    spreadsheetId: "target-sheet-id"
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "INVALID_REQUEST");
+  assert.equal(harness.createdSpreadsheets.length, 0);
+  assert.equal(JSON.stringify(records(harness.sourceSheets["活动目录"])), before);
+});
+
+test("protected dashboard and mutations route only through the selected activity Sheet", async () => {
+  const rows = baseRows();
+  const event2Sheets = eventSpreadsheetSheets("event-2", "Second Activity");
+  rows["活动目录"].push(
+    {
+      ...rows["活动"][0],
+      spreadsheetId: "source-event-sheet-id",
+      sheetName: "活动"
+    },
+    {
+      ...records(event2Sheets["活动"])[0],
+      spreadsheetId: "event-2-sheet",
+      sheetName: "活动"
+    }
+  );
+  const harness = await createHarness({
+    rows,
+    additionalSpreadsheets: { "event-2-sheet": event2Sheets }
+  });
+
+  const catalogOnly = harness.context.getAdminDashboard({});
+  assert.equal(catalogOnly.ok, true, JSON.stringify(catalogOnly));
+  assert.equal(catalogOnly.data.events.length, 2);
+  for (const collection of ["sessions", "seats", "questions", "records", "attendance"]) {
+    assert.equal(catalogOnly.data[collection].length, 0, collection);
+  }
+
+  const dashboard = harness.context.getAdminDashboard({
+    eventId: "event-2",
+    search: "alice@example.com"
+  });
+  assert.equal(dashboard.ok, true, JSON.stringify(dashboard));
+  assert.deepEqual(
+    Array.from(dashboard.data.events, (event) => event.eventId),
+    ["event-1", "event-2"]
+  );
+  assert.equal(dashboard.data.events.every((event) => typeof event.sheetUrl === "string"), true);
+  for (const collection of ["sessions", "seats", "questions", "records", "attendance"]) {
+    assert.equal(
+      dashboard.data[collection].every((item) => item.eventId === "event-2"),
+      true,
+      collection
+    );
+  }
+  assert.equal(JSON.stringify(dashboard.data).includes("spreadsheetId"), false);
+
+  assert.equal(harness.context.saveAdminEvent({
+    eventId: "event-2",
+    title: "Second Activity Updated"
+  }).ok, true);
+  assert.equal(harness.context.saveAdminSession({
+    eventId: "event-2",
+    title: "Second Session",
+    status: "open"
+  }).ok, true);
+  assert.equal(harness.context.saveAdminQuestion({
+    eventId: "event-2",
+    label: "Second Question",
+    type: "text"
+  }).ok, true);
+  assert.equal(harness.context.saveAdminSeatPlan({
+    eventId: "event-2",
+    action: "generate",
+    mode: "self",
+    zones: [{ name: "B", rows: 1, seatsPerRow: 1 }]
+  }).ok, true);
+  assert.equal(harness.context.adminRecordAction({
+    eventId: "event-2",
+    registrationId: "registration-1",
+    action: "cancel_registration",
+    confirm: true
+  }).ok, true);
+
+  assert.equal(records(event2Sheets["活动"])[0].title, "Second Activity Updated");
+  assert.equal(records(harness.sourceSheets["活动"])[0].title, "Ideas Forum");
+  assert.equal(records(event2Sheets["报名项目"])[0].status, "cancelled");
+  assert.equal(records(harness.sourceSheets["报名项目"])[0].status, "active");
+});
+
 function postPublic(context, action, payload) {
   const response = context.doPost({
     postData: { contents: JSON.stringify({ action, payload }) }
@@ -949,15 +1175,24 @@ test("seat plans cover every mode and reserve, close, and reopen seats without d
   assert.ok(generated);
   const count = seatsAfterGeneration.length;
 
-  assert.equal(harness.context.saveAdminSeatPlan({ action: "reserve", seatId: generated.seatId }).data.status, "reserved");
-  assert.equal(harness.context.saveAdminSeatPlan({ action: "close", seatId: generated.seatId }).data.status, "closed");
-  assert.equal(harness.context.saveAdminSeatPlan({ action: "reopen", seatId: generated.seatId }).data.status, "available");
+  assert.equal(harness.context.saveAdminSeatPlan({
+    eventId: "event-1", action: "reserve", seatId: generated.seatId
+  }).data.status, "reserved");
+  assert.equal(harness.context.saveAdminSeatPlan({
+    eventId: "event-1", action: "close", seatId: generated.seatId
+  }).data.status, "closed");
+  assert.equal(harness.context.saveAdminSeatPlan({
+    eventId: "event-1", action: "reopen", seatId: generated.seatId
+  }).data.status, "available");
   assert.equal(records(harness.sourceSheets["座位"]).length, count);
 });
 
 test("dashboard search masks participant fields and answers while returning attendance", async () => {
   const harness = await createHarness();
-  const result = harness.context.getAdminDashboard({ search: "alice@example.com" });
+  const result = harness.context.getAdminDashboard({
+    eventId: "event-1",
+    search: "alice@example.com"
+  });
 
   assert.equal(result.ok, true);
   assert.equal(result.data.connection.connected, true);
@@ -986,7 +1221,7 @@ test("dashboard masks boolean and collection values in every dynamic private ans
   });
   const harness = await createHarness({ rows });
 
-  const result = harness.context.getAdminDashboard({});
+  const result = harness.context.getAdminDashboard({ eventId: "event-1" });
 
   assert.equal(result.ok, true);
   const answers = JSON.parse(JSON.stringify(result.data.records[0].answers));
@@ -1014,7 +1249,7 @@ test("dashboard aggregates sessions and seats from every row of one registration
   rows["报名项目"][1].seatChoices = JSON.stringify(["seat-second"]);
   const harness = await createHarness({ rows });
 
-  const result = harness.context.getAdminDashboard({});
+  const result = harness.context.getAdminDashboard({ eventId: "event-1" });
 
   assert.equal(result.ok, true);
   assert.equal(result.data.records.length, 1);
@@ -1040,6 +1275,7 @@ test("seat adjustment rejects a seat from another event before changing any row"
   const beforeRegistrations = JSON.stringify(records(harness.sourceSheets["报名项目"]));
 
   const result = harness.context.adminRecordAction({
+    eventId: "event-1",
     action: "adjust_seat",
     registrationId: "registration-1",
     seatId: "seat-other-event",
@@ -1072,6 +1308,7 @@ test("seat adjustment rejects an unselected session before releasing the current
   const beforeRegistrations = JSON.stringify(records(harness.sourceSheets["报名项目"]));
 
   const result = harness.context.adminRecordAction({
+    eventId: "event-1",
     action: "adjust_seat",
     registrationId: "registration-1",
     seatId: "seat-unselected",
@@ -1099,6 +1336,7 @@ test("seat adjustment restores every seat and registration row when a later writ
     }
 
     const result = harness.context.adminRecordAction({
+      eventId: "event-1",
       action: "adjust_seat",
       registrationId: "registration-1",
       seatId: "seat-new",
@@ -1126,6 +1364,7 @@ test("seat adjustment keeps the old seat and journals recovery when target rollb
   harness.sourceSheets["座位"].failWriteOnAttempt(2);
 
   const result = harness.context.adminRecordAction({
+    eventId: "event-1",
     action: "adjust_seat",
     registrationId: "registration-1",
     seatId: "seat-new",
@@ -1411,7 +1650,7 @@ test("event question edits preserve the effective global identity policy invaria
   const harness = await createHarness({ adminSettings });
   const beforeQuestions = JSON.stringify(records(harness.sourceSheets["报名问题"]));
   const beforeSettings = settingsStorageSnapshot(harness);
-  const dashboard = harness.context.getAdminDashboard({});
+  const dashboard = harness.context.getAdminDashboard({ eventId: "event-1" });
 
   const result = harness.context.saveAdminQuestion({
     eventId: "event-1",
@@ -1429,7 +1668,7 @@ test("event question edits preserve the effective global identity policy invaria
   assert.equal(harness.sourceSheets["报名问题"].writeCount, 0);
 });
 
-test("an identity question cannot be moved to another event around the policy invariant", async () => {
+test("an identity question lookup cannot cross into an unregistered activity route", async () => {
   const rows = baseRows();
   rows["活动"].push({
     eventId: "event-2", title: "Second Event", description: "", status: "draft",
@@ -1446,7 +1685,7 @@ test("an identity question cannot be moved to another event around the policy in
     questionId: "email"
   });
 
-  assert.equal(result.code, "CONFLICT");
+  assert.equal(result.code, "NOT_FOUND");
   assert.equal(JSON.stringify(records(harness.sourceSheets["报名问题"])), beforeQuestions);
   assert.equal(settingsStorageSnapshot(harness), beforeSettings);
   assert.equal(harness.sourceSheets["报名问题"].writeCount, 0);
@@ -1513,6 +1752,7 @@ test("record cancellation and seat adjustment preserve rows and append auditable
   const cancellationCounts = Object.fromEntries(Object.entries(cancellationHarness.sourceSheets)
     .map(([name, sheet]) => [name, sheet.rows.length]));
   const cancelled = cancellationHarness.context.adminRecordAction({
+    eventId: "event-1",
     action: "cancel_registration",
     registrationId: "registration-1",
     confirm: true
@@ -1526,6 +1766,7 @@ test("record cancellation and seat adjustment preserve rows and append auditable
 
   const adjustmentHarness = await createHarness();
   const adjusted = adjustmentHarness.context.adminRecordAction({
+    eventId: "event-1",
     action: "adjust_seat",
     registrationId: "registration-1",
     seatId: "seat-new",
@@ -1772,7 +2013,7 @@ test("a published pointer recovers after maintenance expiry when clearing the ma
   const eventRoute = addPublicEventRoute(
     harness.sourceSheets,
     harness.targetSheets,
-    "event-1-sheet"
+    "target-sheet-id"
   );
   const publicContext = await createPublicRegistrationContext(
     harness.sourceSheets,
@@ -1952,11 +2193,13 @@ test("public catalog lists safe visible activities and reads only the requested 
   assert.deepEqual(Array.from(listed.data.events, (event) => event.id), ["event-a", "event-b"]);
   assert.equal(JSON.stringify(listed).includes("sheet-a"), false);
   assert.equal(JSON.stringify(listed).includes("spreadsheetId"), false);
+  assert.equal(JSON.stringify(listed).includes("sheetUrl"), false);
   assert.equal(JSON.stringify(listed).includes("Private draft"), false);
 
   const detail = context.getEvent({ eventId: "event-b" });
   assert.equal(detail.ok, true, JSON.stringify(detail));
   assert.equal(detail.data.event.title, "Activity B");
+  assert.equal(JSON.stringify(detail).includes("sheetUrl"), false);
   assert.deepEqual(context.__openedSpreadsheetIds, ["source-sheet-id", "source-sheet-id", "sheet-b"]);
 });
 

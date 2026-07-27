@@ -20,6 +20,81 @@ var EVENT_SHEET_NAMES_ = [
   '活动', '场次', '座位', '报名问题', '参加者',
   '报名项目', '签到记录', '操作记录'
 ];
+var ACTIVITY_SPREADSHEET_NAME_LIMIT_ = 100;
+
+function safeActivitySheetName_(title, eventId) {
+  var normalizedTitle = String(title || '')
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim() || '活动';
+  var normalizedEventId = String(eventId || '')
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, '')
+    .trim();
+  var suffix = normalizedEventId ? ' [' + normalizedEventId.slice(-36) + ']' : '';
+  var available = Math.max(1, ACTIVITY_SPREADSHEET_NAME_LIMIT_ - suffix.length);
+  return normalizedTitle.slice(0, available).trim() + suffix;
+}
+
+function createActivitySpreadsheet_(eventId, title, actor) {
+  var normalizedActor = typeof actor === 'string' ? actor.trim().toLowerCase() : '';
+  if (!normalizedActor) adminError_('ADMIN_ACTION_DENIED');
+  var spreadsheet = SpreadsheetApp.create(safeActivitySheetName_(title, eventId));
+  initializeEventSpreadsheet_(spreadsheet);
+  spreadsheet.addEditor(normalizedActor);
+  return spreadsheet;
+}
+
+function upsertActivityCatalogEntry_(registry, event, spreadsheet) {
+  var eventId = String(event && event.eventId || '').trim();
+  var spreadsheetId = String(
+    spreadsheet && typeof spreadsheet.getId === 'function' ? spreadsheet.getId() : ''
+  ).trim();
+  if (!eventId || !spreadsheetId || spreadsheetId === String(registry.getId())) {
+    adminError_('INTEGRITY_ERROR');
+  }
+  var matches = readAdminRows_(registry, '活动目录').filter(function(entry) {
+    return String(entry.eventId || '').trim() === eventId;
+  });
+  if (matches.length > 1 ||
+      (matches.length === 1 &&
+       String(matches[0].spreadsheetId || '').trim() !== spreadsheetId)) {
+    adminError_('INTEGRITY_ERROR');
+  }
+  var entry = {
+    eventId: eventId,
+    spreadsheetId: spreadsheetId,
+    sheetName: '活动',
+    title: event.title,
+    description: event.description,
+    status: event.status,
+    opensAt: event.opensAt,
+    closesAt: event.closesAt,
+    location: event.location,
+    selectionMode: event.selectionMode,
+    minChoices: event.minChoices,
+    maxChoices: event.maxChoices,
+    seatMode: event.seatMode,
+    seatZones: event.seatZones,
+    createdAt: event.createdAt,
+    updatedAt: event.updatedAt
+  };
+  writeAdminRow_(
+    registry,
+    '活动目录',
+    matches.length === 1 ? matches[0].rowNumber : null,
+    entry
+  );
+  return entry;
+}
+
+function activitySheetUrl_(spreadsheet) {
+  var spreadsheetId = typeof spreadsheet === 'string' ? spreadsheet : String(
+    spreadsheet && typeof spreadsheet.getId === 'function' ? spreadsheet.getId() : ''
+  );
+  if (!spreadsheetId) adminError_('INTEGRITY_ERROR');
+  return 'https://docs.google.com/spreadsheets/d/' +
+    encodeURIComponent(spreadsheetId) + '/edit';
+}
 
 function getConfiguredSpreadsheet_(registrySpreadsheet) {
   if (!registrySpreadsheet) throw new Error('Staff registry spreadsheet is required.');

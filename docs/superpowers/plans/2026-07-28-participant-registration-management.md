@@ -475,6 +475,26 @@ git commit -m "fix: make every user action visibly pending and complete"
 
 ---
 
+### Task 7A: Configurable Visual Seat Map
+
+**Files:**
+- Modify: `apps-script/Code.gs`
+- Modify: `public/js/register-page.js`
+- Modify: `public/css/app.css`
+- Modify: `staff-apps-script/Admin.html`
+- Modify: `staff-apps-script/AdminScript.html`
+- Modify: `staff-apps-script/AdminService.gs`
+- Modify: `apps-script/InternalMutationService.gs`
+- Test: `tests/registration-behavior.test.js`
+- Test: `tests/apps-script-admin-vm.test.js`
+
+- [x] Publish every seat with only its safe availability state; never publish its holder.
+- [x] Group generated seats into visual zones with row and column gaps.
+- [x] Disable occupied seats and show clear lock progress.
+- [x] Allow the administrator to change the stage/whiteboard label per activity.
+
+---
+
 ### Task 8: Bundles, Integration Verification, and Deployment
 
 **Files:**

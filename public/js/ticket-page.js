@@ -1,4 +1,6 @@
-import { cancelRegistration, exchangeSeat, lookupTicket } from "./api.js";
+import {
+  cancelRegistration, exchangeSeat, lookupTicket, updateRegistrationSessions
+} from "./api.js";
 import { renderQrSvg } from "./qr.js";
 import { consumeStoredTicketResult } from "./registration-success.js";
 import { PUBLIC_BASE_URL } from "./config.js";
@@ -61,7 +63,29 @@ export function createTicketViewModel(ticket) {
     })),
     capabilities: {
       canCancel: ticket?.capabilities?.canCancel === true,
-      canExchangeSeat: ticket?.capabilities?.canExchangeSeat === true
+      canExchangeSeat: ticket?.capabilities?.canExchangeSeat === true,
+      canManageSessions: ticket?.capabilities?.canManageSessions === true
+    },
+    sessionManagement: {
+      closesAt: String(ticket?.sessionManagement?.closesAt || ""),
+      seatMode: String(ticket?.sessionManagement?.seatMode || "none"),
+      minChoices: Number(ticket?.sessionManagement?.minChoices || 0),
+      maxChoices: Number(ticket?.sessionManagement?.maxChoices || 0),
+      sessions: (Array.isArray(ticket?.sessionManagement?.sessions)
+        ? ticket.sessionManagement.sessions : []).map((session) => ({
+        sessionId: String(session?.sessionId || ""),
+        title: String(session?.title || ""),
+        selected: session?.selected === true,
+        required: session?.required === true,
+        disabledReason: String(session?.disabledReason || ""),
+        seats: (Array.isArray(session?.seats) ? session.seats : []).map((seat) => ({
+          seatId: String(seat?.seatId || ""),
+          label: String(seat?.label || ""),
+          zone: String(seat?.zone || ""),
+          selected: seat?.selected === true,
+          available: seat?.available === true
+        })).filter((seat) => seat.seatId)
+      })).filter((session) => session.sessionId)
     },
     exchangeOptions: (Array.isArray(ticket?.exchangeOptions) ? ticket.exchangeOptions : []).map((option) => ({
       seatId: String(option?.seatId || ""),
@@ -122,6 +146,44 @@ export function renderTicketMarkup(view) {
           : ""}
       </section>`
     : "";
+  const managementMarkup = view.capabilities.canManageSessions
+    ? `<section class="ticket-session-management" data-ticket-session-management aria-label="管理我的报名">
+        <div class="ticket-management-head">
+          <p class="eyebrow">MANAGE REGISTRATION</p>
+          <h3>管理我的报名</h3>
+          <p>可在报名截止前追加或取消场次；原本票号和二维码不会改变。</p>
+        </div>
+        <div class="ticket-management-sessions">
+          ${view.sessionManagement.sessions.map((session) => {
+            const disabled = session.required || !!session.disabledReason;
+            const seats = session.seats.map((seat) => `
+                <option value="${escapeHtml(seat.seatId)}"
+                  ${seat.selected ? "selected" : ""}
+                  ${!seat.available && !seat.selected ? "disabled" : ""}>
+                  ${escapeHtml(`${seat.label}${seat.zone ? ` · ${seat.zone}` : ""}`)}
+                </option>`).join("");
+            return `<article class="ticket-management-session">
+              <label>
+                <input type="checkbox" data-session-id="${escapeHtml(session.sessionId)}"
+                  ${session.selected ? "checked" : ""} ${disabled ? "disabled" : ""}>
+                <strong>${escapeHtml(session.title)}</strong>
+              </label>
+              ${session.disabledReason ? `<p class="ticket-management-reason">${escapeHtml(session.disabledReason)}</p>` : ""}
+              ${view.sessionManagement.seatMode !== "none" && session.seats.length
+                ? `<label>座位
+                    <select data-session-seat="${escapeHtml(session.sessionId)}">
+                      <option value="">请选择座位</option>${seats}
+                    </select>
+                  </label>`
+                : ""}
+            </article>`;
+          }).join("")}
+        </div>
+        <button class="secondary-button" type="button" data-ticket-action="update-sessions">
+          保存场次修改
+        </button>
+      </section>`
+    : "";
   return `
     <article class="ticket-card status-${escapeHtml(view.status.code)}">
       <header class="ticket-title-row">
@@ -134,6 +196,7 @@ export function renderTicketMarkup(view) {
       </section>
       <section class="ticket-sessions" aria-label="已报名讲座">${sessionMarkup}</section>
       ${displayFieldMarkup}
+      ${managementMarkup}
       ${actionMarkup}
       <footer class="ticket-footer">
         <div class="ticket-code"><span>凭证编号</span><strong>${escapeHtml(view.ticketNumber)}</strong><p>每场讲座将分别签到</p></div>
@@ -148,7 +211,19 @@ export function renderTicketProjection(resultHolder, ticket, documentRef = docum
   resultHolder.replaceChildren(template.content);
 }
 
-function bindTicketActions(resultHolder, ticket, verificationValue, message, rerender) {
+export function bindTicketActions(
+  resultHolder,
+  ticket,
+  verificationValue,
+  message,
+  rerender,
+  dependencies = {}
+) {
+  const cancelAction = dependencies.cancelRegistration || cancelRegistration;
+  const exchangeAction = dependencies.exchangeSeat || exchangeSeat;
+  const updateSessionsAction =
+    dependencies.updateRegistrationSessions || updateRegistrationSessions;
+  const confirmAction = dependencies.confirm || globalThis.confirm || (() => true);
   const requireVerification = () => {
     if (verificationValue) return true;
     message.textContent = "请先在上方填写验证资料并重新查询凭证。";
@@ -157,10 +232,10 @@ function bindTicketActions(resultHolder, ticket, verificationValue, message, rer
   const cancelButton = resultHolder.querySelector?.('[data-ticket-action="cancel"]');
   cancelButton?.addEventListener("click", async () => {
     if (!requireVerification() ||
-        !globalThis.confirm("确认取消这项报名？原有记录会保留。")) return;
+        !confirmAction("确认取消这项报名？原有记录会保留。")) return;
     cancelButton.disabled = true;
     message.textContent = "正在取消报名…";
-    const result = await cancelRegistration(ticket.ticketNumber, verificationValue);
+    const result = await cancelAction(ticket.ticketNumber, verificationValue);
     if (!result.ok) {
       cancelButton.disabled = false;
       message.textContent = result.message;
@@ -179,10 +254,10 @@ function bindTicketActions(resultHolder, ticket, verificationValue, message, rer
       message.textContent = "请选择要更换的新座位。";
       return;
     }
-    if (!globalThis.confirm("确认更换座位？旧二维码会立即失效。")) return;
+    if (!confirmAction("确认更换座位？旧二维码会立即失效。")) return;
     exchangeButton.disabled = true;
     message.textContent = "正在更换座位…";
-    const result = await exchangeSeat({
+    const result = await exchangeAction({
       ticketNumber: ticket.ticketNumber,
       verificationValue,
       oldSeatId,
@@ -194,6 +269,40 @@ function bindTicketActions(resultHolder, ticket, verificationValue, message, rer
       return;
     }
     message.textContent = "座位已更新，请重新保存电子凭证。";
+    rerender(result.data, verificationValue);
+  });
+
+  const updateButton = resultHolder.querySelector?.('[data-ticket-action="update-sessions"]');
+  let updatePending = false;
+  updateButton?.addEventListener("click", async () => {
+    if (updatePending || !requireVerification()) return;
+    const controls = Array.from(resultHolder.querySelectorAll?.("[data-session-id]") || []);
+    const sessionIds = controls
+      .filter((control) => control.checked)
+      .map((control) => String(control.dataset?.sessionId || ""))
+      .filter(Boolean);
+    const seatChoices = sessionIds.map((sessionId) => {
+      const select = resultHolder.querySelector?.(`[data-session-seat="${sessionId}"]`);
+      return String(select?.value || "");
+    }).filter(Boolean);
+    if (!confirmAction(`确认保存场次修改？\n已选择 ${sessionIds.length} 个场次。`)) return;
+    updatePending = true;
+    updateButton.disabled = true;
+    message.textContent = "正在更新报名场次……";
+    const result = await updateSessionsAction({
+      ticketNumber: ticket.ticketNumber,
+      verificationValue,
+      sessionIds,
+      seatChoices,
+      seatHoldOwner: ""
+    });
+    if (!result.ok) {
+      updatePending = false;
+      updateButton.disabled = false;
+      message.textContent = result.message;
+      return;
+    }
+    message.textContent = "报名已更新。";
     rerender(result.data, verificationValue);
   });
 }

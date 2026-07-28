@@ -9,6 +9,7 @@ const state = {
   seatChoices: [],
   seatSelections: new Map(),
   seatHolds: new Map(),
+  seatPending: new Set(),
   holdOwner: "",
   holdTimer: null,
   review: null,
@@ -73,14 +74,60 @@ function renderSeatOptions(event) {
 function normalizedPublicSeats(event) {
   return (Array.isArray(event?.seats) ? event.seats : []).map((seat) =>
     typeof seat === "string"
-      ? { id: seat, label: seat, zone: "", sessionId: "" }
+      ? { id: seat, label: seat, zone: "", sessionId: "", available: true }
       : {
           id: String(seat?.id || seat?.seatId || ""),
           label: String(seat?.label || seat?.id || ""),
           zone: String(seat?.zone || ""),
-          sessionId: String(seat?.sessionId || "")
+          sessionId: String(seat?.sessionId || ""),
+          available: seat?.available !== false
         }
   ).filter((seat) => seat.id);
+}
+
+function naturalSeatCompare(left, right) {
+  return String(left).localeCompare(String(right), undefined, {
+    numeric: true,
+    sensitivity: "base"
+  });
+}
+
+function seatGridPosition(seat) {
+  const zone = String(seat.zone || "");
+  const escapedZone = zone.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const generated = new RegExp(`^${escapedZone ? `${escapedZone}-` : ""}(\\d+)-(\\d+)$`)
+    .exec(String(seat.label || ""));
+  if (generated) {
+    return { row: Number(generated[1]), column: Number(generated[2]) };
+  }
+  const compact = /^(?:[^\d]+)?(\d+)$/.exec(String(seat.label || ""));
+  return compact
+    ? { row: Number(compact[1]), column: 1 }
+    : { row: 1, column: 1 };
+}
+
+export function buildSeatMapGroups(seats) {
+  const byZone = new Map();
+  for (const source of Array.isArray(seats) ? seats : []) {
+    const seat = {
+      ...source,
+      available: source?.available !== false,
+      ...seatGridPosition(source || {})
+    };
+    const zone = String(seat.zone || "座位区");
+    if (!byZone.has(zone)) byZone.set(zone, []);
+    byZone.get(zone).push(seat);
+  }
+  return [...byZone.entries()]
+    .sort(([left], [right]) => naturalSeatCompare(left, right))
+    .map(([zone, zoneSeats]) => ({
+      zone,
+      seats: zoneSeats.sort((left, right) =>
+        left.row - right.row ||
+        left.column - right.column ||
+        naturalSeatCompare(left.label, right.label)
+      )
+    }));
 }
 
 function selectedSeatGroups(event) {
@@ -144,34 +191,49 @@ function scheduleSeatHoldCountdown(event) {
 }
 
 async function chooseSelfSeat(event, groupId, seatId) {
+  if (state.seatPending.has(groupId)) return;
   const previous = state.seatSelections.get(groupId);
   if (previous === seatId) return;
-  if (previous) await releaseGroupHold(event, groupId);
-  state.seatSelections.delete(groupId);
-  syncSeatChoices(event);
-  if (!event.seatHoldsEnabled) {
-    state.seatSelections.set(groupId, seatId);
+  state.seatPending.add(groupId);
+  holdStatus("正在锁定座位，请稍候…");
+  renderSeatOptionsV2(event);
+  try {
+    if (previous) await releaseGroupHold(event, groupId);
+    state.seatSelections.delete(groupId);
     syncSeatChoices(event);
-    return;
-  }
-  holdStatus("正在保留座位…");
-  const result = await createSeatHold({
-    eventId: event.id,
-    seatId,
-    holdOwner: state.holdOwner
-  });
-  if (!result.ok) {
-    holdStatus(result.message || "座位未能保留，请重新选择。");
+    if (!event.seatHoldsEnabled) {
+      state.seatSelections.set(groupId, seatId);
+      syncSeatChoices(event);
+      holdStatus("座位已选中，请继续填写报名资料。");
+      return;
+    }
+    const result = await createSeatHold({
+      eventId: event.id,
+      seatId,
+      holdOwner: state.holdOwner
+    });
+    if (!result.ok) {
+      holdStatus(result.message || "这个座位刚刚已被选择，请重新选择。");
+      const refreshed = await getEvent(event.id);
+      if (refreshed.ok) {
+        state.event = refreshed.data.event;
+        Object.assign(event, refreshed.data.event);
+      }
+      return;
+    }
+    state.seatSelections.set(groupId, seatId);
+    state.seatHolds.set(groupId, {
+      seatId,
+      expiresAt: result.data.expiresAt
+    });
+    syncSeatChoices(event);
+  } catch (_error) {
+    holdStatus("座位暂时无法锁定，请稍后再试。");
+  } finally {
+    state.seatPending.delete(groupId);
     renderSeatOptionsV2(event);
-    return;
+    if (state.seatHolds.size) scheduleSeatHoldCountdown(event);
   }
-  state.seatSelections.set(groupId, seatId);
-  state.seatHolds.set(groupId, {
-    seatId,
-    expiresAt: result.data.expiresAt
-  });
-  syncSeatChoices(event);
-  scheduleSeatHoldCountdown(event);
 }
 
 function renderSeatOptionsV2(event) {
@@ -216,21 +278,47 @@ function renderSeatOptionsV2(event) {
       });
       fieldset.append(select);
     } else {
-      const grid = node("div", "choice-grid");
-      for (const seat of group.seats) {
-        const label = node("label", "seat-choice");
-        const input = document.createElement("input");
-        input.type = "radio";
-        input.name = `seat-${group.id}`;
-        input.value = seat.id;
-        input.checked = state.seatSelections.get(group.id) === seat.id;
-        input.addEventListener("change", () => {
-          if (input.checked) void chooseSelfSeat(event, group.id, seat.id);
-        });
-        label.append(input, node("span", "", seat.label || seat.id));
-        grid.append(label);
+      const map = node("div", "seat-map");
+      map.append(node("div", "seat-map-stage", event.seatMapLabel || "舞台 / 白板"));
+      const legend = node("div", "seat-map-legend");
+      legend.append(
+        node("span", "seat-map-key is-available", "可选择"),
+        node("span", "seat-map-key is-selected", "暂选中"),
+        node("span", "seat-map-key is-unavailable", "已被选择")
+      );
+      map.append(legend);
+      const floor = node("div", "seat-map-floor");
+      for (const zoneGroup of buildSeatMapGroups(group.seats)) {
+        const zone = node("div", "seat-map-zone");
+        zone.append(node("strong", "seat-map-zone-name", zoneGroup.zone));
+        const grid = node("div", "seat-map-grid");
+        for (const seat of zoneGroup.seats) {
+          const label = node("label", "seat-choice");
+          const input = document.createElement("input");
+          input.type = "radio";
+          input.name = `seat-${group.id}`;
+          input.value = seat.id;
+          input.checked = state.seatSelections.get(group.id) === seat.id;
+          input.disabled = !seat.available || state.seatPending.has(group.id);
+          if (!seat.available) label.classList.add("is-unavailable");
+          label.style.gridRow = String(seat.row);
+          label.style.gridColumn = String(seat.column);
+          input.addEventListener("change", () => {
+            if (input.checked) void chooseSelfSeat(event, group.id, seat.id);
+          });
+          const seatLabel = node("span", "", seat.label || seat.id);
+          seatLabel.setAttribute(
+            "aria-label",
+            `${seat.label || seat.id}${seat.available ? "可选择" : "已被选择"}`
+          );
+          label.append(input, seatLabel);
+          grid.append(label);
+        }
+        zone.append(grid);
+        floor.append(zone);
       }
-      fieldset.append(grid);
+      map.append(floor);
+      fieldset.append(map);
     }
     holder.append(fieldset);
   }

@@ -26,7 +26,7 @@ function clientWithResponse(body, status = 200) {
   return { client, calls };
 }
 
-test("every public method sends its documented JSON POST envelope", async () => {
+test("every public method sends its JSON envelope as a CORS-safe simple POST", async () => {
   const { client, calls } = clientWithResponse({ ok: true, data: { accepted: true } });
   const expected = [
     ["listEvents", {}, () => client.listEvents()],
@@ -37,7 +37,20 @@ test("every public method sends its documented JSON POST envelope", async () => 
     ["createSeatHold", { eventId: "event-1", seatId: "seat-1", holdOwner: "browser-owner-0001" }, () => client.createSeatHold({ eventId: "event-1", seatId: "seat-1", holdOwner: "browser-owner-0001" })],
     ["releaseSeatHold", { eventId: "event-1", seatId: "seat-1", holdOwner: "browser-owner-0001" }, () => client.releaseSeatHold({ eventId: "event-1", seatId: "seat-1", holdOwner: "browser-owner-0001" })],
     ["cancelRegistration", { ticketNumber: "T-01", verificationValue: "13800000000" }, () => client.cancelRegistration("T-01", "13800000000")],
-    ["exchangeSeat", { ticketNumber: "T-01", verificationValue: "13800000000", oldSeatId: "seat-1", newSeatId: "seat-2", seatHoldOwner: "browser-owner-0001" }, () => client.exchangeSeat({ ticketNumber: "T-01", verificationValue: "13800000000", oldSeatId: "seat-1", newSeatId: "seat-2", seatHoldOwner: "browser-owner-0001" })]
+    ["exchangeSeat", { ticketNumber: "T-01", verificationValue: "13800000000", oldSeatId: "seat-1", newSeatId: "seat-2", seatHoldOwner: "browser-owner-0001" }, () => client.exchangeSeat({ ticketNumber: "T-01", verificationValue: "13800000000", oldSeatId: "seat-1", newSeatId: "seat-2", seatHoldOwner: "browser-owner-0001" })],
+    ["updateRegistrationSessions", {
+      ticketNumber: "T-01",
+      verificationValue: "13800000000",
+      sessionIds: ["s1", "s2"],
+      seatChoices: ["seat-s2"],
+      seatHoldOwner: "browser-owner-0001"
+    }, () => client.updateRegistrationSessions({
+      ticketNumber: "T-01",
+      verificationValue: "13800000000",
+      sessionIds: ["s1", "s2"],
+      seatChoices: ["seat-s2"],
+      seatHoldOwner: "browser-owner-0001"
+    })]
   ];
 
   for (const [action, payload, invoke] of expected) {
@@ -45,7 +58,7 @@ test("every public method sends its documented JSON POST envelope", async () => 
     const [url, options] = calls.at(-1);
     assert.equal(url, endpoint);
     assert.equal(options.method, "POST");
-    assert.equal(options.headers["Content-Type"], "application/json");
+    assert.equal(options.headers["Content-Type"], "text/plain;charset=utf-8");
     assert.deepEqual(JSON.parse(options.body), { action, payload });
   }
 });

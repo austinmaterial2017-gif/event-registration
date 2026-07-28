@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { getActivityCountdown, getVisibleActivities } from "../public/js/event-list-flow.js";
 import { applyRegistrationGate, getFieldControlSpec, getRegistrationAvailability, getSeatModeState, validateRegistrationDraft } from "../public/js/registration-flow.js";
-import { createSeatHoldOwner } from "../public/js/register-page.js";
+import { buildSeatMapGroups, createSeatHoldOwner } from "../public/js/register-page.js";
 
 const serverNow = Date.parse("2026-07-26T10:00:00+08:00");
 
@@ -80,6 +80,23 @@ test("per-session seats require one choice each and hold owners use secure brows
     createSeatHoldOwner({ randomUUID: () => "00000000-0000-4000-8000-000000000001" }),
     "hold-00000000-0000-4000-8000-000000000001"
   );
+});
+
+test("seat map groups irregular rows without exposing unavailable seat owners", () => {
+  const groups = buildSeatMapGroups([
+    { id: "b1", label: "B-1-1", zone: "B", available: true },
+    { id: "b3", label: "B-3-1", zone: "B", available: false },
+    { id: "c1", label: "C-1-1", zone: "C", available: true },
+    { id: "c2", label: "C-1-2", zone: "C", available: true }
+  ]);
+
+  assert.deepEqual(groups.map((group) => [
+    group.zone,
+    group.seats.map((seat) => [seat.id, seat.row, seat.column, seat.available])
+  ]), [
+    ["B", [["b1", 1, 1, true], ["b3", 3, 1, false]]],
+    ["C", [["c1", 1, 1, true], ["c2", 1, 2, true]]]
+  ]);
 });
 
 test("public markup retains the semantic participant regions and six ordered stages", async () => {

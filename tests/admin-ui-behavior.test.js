@@ -145,7 +145,7 @@ function draftDashboard(draftId, title, nextStep = "questions") {
 async function createHarness() {
   const elements = new Map();
   const add = (selector, node = new FakeElement()) => (elements.set(selector, node), node);
-  const eventForm = add("#event-form", form(["eventId", "title", "description", "status", "opensAt", "closesAt", "location", "selectionMode", "minChoices", "maxChoices", "seatMode", "seatZones", "showOpeningCountdown", "showClosingCountdown", "cancellationEnabled", "seatExchangeEnabled", "seatHoldsEnabled", "seatHoldMinutes"]));
+  const eventForm = add("#event-form", form(["eventId", "title", "description", "status", "opensAt", "closesAt", "location", "selectionMode", "minChoices", "maxChoices", "seatMode", "seatMapLabel", "seatZones", "showOpeningCountdown", "showClosingCountdown", "cancellationEnabled", "seatExchangeEnabled", "seatHoldsEnabled", "seatHoldMinutes"]));
   const sessionForm = add("#session-form", form(["eventId", "sessionId", "title", "speaker", "startsAt", "endsAt", "location", "capacity", "required", "groupRule", "status"]));
   const seatForm = add("#seat-form", form(["eventId", "sessionId", "mode", "zoneName", "rows", "seatsPerRow"]));
   const questionForm = add("#question-form", form(["eventId", "questionId", "label", "type", "options", "validation", "sortOrder", "status", "required", "showOnTicket", "duplicateIdentity", "semanticRole"]));

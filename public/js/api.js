@@ -12,8 +12,15 @@ const PUBLIC_ERROR_MESSAGES = {
   EVENT_NOT_FOUND: "未找到该活动。",
   INVALID_REQUEST: "提交信息无效，请检查后重试。",
   REGISTRATION_CLOSED: "报名已截止。",
+  REGISTRATION_UPDATE_CLOSED: "已超过报名修改期限。",
+  REGISTRATION_CHANGED: "报名资料已变化，请重新载入电子票。",
   REGISTRATION_FULL: "报名名额已满。",
   REGISTRATION_NOT_OPEN: "报名尚未开放。",
+  REQUIRED_SESSION: "必选场次不能取消。",
+  SESSION_STARTED: "已开始的场次不能取消。",
+  SESSION_CHECKED_IN: "已签到的场次不能取消。",
+  SESSION_FULL: "所选场次名额已满。",
+  SESSION_CONFLICT: "所选场次时间冲突。",
   TICKET_ALREADY_VERIFIED: "该凭证已完成验票。",
   TICKET_NOT_FOUND: "未找到对应凭证。",
   TICKET_VERIFICATION_FAILED: "验证信息不匹配。",
@@ -94,7 +101,7 @@ export function createApiClient({ endpoint = APPS_SCRIPT_WEB_APP_URL, fetchImpl 
     try {
       const response = await fetchImpl(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
         body: JSON.stringify({ action, payload }),
         signal: controller.signal
       });
@@ -145,6 +152,13 @@ export function createApiClient({ endpoint = APPS_SCRIPT_WEB_APP_URL, fetchImpl 
       oldSeatId: requestData?.oldSeatId,
       newSeatId: requestData?.newSeatId,
       seatHoldOwner: requestData?.seatHoldOwner
+    }),
+    updateRegistrationSessions: (requestData) => request("updateRegistrationSessions", {
+      ticketNumber: requestData?.ticketNumber,
+      verificationValue: requestData?.verificationValue,
+      sessionIds: requestData?.sessionIds,
+      seatChoices: requestData?.seatChoices,
+      seatHoldOwner: requestData?.seatHoldOwner
     })
   };
 }
@@ -161,3 +175,5 @@ export const releaseSeatHold = (request) => publicClient.releaseSeatHold(request
 export const cancelRegistration = (ticketNumber, verificationValue) =>
   publicClient.cancelRegistration(ticketNumber, verificationValue);
 export const exchangeSeat = (request) => publicClient.exchangeSeat(request);
+export const updateRegistrationSessions = (request) =>
+  publicClient.updateRegistrationSessions(request);

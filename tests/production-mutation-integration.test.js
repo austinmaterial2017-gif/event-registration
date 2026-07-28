@@ -572,7 +572,7 @@ async function runAdminUiThroughRealService(system) {
   const add = (selector, node = new UiElement()) => (elements.set(selector, node), node);
   const eventForm = add("#event-form", uiForm([
     "eventId", "title", "description", "status", "opensAt", "closesAt", "location",
-    "selectionMode", "minChoices", "maxChoices", "seatMode", "seatZones",
+    "selectionMode", "minChoices", "maxChoices", "seatMode", "seatMapLabel", "seatZones",
     "showOpeningCountdown", "showClosingCountdown", "cancellationEnabled",
     "seatExchangeEnabled", "seatHoldsEnabled", "seatHoldMinutes"
   ]));

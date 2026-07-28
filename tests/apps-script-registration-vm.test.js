@@ -12,6 +12,7 @@ const headers = {
   "报名问题": ["questionId", "eventId", "label", "type", "required", "options", "sortOrder", "status", "createdAt", "updatedAt"],
   "参加者": ["participantId", "name", "phone", "email", "createdAt", "updatedAt"],
   "报名项目": ["registrationId", "eventId", "participantId", "ticketNumber", "status", "sessionIds", "seatChoices", "answers", "createdAt", "updatedAt"],
+  "签到记录": ["checkInId", "registrationId", "eventId", "sessionId", "checkedInAt", "checkedInBy", "status"],
   "操作记录": ["auditId", "action", "entityType", "entityId", "actor", "details", "createdAt"]
 };
 
@@ -84,6 +85,7 @@ function baseRows(overrides = {}) {
     "报名问题": overrides.questions || questions,
     "参加者": overrides.participants || [],
     "报名项目": overrides.registrations || [],
+    "签到记录": overrides.attendance || [],
     "操作记录": overrides.audits || []
   };
 }
@@ -389,6 +391,252 @@ test("a verified ticket owner can add and remove sessions without creating anoth
   assert.deepEqual(activeSessionIds, ["s2"]);
   assert.ok(records.some((record) =>
     record.status === "cancelled" && JSON.parse(record.sessionIds).includes("s1")));
+});
+
+test("ticket session updates reject closed, required, full, and conflicting choices without mutation", async (t) => {
+  await t.test("closed", async () => {
+    const harness = await createHarness();
+    const created = harness.context.createRegistration(registrationPayload({ sessionIds: ["s1"] }));
+    harness.sheets["活动"].rows[1][5] = "2000-01-01T00:00:00Z";
+    const before = JSON.stringify(sheetObjects(sheetWithHeader(harness, "sessionIds")));
+    const result = harness.context.updateRegistrationSessions({
+      ticketNumber: created.data.ticketNumber,
+      verificationValue: "alice@example.com",
+      sessionIds: ["s1", "s2"],
+      seatChoices: []
+    });
+    assert.equal(result.code, "REGISTRATION_UPDATE_CLOSED");
+    assert.equal(JSON.stringify(sheetObjects(sheetWithHeader(harness, "sessionIds"))), before);
+  });
+
+  await t.test("required", async () => {
+    const rows = baseRows();
+    rows["场次"][0].required = true;
+    const harness = await createHarness({ rows });
+    const created = harness.context.createRegistration(registrationPayload({ sessionIds: ["s1"] }));
+    const before = JSON.stringify(sheetObjects(sheetWithHeader(harness, "sessionIds")));
+    const result = harness.context.updateRegistrationSessions({
+      ticketNumber: created.data.ticketNumber,
+      verificationValue: "alice@example.com",
+      sessionIds: ["s2"],
+      seatChoices: []
+    });
+    assert.equal(result.code, "REQUIRED_SESSION");
+    assert.equal(JSON.stringify(sheetObjects(sheetWithHeader(harness, "sessionIds"))), before);
+  });
+
+  await t.test("full", async () => {
+    const rows = baseRows();
+    rows["场次"][1].capacity = 1;
+    const harness = await createHarness({ rows });
+    const first = harness.context.createRegistration(registrationPayload({ sessionIds: ["s1"] }));
+    const second = harness.context.createRegistration(registrationPayload({
+      sessionIds: ["s2"],
+      answers: { name: "Bob", email: "bob@example.com" }
+    }));
+    assert.equal(second.ok, true, JSON.stringify(second));
+    const before = JSON.stringify(sheetObjects(sheetWithHeader(harness, "sessionIds")));
+    const result = harness.context.updateRegistrationSessions({
+      ticketNumber: first.data.ticketNumber,
+      verificationValue: "alice@example.com",
+      sessionIds: ["s1", "s2"],
+      seatChoices: []
+    });
+    assert.equal(result.code, "SESSION_FULL");
+    assert.equal(JSON.stringify(sheetObjects(sheetWithHeader(harness, "sessionIds"))), before);
+  });
+
+  await t.test("conflict", async () => {
+    const rows = baseRows();
+    rows["场次"][1].startsAt = "2030-01-01T09:30:00Z";
+    rows["场次"][1].endsAt = "2030-01-01T10:30:00Z";
+    const harness = await createHarness({ rows });
+    const created = harness.context.createRegistration(registrationPayload({ sessionIds: ["s1"] }));
+    const before = JSON.stringify(sheetObjects(sheetWithHeader(harness, "sessionIds")));
+    const result = harness.context.updateRegistrationSessions({
+      ticketNumber: created.data.ticketNumber,
+      verificationValue: "alice@example.com",
+      sessionIds: ["s1", "s2"],
+      seatChoices: []
+    });
+    assert.equal(result.code, "SESSION_CONFLICT");
+    assert.equal(JSON.stringify(sheetObjects(sheetWithHeader(harness, "sessionIds"))), before);
+  });
+});
+
+test("ticket session updates claim and release per-session seats on the original ticket", async () => {
+  const rows = baseRows({
+    event: { seatMode: "self" },
+    seats: [
+      { seatId: "seat-s1", eventId: "event-1", sessionId: "s1", label: "A1", zone: "front", status: "available" },
+      { seatId: "seat-s2", eventId: "event-1", sessionId: "s2", label: "B1", zone: "front", status: "available" }
+    ]
+  });
+  const harness = await createHarness({ rows });
+  const created = harness.context.createRegistration(registrationPayload({
+    sessionIds: ["s1"],
+    seatChoices: ["seat-s1"]
+  }));
+  assert.equal(created.ok, true, JSON.stringify(created));
+
+  const added = harness.context.updateRegistrationSessions({
+    ticketNumber: created.data.ticketNumber,
+    verificationValue: "alice@example.com",
+    sessionIds: ["s1", "s2"],
+    seatChoices: ["seat-s1", "seat-s2"],
+    seatHoldOwner: ""
+  });
+
+  assert.equal(added.ok, true, JSON.stringify(added));
+  assert.deepEqual(
+    Array.from(added.data.seats, (seat) => seat.seatId).sort(),
+    ["seat-s1", "seat-s2"]
+  );
+  let seats = sheetObjects(sheetWithHeader(harness, "seatId"));
+  assert.ok(seats.every((seat) =>
+    seat.status === "registered" && seat.holderRegistrationId === created.data.registrationId));
+
+  const removed = harness.context.updateRegistrationSessions({
+    ticketNumber: created.data.ticketNumber,
+    verificationValue: "alice@example.com",
+    sessionIds: ["s2"],
+    seatChoices: ["seat-s2"],
+    seatHoldOwner: ""
+  });
+
+  assert.equal(removed.ok, true, JSON.stringify(removed));
+  seats = sheetObjects(sheetWithHeader(harness, "seatId"));
+  assert.deepEqual(
+    seats.map((seat) => [seat.seatId, seat.status, seat.holderRegistrationId]),
+    [["seat-s1", "available", ""], ["seat-s2", "registered", created.data.registrationId]]
+  );
+  assert.equal(removed.data.ticketNumber, created.data.ticketNumber);
+  assert.equal(removed.data.token, created.data.token);
+});
+
+test("a failed session-update audit restores the original sessions and seats", async () => {
+  let failUpdateAudit = false;
+  const rows = baseRows({
+    event: { seatMode: "self" },
+    seats: [
+      { seatId: "seat-s1", eventId: "event-1", sessionId: "s1", label: "A-1-1", zone: "A", status: "available" },
+      { seatId: "seat-s2", eventId: "event-1", sessionId: "s2", label: "B-1-1", zone: "B", status: "available" }
+    ]
+  });
+  const harness = await createHarness({
+    rows,
+    onWrite: ({ sheet, values }) => {
+      if (failUpdateAudit && sheet.name === "操作记录" &&
+          values[0]?.[1] === "UPDATE_REGISTRATION_SESSIONS") {
+        failUpdateAudit = false;
+        throw new Error("audit write failed");
+      }
+    }
+  });
+  const created = harness.context.createRegistration(registrationPayload({
+    sessionIds: ["s1"],
+    seatChoices: ["seat-s1"]
+  }));
+  assert.equal(created.ok, true, JSON.stringify(created));
+  failUpdateAudit = true;
+
+  const result = harness.context.updateRegistrationSessions({
+    ticketNumber: created.data.ticketNumber,
+    verificationValue: "alice@example.com",
+    sessionIds: ["s2"],
+    seatChoices: ["seat-s2"]
+  });
+
+  assert.equal(result.code, "INTERNAL");
+  const registrations = sheetObjects(sheetWithHeader(harness, "sessionIds"));
+  assert.deepEqual(
+    registrations.filter((record) => record.status === "active")
+      .map((record) => JSON.parse(record.sessionIds)),
+    [["s1"]]
+  );
+  const seats = sheetObjects(sheetWithHeader(harness, "seatId"));
+  assert.equal(seats.find((seat) => seat.seatId === "seat-s1").holderRegistrationId, created.data.registrationId);
+  assert.equal(seats.find((seat) => seat.seatId === "seat-s2").holderRegistrationId, "");
+});
+
+test("verified ticket projection exposes safe session-management choices before closing", async () => {
+  const harness = await createHarness();
+  const created = harness.context.createRegistration(registrationPayload({ sessionIds: ["s1"] }));
+  const lookup = harness.context.lookupTicket({
+    ticketNumber: created.data.ticketNumber,
+    verificationValue: "alice@example.com"
+  });
+
+  assert.equal(lookup.ok, true, JSON.stringify(lookup));
+  assert.equal(lookup.data.capabilities.canManageSessions, true);
+  assert.equal(lookup.data.sessionManagement.seatMode, "none");
+  assert.deepEqual(
+    Array.from(lookup.data.sessionManagement.sessions, (session) => [
+      session.sessionId, session.selected, session.required
+    ]),
+    [["s1", true, false], ["s2", false, false]]
+  );
+  const serialized = JSON.stringify(lookup.data.sessionManagement);
+  assert.equal(serialized.includes("alice@example.com"), false);
+  assert.equal(serialized.includes("spreadsheet"), false);
+  assert.equal(serialized.includes("holderRegistrationId"), false);
+});
+
+test("a session that has already started cannot be removed from a ticket", async () => {
+  const rows = baseRows();
+  rows["场次"][0].startsAt = "2001-01-01T09:00:00Z";
+  rows["场次"][0].endsAt = "2001-01-01T10:00:00Z";
+  const harness = await createHarness({ rows });
+  const created = harness.context.createRegistration(registrationPayload({ sessionIds: ["s1"] }));
+  assert.equal(created.ok, true, JSON.stringify(created));
+  const before = JSON.stringify(sheetObjects(sheetWithHeader(harness, "sessionIds")));
+
+  const result = harness.context.updateRegistrationSessions({
+    ticketNumber: created.data.ticketNumber,
+    verificationValue: "alice@example.com",
+    sessionIds: ["s2"],
+    seatChoices: []
+  });
+
+  assert.equal(result.code, "SESSION_STARTED");
+  assert.equal(JSON.stringify(sheetObjects(sheetWithHeader(harness, "sessionIds"))), before);
+});
+
+test("a checked-in session cannot be removed from a ticket", async () => {
+  const harness = await createHarness();
+  const created = harness.context.createRegistration(registrationPayload({ sessionIds: ["s1"] }));
+  assert.equal(created.ok, true, JSON.stringify(created));
+  const attendance = sheetWithHeader(harness, "checkedInAt");
+  attendance.rows.push(headers[attendance.name].map((key) => ({
+    checkInId: "checkin-1",
+    registrationId: created.data.registrationId,
+    eventId: "event-1",
+    sessionId: "s1",
+    checkedInAt: "2026-07-28T10:00:00Z",
+    checkedInBy: "staff@example.com",
+    status: "checked_in"
+  })[key] ?? ""));
+  const lookup = harness.context.lookupTicket({
+    ticketNumber: created.data.ticketNumber,
+    verificationValue: "alice@example.com"
+  });
+  assert.equal(
+    lookup.data.sessionManagement.sessions.find(
+      (session) => session.sessionId === "s1"
+    ).disabledReason,
+    "已经签到"
+  );
+  const before = JSON.stringify(sheetObjects(sheetWithHeader(harness, "sessionIds")));
+
+  const result = harness.context.updateRegistrationSessions({
+    ticketNumber: created.data.ticketNumber,
+    verificationValue: "alice@example.com",
+    sessionIds: ["s2"],
+    seatChoices: []
+  });
+
+  assert.equal(result.code, "SESSION_CHECKED_IN");
+  assert.equal(JSON.stringify(sheetObjects(sheetWithHeader(harness, "sessionIds"))), before);
 });
 
 test("ticket route publication failure compensates the activity registration and restores its seat", async () => {

@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildVerificationUrl, createTicketViewModel, renderTicketMarkup } from "../public/js/ticket-page.js";
+import {
+  bindTicketActions, buildVerificationUrl, createTicketViewModel, renderTicketMarkup
+} from "../public/js/ticket-page.js";
 import { encodeQrMatrix } from "../public/js/qr.js";
 import { createVerificationViewModel } from "../public/js/verify-page.js";
 import { readFile } from "node:fs/promises";
@@ -83,6 +85,99 @@ test("ticket renders masked configured fields and only server-authorized owner a
   assert.equal(markup.includes("SECRET-7391"), false);
 });
 
+test("ticket renders verified session management with selected, disabled, and seat controls", () => {
+  const manageable = {
+    ...ticket,
+    capabilities: { canManageSessions: true },
+    sessionManagement: {
+      closesAt: "2026-08-15T20:00:00+08:00",
+      seatMode: "self",
+      minChoices: 1,
+      maxChoices: 2,
+      sessions: [
+        {
+          sessionId: "opening",
+          title: "Opening",
+          selected: true,
+          required: true,
+          disabledReason: "必选场次",
+          seats: [{ seatId: "A-01", label: "A-01", zone: "front", selected: true, available: false }]
+        },
+        {
+          sessionId: "making",
+          title: "Making",
+          selected: false,
+          required: false,
+          disabledReason: "",
+          seats: [{ seatId: "B-08", label: "B-08", zone: "front", selected: false, available: true }]
+        }
+      ]
+    }
+  };
+
+  const view = createTicketViewModel(manageable);
+  const markup = renderTicketMarkup(view);
+  assert.equal(view.capabilities.canManageSessions, true);
+  assert.match(markup, /data-ticket-session-management/);
+  assert.match(markup, /data-session-id="opening"[^>]*checked[^>]*disabled/);
+  assert.match(markup, /data-session-id="making"/);
+  assert.match(markup, /data-session-seat="making"/);
+  assert.match(markup, /data-ticket-action="update-sessions"/);
+  assert.match(markup, /必选场次/);
+});
+
+test("session update visibly enters one pending request and rerenders the confirmed ticket", async () => {
+  let resolveUpdate;
+  const calls = [];
+  const listeners = {};
+  const updateButton = {
+    disabled: false,
+    addEventListener: (type, handler) => { listeners[type] = handler; }
+  };
+  const checkboxes = [
+    { checked: true, dataset: { sessionId: "s1" } },
+    { checked: true, dataset: { sessionId: "s2" } }
+  ];
+  const resultHolder = {
+    querySelector: (selector) => {
+      if (selector === '[data-ticket-action="update-sessions"]') return updateButton;
+      if (selector === '[data-session-seat="s1"]') return { value: "" };
+      if (selector === '[data-session-seat="s2"]') return { value: "" };
+      return null;
+    },
+    querySelectorAll: (selector) => selector === "[data-session-id]" ? checkboxes : []
+  };
+  const message = { textContent: "" };
+  const rerenders = [];
+  bindTicketActions(
+    resultHolder,
+    { ticketNumber: "T-01", sessionManagement: { sessions: [] } },
+    "alice@example.com",
+    message,
+    (nextTicket, verification) => rerenders.push([nextTicket, verification]),
+    {
+      updateRegistrationSessions: (payload) => {
+        calls.push(payload);
+        return new Promise((resolve) => { resolveUpdate = resolve; });
+      }
+    }
+  );
+
+  const first = listeners.click();
+  const second = listeners.click();
+  assert.equal(calls.length, 1);
+  assert.equal(updateButton.disabled, true);
+  assert.match(message.textContent, /正在/);
+  resolveUpdate({
+    ok: true,
+    data: { ticketNumber: "T-01", sessions: [{ sessionId: "s1" }, { sessionId: "s2" }] }
+  });
+  await Promise.all([first, second]);
+  assert.match(message.textContent, /已更新/);
+  assert.equal(rerenders.length, 1);
+  assert.equal(rerenders[0][1], "alice@example.com");
+});
+
 test("QR payload is an absolute physical-camera URL containing only the opaque token", () => {
   const payload = buildVerificationUrl(ticket.token, "https://events.example.org/summer/");
   assert.equal(payload, "https://events.example.org/summer/verify.html?token=opaque-token-123");
@@ -142,8 +237,11 @@ test("staff check-in accepts a raw token or scanned verification URL and auto-lo
   assert.ok(script, "staff script missing");
   const calls = [];
   const listeners = {};
+  const lookupButton = { disabled: false, textContent: "读取凭证" };
+  const checkInButton = { disabled: false, textContent: "确认本场签到" };
   const lookupForm = {
     elements: { token: { value: "" } },
+    querySelector: (selector) => selector === 'button[type="submit"]' ? lookupButton : null,
     addEventListener: (type, handler) => { listeners[`lookup:${type}`] = handler; }
   };
   const checkInForm = {
@@ -152,6 +250,7 @@ test("staff check-in accepts a raw token or scanned verification URL and auto-lo
       sessionId: { value: "", length: 1, append() {} },
       confirmCheckIn: { checked: false }
     },
+    querySelector: (selector) => selector === 'button[type="submit"]' ? checkInButton : null,
     addEventListener: (type, handler) => { listeners[`checkin:${type}`] = handler; }
   };
   const nodes = {
@@ -192,4 +291,8 @@ test("staff check-in accepts a raw token or scanned verification URL and auto-lo
   assert.equal(context.parseScannedTicketToken("raw-token-789"), "raw-token-789");
   assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ token: "query-token-123" }]);
   assert.equal(lookupForm.elements.token.value, "query-token-123");
+  assert.equal(lookupButton.disabled, true);
+  listeners["lookup:submit"]({ preventDefault() {} });
+  listeners["lookup:submit"]({ preventDefault() {} });
+  assert.equal(calls.length, 1);
 });

@@ -475,6 +475,7 @@ function validateActivityDraftDocument_(value) {
       minChoices: adminNonNegativeInteger_(adminField_(event, 'minChoices', '', 0)),
       maxChoices: adminNonNegativeInteger_(adminField_(event, 'maxChoices', '', 0)),
       seatMode: seatMode,
+      seatMapLabel: adminTextField_(event, 'seatMapLabel', '', '舞台 / 白板'),
       seatZones: Array.isArray(event.seatZones) ? event.seatZones.slice() : [],
       showOpeningCountdown: event.showOpeningCountdown === true,
       showClosingCountdown: event.showClosingCountdown === true,
@@ -1001,6 +1002,11 @@ function saveAdminEvent_(payload, actor) {
     copyAdminBooleanField_(request, policy, 'cancellationEnabled');
     copyAdminBooleanField_(request, policy, 'seatExchangeEnabled');
     copyAdminBooleanField_(request, policy, 'seatHoldsEnabled');
+    if (Object.prototype.hasOwnProperty.call(request, 'seatMapLabel')) {
+      policy.seatMapLabel = adminTextField_(
+        request, 'seatMapLabel', policy.seatMapLabel, '舞台 / 白板'
+      ).slice(0, 80);
+    }
     if (Object.prototype.hasOwnProperty.call(request, 'seatHoldMinutes')) {
       policy.seatHoldMinutes = adminPositiveInteger_(request.seatHoldMinutes);
     }
@@ -1257,7 +1263,7 @@ function saveAdminSeatPlan_(payload, actor) {
       knownLabels[[seat.eventId, seat.sessionId, seat.label].join('|')] = true;
     });
     var created = [];
-    var zoneNames = [];
+    var zoneNames = mode === 'none' ? [] : parseAdminStringArray_(event.seatZones);
     if (mode !== 'none') {
       zones.forEach(function(zone) {
         if (!zone || typeof zone !== 'object' || Array.isArray(zone)) adminError_('INVALID_REQUEST');
@@ -1893,6 +1899,7 @@ function adminEventProjection_(event, settings) {
     minChoices: Number(event.minChoices || 0),
     maxChoices: Number(event.maxChoices || 0),
     seatMode: String(event.seatMode || 'none'),
+    seatMapLabel: String(policy.seatMapLabel || '舞台 / 白板'),
     seatZones: parseAdminStringArray_(event.seatZones),
     showOpeningCountdown: policy.showOpeningCountdown === true,
     showClosingCountdown: policy.showClosingCountdown === true,

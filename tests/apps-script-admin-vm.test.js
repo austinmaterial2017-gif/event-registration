@@ -1482,7 +1482,7 @@ test("protected dashboard and mutations route only through the selected activity
   const catalogAfterSeatPlan = records(harness.sourceSheets["活动目录"])
     .find((entry) => entry.eventId === "event-2");
   assert.equal(catalogAfterSeatPlan.seatMode, "self");
-  assert.deepEqual(JSON.parse(catalogAfterSeatPlan.seatZones), ["B"]);
+  assert.deepEqual(JSON.parse(catalogAfterSeatPlan.seatZones), ["A", "B"]);
   assert.equal(harness.context.adminRecordAction({
     eventId: "event-2",
     registrationId: "registration-1",
@@ -2824,6 +2824,17 @@ test("real public event reads expose only safe visible projections and authorita
   })));
   const harness = await createHarness({ rows, nowIso: "2026-08-10T04:00:00Z" });
   const event1Sheets = eventSpreadsheetSheets("event-1", "Ideas Forum");
+  event1Sheets["座位"].rows.push(headers["座位"].map((key) => ({
+    seatId: "held-private-seat",
+    eventId: "event-1",
+    sessionId: "session-1",
+    label: "SECRET-HOLD",
+    zone: "A",
+    status: "held",
+    holderRegistrationId: "HOLD|private-owner|9999999999999",
+    createdAt: "2026-07-01T00:00:00Z",
+    updatedAt: "2026-07-01T00:00:00Z"
+  })[key] ?? ""));
   const questionSheet = Object.values(event1Sheets)
     .find((sheet) => headers[sheet.name].includes("questionId"));
   questionSheet.rows[1][headers[questionSheet.name].indexOf("options")] =
@@ -2851,8 +2862,12 @@ test("real public event reads expose only safe visible projections and authorita
   );
   assert.equal(detail.data.event.fields[0].constraints.minLength, 6);
   assert.equal(detail.data.event.fields[0].constraints.maxLength, 120);
-  assert.equal(detail.data.event.seats.some((seat) => seat.id === "held-private-seat"), false);
+  const unavailableSeat = detail.data.event.seats.find(
+    (seat) => seat.id === "held-private-seat"
+  );
+  assert.equal(unavailableSeat.available, false);
   assert.equal(JSON.stringify(detail.data).includes("holderRegistrationId"), false);
+  assert.equal(JSON.stringify(detail.data).includes("private-owner"), false);
   assert.equal(JSON.stringify(detail.data).includes("rowNumber"), false);
 
   assert.equal(context.getEvent({ eventId: "draft-event" }).code, "EVENT_NOT_FOUND");

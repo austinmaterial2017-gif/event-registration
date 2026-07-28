@@ -133,21 +133,21 @@ function getEvent(payload) {
       var nowMs = Date.now();
       var seats = readRows(spreadsheet, '座位')
         .filter(function(seat) {
-          if (seat.eventId !== eventId) return false;
-          var status = String(seat.status || '').toLowerCase();
-          if ((status === 'available' || status === 'open') && !seat.holderRegistrationId) {
-            return true;
-          }
-          if (status !== 'held') return false;
-          var hold = /^HOLD\|[^|]+\|(\d+)$/.exec(String(seat.holderRegistrationId || ''));
-          return !!hold && Number(hold[1]) <= nowMs;
+          return seat.eventId === eventId;
         })
         .map(function(seat) {
+          var status = String(seat.status || '').toLowerCase();
+          var holder = String(seat.holderRegistrationId || '');
+          var hold = /^HOLD\|[^|]+\|(\d+)$/.exec(holder);
+          var expiredHold = status === 'held' && !!hold && Number(hold[1]) <= nowMs;
+          var available = ((status === 'available' || status === 'open') && !holder) ||
+            expiredHold;
           return {
             id: String(seat.seatId || ''),
             label: String(seat.label || ''),
             zone: String(seat.zone || ''),
-            sessionId: String(seat.sessionId || '')
+            sessionId: String(seat.sessionId || ''),
+            available: available
           };
         });
       var detail = publicEventSummary_(event, policy);
@@ -221,6 +221,7 @@ function publicEventSummary_(event, policy) {
     minChoices: publicNonNegativeNumber_(event.minChoices, 0),
     maxChoices: publicNonNegativeNumber_(event.maxChoices, 0),
     seatMode: String(event.seatMode || 'none').toLowerCase(),
+    seatMapLabel: String(policy.seatMapLabel || '舞台 / 白板'),
     seatZones: publicStringArray_(event.seatZones),
     showOpeningCountdown: policy.showOpeningCountdown === true,
     showClosingCountdown: policy.showClosingCountdown === true,

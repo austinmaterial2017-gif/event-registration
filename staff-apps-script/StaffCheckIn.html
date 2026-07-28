@@ -43,7 +43,17 @@
       const checkInForm = document.querySelector("#check-in-form");
       const message = document.querySelector("#message");
       const summary = document.querySelector("#ticket-summary");
+      const lookupButton = lookupForm.querySelector('button[type="submit"]');
+      const checkInButton = checkInForm.querySelector('button[type="submit"]');
       let activeToken = "";
+      let lookupPending = false;
+      let checkInPending = false;
+
+      function setPending(button, pending, pendingText, idleText) {
+        if (!button) return;
+        button.disabled = pending;
+        button.textContent = pending ? pendingText : idleText;
+      }
 
       function parseScannedTicketToken(value) {
         const text = String(value || "").trim();
@@ -78,6 +88,7 @@
       }
 
       function lookupTicketForCheckIn(value) {
+        if (lookupPending) return;
         activeToken = parseScannedTicketToken(value);
         if (!activeToken) {
           message.textContent = "二维码或验票网址无效。";
@@ -85,9 +96,19 @@
         }
         lookupForm.elements.token.value = activeToken;
         message.textContent = "正在读取凭证…";
+        lookupPending = true;
+        setPending(lookupButton, true, "正在读取…", "读取凭证");
         google.script.run
-          .withSuccessHandler(showResult)
-          .withFailureHandler(() => { message.textContent = "员工签到不可用。"; })
+          .withSuccessHandler((result) => {
+            lookupPending = false;
+            setPending(lookupButton, false, "正在读取…", "读取凭证");
+            showResult(result);
+          })
+          .withFailureHandler(() => {
+            lookupPending = false;
+            setPending(lookupButton, false, "正在读取…", "读取凭证");
+            message.textContent = "员工签到不可用。";
+          })
           .getStaffTicketForCheckIn({ token: activeToken });
       }
 
@@ -98,15 +119,23 @@
 
       checkInForm.addEventListener("submit", (event) => {
         event.preventDefault();
-        if (!checkInForm.elements.confirmCheckIn.checked) return;
+        if (checkInPending || !checkInForm.elements.confirmCheckIn.checked) return;
         message.textContent = "正在提交签到…";
+        checkInPending = true;
+        setPending(checkInButton, true, "正在签到…", "确认本场签到");
         google.script.run
           .withSuccessHandler((result) => {
+            checkInPending = false;
+            setPending(checkInButton, false, "正在签到…", "确认本场签到");
             message.textContent = result && result.ok
               ? "本场签到成功。"
               : result && result.message ? result.message : "签到未完成。";
           })
-          .withFailureHandler(() => { message.textContent = "员工签到不可用。"; })
+          .withFailureHandler(() => {
+            checkInPending = false;
+            setPending(checkInButton, false, "正在签到…", "确认本场签到");
+            message.textContent = "员工签到不可用。";
+          })
           .checkIn({ token: activeToken, sessionId: checkInForm.elements.sessionId.value });
       });
 

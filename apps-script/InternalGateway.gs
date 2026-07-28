@@ -7,41 +7,60 @@ var INTERNAL_IDEMPOTENCY_PREFIX_ = 'INTERNAL_IDEMPOTENCY_';
 
 function handleInternalRequest_(request) {
   if (!isValidInternalRequest_(request)) return internalRequestDenied_();
-  return withInternalGatewayLock_(function() {
+  var claim = withInternalGatewayLock_(function() {
     purgeInternalRequestState_();
     var properties = PropertiesService.getScriptProperties();
     var nonceKey = INTERNAL_NONCE_PREFIX_ + request.nonce;
-    if (properties.getProperty(nonceKey) !== null) return internalRequestDenied_();
+    if (properties.getProperty(nonceKey) !== null) {
+      return { handled: true, result: internalRequestDenied_() };
+    }
     properties.setProperty(nonceKey, String(Date.now() + INTERNAL_NONCE_TTL_MS_));
 
     var idempotencyKey = INTERNAL_IDEMPOTENCY_PREFIX_ + request.idempotencyKey;
-    var fingerprint = canonicalInternalJson_({
-      action: request.action,
-      actor: request.actor,
-      payload: request.payload
-    });
-    var stored = parseInternalStoredResult_(properties.getProperty(idempotencyKey));
+    var fingerprint = internalRequestFingerprint_(request);
+    var stored = parseInternalStoredState_(properties.getProperty(idempotencyKey));
     if (stored) {
-      if (stored.fingerprint !== fingerprint) return internalRequestDenied_();
-      return stored.result;
-    }
-
-    var result;
-    try {
-      result = executeInternalActionLocked_(request.action, request.payload, request.actor);
-      if (!result || typeof result !== 'object' || typeof result.ok !== 'boolean') {
-        result = { ok: false, code: 'INTERNAL', message: '请求未能完成，请稍后重试。' };
+      if (stored.fingerprint !== fingerprint) {
+        return { handled: true, result: internalRequestDenied_() };
       }
-    } catch (_ignored) {
-      result = { ok: false, code: 'INTERNAL', message: '请求未能完成，请稍后重试。' };
+      return {
+        handled: true,
+        result: stored.pending === true ? internalRequestInProgress_() : stored.result
+      };
     }
     properties.setProperty(idempotencyKey, JSON.stringify({
       fingerprint: fingerprint,
+      expiresAt: Date.now() + INTERNAL_NONCE_TTL_MS_,
+      pending: true
+    }));
+    return {
+      handled: false,
+      idempotencyKey: idempotencyKey,
+      fingerprint: fingerprint
+    };
+  });
+  if (claim.handled) return claim.result;
+
+  var result;
+  try {
+    result = executeInternalActionLocked_(request.action, request.payload, request.actor);
+    if (!result || typeof result !== 'object' || typeof result.ok !== 'boolean') {
+      result = { ok: false, code: 'INTERNAL', message: '请求未能完成，请稍后重试。' };
+    }
+  } catch (_ignored) {
+    result = { ok: false, code: 'INTERNAL', message: '请求未能完成，请稍后重试。' };
+  }
+  withInternalGatewayLock_(function() {
+    PropertiesService.getScriptProperties().setProperty(
+      claim.idempotencyKey,
+      JSON.stringify({
+      fingerprint: claim.fingerprint,
       expiresAt: Date.now() + INTERNAL_IDEMPOTENCY_TTL_MS_,
       result: result
-    }));
-    return result;
+      })
+    );
   });
+  return result;
 }
 
 function isValidInternalRequest_(request) {
@@ -91,6 +110,18 @@ function canonicalInternalJson_(value) {
   return JSON.stringify(value);
 }
 
+function internalRequestFingerprint_(request) {
+  var secret = PropertiesService.getScriptProperties().getProperty(INTERNAL_API_SHARED_SECRET);
+  var canonical = canonicalInternalJson_({
+    action: request.action,
+    actor: request.actor,
+    payload: request.payload
+  });
+  return Utilities.base64EncodeWebSafe(
+    Utilities.computeHmacSha256Signature(canonical, secret)
+  ).replace(/=+$/g, '');
+}
+
 function constantTimeInternalEquals_(left, right) {
   var a = String(left || '');
   var b = String(right || '');
@@ -103,14 +134,15 @@ function constantTimeInternalEquals_(left, right) {
   return mismatch === 0;
 }
 
-function parseInternalStoredResult_(serialized) {
+function parseInternalStoredState_(serialized) {
   if (typeof serialized !== 'string' || !serialized) return null;
   try {
     var parsed = JSON.parse(serialized);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) ||
         typeof parsed.fingerprint !== 'string' ||
-        !parsed.result || typeof parsed.result !== 'object' ||
         Number(parsed.expiresAt) <= Date.now()) return null;
+    if (parsed.pending === true) return parsed;
+    if (!parsed.result || typeof parsed.result !== 'object') return null;
     return parsed;
   } catch (_ignored) {
     return null;
@@ -125,7 +157,7 @@ function purgeInternalRequestState_() {
         key.indexOf(INTERNAL_IDEMPOTENCY_PREFIX_) !== 0) return;
     var expiresAt = Number(all[key]);
     if (key.indexOf(INTERNAL_IDEMPOTENCY_PREFIX_) === 0) {
-      var stored = parseInternalStoredResult_(all[key]);
+      var stored = parseInternalStoredState_(all[key]);
       if (stored) return;
       expiresAt = 0;
     }
@@ -148,5 +180,13 @@ function internalRequestDenied_() {
     ok: false,
     code: 'INTERNAL_REQUEST_DENIED',
     message: '受保护操作不可用。'
+  };
+}
+
+function internalRequestInProgress_() {
+  return {
+    ok: false,
+    code: 'REQUEST_IN_PROGRESS',
+    message: '请求正在处理中，请稍后重试。'
   };
 }

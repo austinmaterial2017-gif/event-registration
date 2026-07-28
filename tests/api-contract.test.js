@@ -75,6 +75,13 @@ test("timeouts and offline failures are normalized into clear Chinese messages",
   assert.deepEqual(await offline.listEvents(), { ok: false, code: "NETWORK_ERROR", message: "网络连接异常，请检查网络后重试。" });
 });
 
+test("the production timeout tolerates an Apps Script cold start", async () => {
+  const source = await readFile(new URL("../public/js/api.js", import.meta.url), "utf8");
+  const match = source.match(/const DEFAULT_TIMEOUT_MS = ([\d_]+);/);
+  assert.ok(match, "default timeout declaration is missing");
+  assert.ok(Number(match[1].replaceAll("_", "")) >= 60_000);
+});
+
 test("malformed JSON and non-success HTTP statuses are safe normalized failures", async () => {
   const malformed = createApiClient({ endpoint, fetchImpl: async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError("unexpected private detail"); } }) });
   const unavailable = createApiClient({ endpoint, fetchImpl: async () => jsonResponse({ message: "internal stack trace" }, 503) });

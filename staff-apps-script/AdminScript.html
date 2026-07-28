@@ -23,6 +23,11 @@
       statusNode.style.color = kind === "error" ? "var(--danger)" : "var(--green)";
     }
 
+    function sessionCapacityLabel_(capacity) {
+      const value = Number(capacity);
+      return Number.isFinite(value) && value > 0 ? `${value} 人` : "不限人数";
+    }
+
     function adminRunner_(success, isCurrent = () => true, onSettled = () => {}) {
       return google.script.run
         .withSuccessHandler((result) => {
@@ -317,7 +322,7 @@
       replaceList("#session-list", visibleSessions, (item) => {
         const row = dataRow(item.title, item.status, [
           item.speaker, item.location, `${item.startsAt || "未定"} → ${item.endsAt || "未定"}`,
-          `容量 ${item.capacity}${item.required ? " · 必选" : ""}${item.groupRule ? ` · ${item.groupRule}` : ""}`
+          `容量 ${sessionCapacityLabel_(item.capacity)}${item.required ? " · 必选" : ""}${item.groupRule ? ` · ${item.groupRule}` : ""}`
         ]);
         row.append(editButton("编辑场次", () =>
           selectedDraft ? editDraftSession_(item) : editAdminSession(item)));

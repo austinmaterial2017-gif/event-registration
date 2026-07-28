@@ -191,6 +191,20 @@ async function createHarness(options = {}) {
     Date: ServerDate, JSON, Math, Object, Array, String, Number, RegExp, Error, isFinite,
     SHEET_DEFINITIONS: headers,
     Utilities: { getUuid: () => `checkin-${++uuid}` },
+    LockService: {
+      getScriptLock: () => ({
+        waitLock: () => {
+          assert.equal(lockDepth, 0, "nested lock");
+          lockDepth += 1;
+          locks.push("acquire");
+        },
+        releaseLock: () => {
+          assert.equal(lockDepth, 1, "release without lock");
+          locks.push("release");
+          lockDepth -= 1;
+        }
+      })
+    },
     PropertiesService: {
       getScriptProperties: () => ({
         getProperty: (key) => key === "ATTENDANCE_STAFF_ALLOWLIST"
@@ -209,7 +223,7 @@ async function createHarness(options = {}) {
     const internalServiceUrl = new URL("../apps-script/InternalMutationService.gs", import.meta.url);
     vm.runInContext(await readFile(internalServiceUrl, "utf8"), context);
     context.invokeInternalBackend_ = (action, payload, actor) =>
-      withScriptLock(() => context.executeInternalActionLocked_(action, payload, actor));
+      context.executeInternalActionLocked_(action, payload, actor);
     const staffServiceUrl = new URL("../staff-apps-script/AttendanceService.gs", import.meta.url);
     vm.runInContext(await readFile(staffServiceUrl, "utf8"), context);
   }

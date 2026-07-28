@@ -18,7 +18,7 @@ function utilities() {
   };
 }
 
-test("signed internal mutations reject tampering and replay while exact retries are idempotent under the public lock", async () => {
+test("gateway releases its script lock before a mutation takes the same public lock", async () => {
   const [clientSource, gatewaySource] = await Promise.all([
     readFile(new URL("InternalClient.gs", staffRoot), "utf8"),
     readFile(new URL("InternalGateway.gs", publicRoot), "utf8")
@@ -63,7 +63,11 @@ test("signed internal mutations reject tampering and replay while exact retries 
       })
     },
     executeInternalActionLocked_: (action, payload, actor) => {
-      assert.equal(lockDepth, 1, "mutation executed outside the public project lock");
+      assert.equal(
+        lockDepth,
+        0,
+        "gateway must release the public script lock before the mutation acquires it"
+      );
       executions += 1;
       return { ok: true, data: { action, payload, actor, execution: executions } };
     }
@@ -130,6 +134,81 @@ test("signed internal mutations reject tampering and replay while exact retries 
     "acquire", "release",
     "acquire", "release",
     "acquire", "release",
+    "acquire", "release",
+    "acquire", "release",
     "acquire", "release"
   ]);
+});
+
+test("large draft retries fit within the Apps Script property value limit", async () => {
+  const [clientSource, gatewaySource] = await Promise.all([
+    readFile(new URL("InternalClient.gs", staffRoot), "utf8"),
+    readFile(new URL("InternalGateway.gs", publicRoot), "utf8")
+  ]);
+  const properties = { INTERNAL_API_SHARED_SECRET: secret };
+  const scriptProperties = {
+    getProperty: (key) => properties[key] ?? null,
+    setProperty: (key, value) => {
+      if (String(value).length > 9_216) {
+        throw new Error("Property value too large");
+      }
+      properties[key] = value;
+    },
+    deleteProperty: (key) => { delete properties[key]; },
+    getProperties: () => ({ ...properties })
+  };
+  let now = 1_800_000_000_000;
+  class ServerDate extends Date {
+    constructor(value) { super(value === undefined ? now : value); }
+    static now() { return now; }
+  }
+  const common = {
+    JSON, Object, Array, String, Number, RegExp, Error, Math, isFinite,
+    Date: ServerDate,
+    Utilities: utilities(),
+    PropertiesService: { getScriptProperties: () => scriptProperties }
+  };
+  const staff = vm.createContext({ ...common });
+  vm.runInContext(clientSource, staff, { filename: "InternalClient.gs" });
+
+  let executions = 0;
+  const publicContext = vm.createContext({
+    ...common,
+    LockService: {
+      getScriptLock: () => ({ waitLock() {}, releaseLock() {} })
+    },
+    executeInternalActionLocked_: (_action, payload) => {
+      executions += 1;
+      return { ok: true, data: { draft: payload, execution: executions } };
+    }
+  });
+  vm.runInContext(gatewaySource, publicContext, { filename: "InternalGateway.gs" });
+
+  const payload = {
+    event: { title: "Large draft", description: "x".repeat(7_000) },
+    sessions: [],
+    questions: []
+  };
+  const first = staff.createInternalRequestEnvelope_(
+    "admin.saveDraft",
+    payload,
+    "admin@example.com",
+    "large-draft-save-1",
+    now
+  );
+  const accepted = publicContext.handleInternalRequest_(first);
+  assert.equal(accepted.ok, true);
+
+  const retry = staff.createInternalRequestEnvelope_(
+    "admin.saveDraft",
+    payload,
+    "admin@example.com",
+    "large-draft-save-1",
+    now + 1
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(publicContext.handleInternalRequest_(retry))),
+    JSON.parse(JSON.stringify(accepted))
+  );
+  assert.equal(executions, 1);
 });

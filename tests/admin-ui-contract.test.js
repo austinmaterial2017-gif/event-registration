@@ -109,3 +109,14 @@ test("administrator workflow keeps the selected activity visible and hides maint
   assert.match(script, /sheetUrl/);
   assert.doesNotMatch(script, /\.innerHTML\s*=|document\.write\s*\(|\beval\s*\(/);
 });
+
+test("administrator capacity controls explain and display zero as unlimited", async () => {
+  const [admin, script] = await Promise.all([
+    readFile(adminUrl, "utf8"),
+    readFile(scriptUrl, "utf8")
+  ]);
+
+  assert.match(admin, /容量（0\s*=\s*不限人数）/);
+  assert.match(script, /function\s+sessionCapacityLabel_\s*\(/);
+  assert.match(script, /不限人数/);
+});

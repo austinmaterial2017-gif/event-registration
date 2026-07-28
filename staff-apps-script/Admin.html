@@ -22,9 +22,7 @@
       html { scroll-behavior: smooth; }
       body {
         margin: 0;
-        background:
-          radial-gradient(circle at 84% 8%, rgba(135, 85, 255, .16), transparent 28rem),
-          var(--charcoal);
+        background: var(--charcoal);
         color: var(--ivory);
         font: 15px/1.5 "Aptos", "Noto Sans SC", "Microsoft YaHei", sans-serif;
       }
@@ -42,7 +40,7 @@
       .sidebar-copy { margin: 0 0 24px; color: var(--muted); font-size: 13px; }
       nav { display: grid; gap: 7px; }
       nav a { padding: 9px 11px; border-left: 2px solid transparent; color: var(--muted); text-decoration: none; }
-      nav a:hover { color: var(--ivory); border-color: var(--magenta); background: rgba(255, 79, 163, .07); }
+      nav a:hover, nav a[aria-current="page"] { color: var(--ivory); border-color: var(--magenta); background: rgba(255, 79, 163, .07); }
       .workspace { min-width: 0; padding: 34px clamp(18px, 4vw, 54px) 64px; }
       .masthead { display: grid; gap: 22px; margin: 0 auto 28px; max-width: 1420px; }
       .masthead h1 { max-width: 850px; margin: 4px 0 0; font: 650 clamp(34px, 5vw, 68px)/.98 "Iowan Old Style", "Noto Serif SC", Georgia, serif; letter-spacing: -.035em; }
@@ -78,9 +76,10 @@
       .actions { display: flex; flex-wrap: wrap; gap: 9px; }
       button {
         min-height: 42px; padding: 9px 14px; border: 1px solid transparent; border-radius: 10px;
-        background: linear-gradient(115deg, var(--magenta), var(--purple)); color: white; font-weight: 800; cursor: pointer;
+        background: var(--magenta); color: white; font-weight: 800; cursor: pointer;
       }
-      button.secondary { border-color: var(--line); background: transparent; color: var(--ivory); }
+      button.secondary, a.secondary { border-color: var(--line); background: transparent; color: var(--ivory); }
+      a.secondary { display: inline-flex; align-items: center; min-height: 42px; padding: 9px 14px; border: 1px solid var(--line); border-radius: 10px; font-weight: 800; text-decoration: none; }
       button.danger { border-color: rgba(255, 127, 145, .55); background: rgba(255, 127, 145, .1); color: #ffd5dc; }
       button:disabled { opacity: .45; cursor: not-allowed; }
       .data-list { display: grid; gap: 9px; align-content: start; max-height: 540px; overflow: auto; }
@@ -93,6 +92,21 @@
       .source-card { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-deep); }
       .source-card h3 { margin: 0; }
       code { color: #e6d9ff; font-family: "Consolas", monospace; }
+      .activity-picker { display: grid; gap: 6px; min-width: min(100%, 330px); }
+      .activity-picker select { min-width: 0; }
+      .activity-context {
+        display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center;
+        padding: 18px 22px; border: 1px solid var(--magenta); border-radius: var(--radius);
+        background: var(--panel-deep);
+      }
+      .activity-context h2 { margin: 4px 0 0; font: 700 clamp(22px, 3vw, 34px)/1.1 "Microsoft YaHei", "Noto Sans SC", sans-serif; }
+      .activity-context p { margin: 5px 0 0; color: var(--muted); }
+      .activity-context .pill { color: var(--ivory); border-color: var(--magenta); }
+      .empty-selection { margin: 0; padding: 16px 0; color: var(--muted); }
+      .advanced-maintenance { border: 1px solid var(--line); border-radius: var(--radius); background: rgba(38, 29, 43, .96); }
+      .advanced-maintenance > summary { padding: 16px 20px; color: var(--ivory); font: 700 12px/1.3 "Consolas", monospace; cursor: pointer; }
+      .advanced-maintenance > summary:focus-visible { outline: none; }
+      .advanced-maintenance .panel { border: 0; border-radius: 0; box-shadow: none; background: transparent; }
       [hidden] { display: none !important; }
       @media (max-width: 1050px) {
         .shell { grid-template-columns: 1fr; }
@@ -106,6 +120,7 @@
         .workspace { padding-inline: 13px; }
         .fields, .checks, .source-grid { grid-template-columns: 1fr; }
         .panel-head, .panel-body { padding-inline: 15px; }
+        .activity-context { grid-template-columns: 1fr; padding: 16px; }
         .masthead h1 { font-size: 38px; }
       }
       @media (prefers-reduced-motion: reduce) {
@@ -123,7 +138,6 @@
         <nav aria-label="管理区导航">
           <a href="#events">活动</a><a href="#sessions">场次</a><a href="#seats">座位</a>
           <a href="#questions">问题</a><a href="#records">记录</a><a href="#attendance">签到</a>
-          <a href="#sheet-settings">数据表</a><a href="#source-bundles">部署源码</a>
         </nav>
       </aside>
 
@@ -142,7 +156,7 @@
 
         <div class="stack">
           <section id="events" class="panel">
-            <div class="panel-head"><div><p class="eyebrow">Lifecycle</p><h2>活动</h2><p>设定状态、开放时间、倒数显示、场次选择与取消／换座政策。</p></div></div>
+            <div class="panel-head"><div><p class="eyebrow">Lifecycle</p><h2>活动</h2><p>先选择或新建活动，再编辑该活动的场次、座位、问题和记录。</p></div><label class="activity-picker">当前活动<select id="activity-selector" aria-label="选择当前活动"></select></label></div>
             <div class="panel-body split">
               <form id="event-form">
                 <input name="eventId" type="hidden">
@@ -188,17 +202,22 @@
                 </div>
                 <p class="warning">重新开放前会显示现有报名人数，并要求明确确认。</p>
               </form>
-              <div id="event-list" class="data-list" aria-label="活动列表"></div>
+              <div><div class="actions"><button id="new-activity" class="secondary" type="button">新建活动</button></div><div id="event-list" class="data-list" aria-label="活动列表"></div></div>
             </div>
           </section>
 
-          <section id="sessions" class="panel">
+          <section id="selected-activity" class="activity-context" aria-live="polite" hidden>
+            <div><p class="eyebrow">Current activity</p><h2 id="selected-activity-title"></h2><p id="selected-activity-meta"></p></div>
+            <div class="actions"><a id="selected-activity-sheet" class="secondary" target="_blank" rel="noopener noreferrer" hidden>打开活动数据表</a></div>
+          </section>
+          <p id="activity-empty-state" class="empty-selection">请选择一个活动，或先新建活动。</p>
+
+          <section id="sessions" class="panel selected-required">
             <div class="panel-head"><div><p class="eyebrow">Programme</p><h2>场次</h2><p>编辑讲题、讲师、时间、地点、容量、必选和分组规则。</p></div></div>
             <div class="panel-body split">
               <form id="session-form">
-                <input name="sessionId" type="hidden">
+                <input name="sessionId" type="hidden"><input name="eventId" type="hidden">
                 <div class="fields">
-                  <label>所属活动 ID<input name="eventId" required></label>
                   <label>场次状态<select name="status">
                     <option value="draft">draft</option><option value="upcoming">upcoming</option><option value="open">open</option>
                     <option value="closed">closed</option><option value="live">live</option><option value="ended">ended</option>
@@ -218,12 +237,13 @@
             </div>
           </section>
 
-          <section id="seats" class="panel">
+          <section id="seats" class="panel selected-required">
             <div class="panel-head"><div><p class="eyebrow">Floor plan</p><h2>座位</h2><p>按活动／场次生成座位；已有座位只会保留或改变状态。</p></div></div>
             <div class="panel-body split">
               <form id="seat-form">
+                <input name="eventId" type="hidden">
                 <div class="fields">
-                  <label>活动 ID<input name="eventId" required></label><label>场次 ID<input name="sessionId"></label>
+                  <label>场次 ID<input name="sessionId"></label>
                   <label>模式<select name="mode">
                     <option value="none">none 自由入座</option><option value="self">self 自行选座</option>
                     <option value="auto">auto 系统分配</option><option value="zone">zone 区域选择</option>
@@ -239,11 +259,11 @@
             </div>
           </section>
 
-          <section id="questions" class="panel">
+          <section id="questions" class="panel selected-required">
             <div class="panel-head"><div><p class="eyebrow">Registration form</p><h2>报名问题</h2><p>支持排序、显示／隐藏、必填、选项、验证、票面显示和重复身份判断。</p></div></div>
             <div class="panel-body split">
               <form id="question-form">
-                <input name="questionId" type="hidden">
+                <input name="questionId" type="hidden"><input name="eventId" type="hidden">
                 <label>资料用途<select name="semanticRole">
                   <option value="">一般问题</option>
                   <option value="name">姓名栏</option>
@@ -251,7 +271,6 @@
                   <option value="phone">电话栏</option>
                 </select></label>
                 <div class="fields">
-                  <label>活动 ID<input name="eventId" required></label>
                   <label>字段类型<select name="type">
                     <option value="text">text</option><option value="textarea">textarea</option><option value="number">number</option>
                     <option value="tel">tel</option><option value="email">email</option><option value="date">date</option>
@@ -275,7 +294,7 @@
             </div>
           </section>
 
-          <section id="records" class="panel">
+          <section id="records" class="panel selected-required">
             <div class="panel-head"><div><p class="eyebrow">History</p><h2>报名记录</h2><p>列表与搜索只显示脱敏资料；取消和调整座位保留全部历史。</p></div></div>
             <div class="panel-body">
               <form id="record-search-form" class="actions">
@@ -296,11 +315,13 @@
             </div>
           </section>
 
-          <section id="attendance" class="panel">
+          <section id="attendance" class="panel selected-required">
             <div class="panel-head"><div><p class="eyebrow">Door log</p><h2>签到记录</h2><p>按场次查看服务器时间签到历史。</p></div></div>
             <div class="panel-body"><div id="attendance-list" class="data-list" aria-label="签到记录"></div></div>
           </section>
 
+          <details class="advanced-maintenance">
+            <summary>高级维护</summary>
           <section id="sheet-settings" class="panel">
             <div class="panel-head"><div><p class="eyebrow">Connection</p><h2>数据表连接</h2><p id="connection-status">尚未读取连接状态。</p></div></div>
             <div class="panel-body">
@@ -322,6 +343,7 @@
               <p class="warning">源码包不会包含密码、许可名单值、当前数据表 ID、参加者资料或私人答案。</p>
             </div>
           </section>
+          </details>
         </div>
       </main>
     </div>

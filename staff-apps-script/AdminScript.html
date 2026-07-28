@@ -2,7 +2,7 @@
   (() => {
     "use strict";
 
-    const state = { dashboard: null, bundles: null };
+    const state = { dashboard: null, bundles: null, selectedEventId: "", search: "" };
     const statusNode = document.querySelector("#admin-status");
 
     function setStatus(message, kind = "success") {
@@ -55,17 +55,104 @@
       return button;
     }
 
+    function safeSheetUrl(value) {
+      try {
+        const url = new URL(String(value || ""));
+        return url.protocol === "https:" && url.hostname === "docs.google.com" &&
+          /^\/spreadsheets\/d\/[^/]+\/edit\/?$/.test(url.pathname) ? url.href : "";
+      } catch (_ignored) {
+        return "";
+      }
+    }
+
+    function syncSelectedEventFields() {
+      ["#session-form", "#seat-form", "#question-form"].forEach((selector) => {
+        const form = document.querySelector(selector);
+        form.elements.eventId.value = state.selectedEventId;
+      });
+      const hasSelection = Boolean(state.selectedEventId);
+      document.querySelectorAll(".selected-required").forEach((section) => {
+        section.hidden = !hasSelection;
+      });
+      document.querySelector("#activity-empty-state").hidden = hasSelection;
+    }
+
+    function renderActivitySelector(events) {
+      const selector = document.querySelector("#activity-selector");
+      selector.replaceChildren();
+      const placeholder = element("option", "选择活动", "");
+      placeholder.value = "";
+      selector.append(placeholder);
+      events.forEach((item) => {
+        const option = element("option", item.title || "未命名活动");
+        option.value = item.eventId;
+        selector.append(option);
+      });
+      selector.value = state.selectedEventId;
+    }
+
+    function renderSelectedActivity(item) {
+      const context = document.querySelector("#selected-activity");
+      const title = document.querySelector("#selected-activity-title");
+      const meta = document.querySelector("#selected-activity-meta");
+      const sheetLink = document.querySelector("#selected-activity-sheet");
+      context.hidden = !item;
+      if (!item) {
+        sheetLink.hidden = true;
+        sheetLink.removeAttribute("href");
+        return;
+      }
+      title.textContent = item.title || "未命名活动";
+      meta.textContent = `${item.status || "draft"}${item.location ? ` · ${item.location}` : ""}`;
+      const sheetUrl = safeSheetUrl(item.sheetUrl);
+      sheetLink.hidden = !sheetUrl;
+      if (sheetUrl) sheetLink.href = sheetUrl;
+      else sheetLink.removeAttribute("href");
+    }
+
+    function resetRelatedForms() {
+      ["#session-form", "#seat-form", "#question-form"].forEach((selector) => {
+        document.querySelector(selector).reset();
+      });
+      syncSelectedEventFields();
+    }
+
+    function selectActivity(eventId) {
+      state.selectedEventId = String(eventId || "");
+      resetRelatedForms();
+      loadDashboard();
+    }
+
+    function startNewActivity() {
+      state.selectedEventId = "";
+      document.querySelector("#event-form").reset();
+      document.querySelector("#event-form").elements.eventId.value = "";
+      resetRelatedForms();
+      renderSelectedActivity(null);
+      document.querySelector("#activity-selector").value = "";
+      document.querySelector("#event-form").querySelector("input[name=title]").focus();
+    }
+
     function renderDashboard(data) {
+      data = data || {};
       state.dashboard = data;
+      const events = Array.isArray(data.events) ? data.events : [];
+      if (!events.some((item) => item.eventId === state.selectedEventId)) state.selectedEventId = "";
+      const selectedEvent = events.find((item) => item.eventId === state.selectedEventId) || null;
+      renderActivitySelector(events);
+      renderSelectedActivity(selectedEvent);
+      syncSelectedEventFields();
       document.querySelector("#connection-status").textContent = data.connection && data.connection.connected
         ? `已连接：${data.connection.sheetName || "Google Sheet"}`
         : "未连接到数据表。";
-      replaceList("#event-list", data.events, (item) => {
+      replaceList("#event-list", events, (item) => {
         const row = dataRow(item.title, item.status, [
           item.location, `${item.selectionMode} · ${item.seatMode}`,
           `场次选择 ${item.minChoices}–${item.maxChoices}`
         ]);
-        row.append(editButton("编辑活动", () => editAdminEvent(item)));
+        const choose = editButton(item.eventId === state.selectedEventId ? "正在管理" : "管理此活动", () => selectActivity(item.eventId));
+        choose.setAttribute("aria-pressed", item.eventId === state.selectedEventId ? "true" : "false");
+        row.append(choose);
         return row;
       });
       replaceList("#session-list", data.sessions, (item) => {
@@ -107,12 +194,14 @@
         dataRow(item.registrationId, item.status, [
           `场次 ${item.sessionId}`, item.checkedInAt, item.checkedInBy
         ]));
-      setStatus("管理数据已更新。");
+      if (selectedEvent) fillEventEditor(selectedEvent);
+      setStatus(selectedEvent ? "当前活动数据已更新。" : "请选择一个活动，或先新建活动。");
     }
 
-    function loadDashboard(search = "") {
+    function loadDashboard(search = state.search) {
+      state.search = search;
       setStatus("正在读取管理数据…");
-      adminRunner_(renderDashboard).getAdminDashboard({ search });
+      adminRunner_(renderDashboard).getAdminDashboard({ eventId: state.selectedEventId || undefined, search });
     }
 
     function formObject(form) {
@@ -141,7 +230,7 @@
       if (firstVisible) firstVisible.focus();
     }
 
-    function editAdminEvent(item) {
+    function fillEventEditor(item) {
       const form = document.querySelector("#event-form");
       form.elements.eventId.value = item.eventId;
       form.elements.title.value = item.title;
@@ -161,7 +250,11 @@
       form.elements.seatExchangeEnabled.checked = item.seatExchangeEnabled === true;
       form.elements.seatHoldsEnabled.checked = item.seatHoldsEnabled === true;
       form.elements.seatHoldMinutes.value = item.seatHoldMinutes || 5;
-      focusEditor(form);
+    }
+
+    function editAdminEvent(item) {
+      fillEventEditor(item);
+      focusEditor(document.querySelector("#event-form"));
     }
 
     function editAdminSession(item) {
@@ -220,6 +313,7 @@
 
     function saveEvent(action) {
       const payload = eventPayload(action);
+      const isNewActivity = !payload.eventId;
       if (action === "reopen") {
         const count = state.dashboard && state.dashboard.records
           ? new Set(state.dashboard.records.filter((record) => record.eventId === payload.eventId)
@@ -228,7 +322,10 @@
         payload.confirm = true;
       }
       setStatus("正在保存活动…");
-      adminRunner_(() => loadDashboard()).saveAdminEvent(payload);
+      adminRunner_((savedEvent) => {
+        if (isNewActivity && savedEvent && savedEvent.eventId) state.selectedEventId = savedEvent.eventId;
+        loadDashboard();
+      }).saveAdminEvent(payload);
     }
 
     document.querySelector("#event-form").addEventListener("submit", (event) => {
@@ -238,6 +335,10 @@
     document.querySelectorAll("#event-form [data-action]").forEach((button) => {
       button.addEventListener("click", () => saveEvent(button.dataset.action));
     });
+    document.querySelector("#activity-selector").addEventListener("change", (event) => {
+      selectActivity(event.currentTarget.value);
+    });
+    document.querySelector("#new-activity").addEventListener("click", startNewActivity);
 
     document.querySelector("#session-form").addEventListener("submit", (event) => {
       event.preventDefault();
@@ -373,6 +474,27 @@
             .then(() => setStatus("源码已复制；请按文件分隔标记建立独立 Apps Script 项目。"))
             .catch(() => setStatus("无法写入剪贴板，请检查浏览器权限。", "error"));
         });
+      });
+    });
+
+    function scrollToAdminSection_(targetId) {
+      const target = document.querySelector(targetId);
+      if (!target) return;
+      if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        target.scrollIntoView({ behavior: "auto", block: "start" });
+      } else {
+        target.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+      document.querySelectorAll('nav a[href^="#"]').forEach((link) => {
+        if (link.getAttribute("href") === targetId) link.setAttribute("aria-current", "page");
+        else link.removeAttribute("aria-current");
+      });
+    }
+
+    document.querySelectorAll('nav a[href^="#"]').forEach((link) => {
+      link.addEventListener("click", (event) => {
+        event.preventDefault();
+        scrollToAdminSection_(link.getAttribute("href"));
       });
     });
 

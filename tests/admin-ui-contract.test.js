@@ -82,3 +82,27 @@ test("administrator client uses only explicit RPCs, safe DOM rendering, confirma
   assert.match(script, /editAdminQuestion\s*\(/);
   assert.match(script, /\.elements\.[A-Za-z]+\.value\s*=/);
 });
+
+test("administrator workflow keeps the selected activity visible and hides maintenance controls", async () => {
+  const [html, script] = await Promise.all([
+    readFile(adminUrl, "utf8"),
+    readFile(scriptUrl, "utf8")
+  ]);
+
+  assert.match(html, /id=["']activity-selector["']/);
+  assert.match(html, /id=["']selected-activity["']/);
+  assert.match(html, /打开活动数据表/);
+  assert.match(html, /<details[^>]*>[\s\S]*?<summary[^>]*>高级维护<\/summary>[\s\S]*?id=["']sheet-settings["']/);
+  assert.doesNotMatch(html, /所属活动\s*ID\s*<input/i);
+  assert.doesNotMatch(html, /活动\s*ID\s*<input/i);
+
+  assert.match(script, /selectedEventId/);
+  assert.match(script, /getAdminDashboard\(\{\s*eventId/);
+  assert.match(script, /function\s+scrollToAdminSection_/);
+  assert.match(script, /nav a\[href\^=["']#["']\]/);
+  assert.match(script, /event\.preventDefault\(\)/);
+  assert.match(script, /scrollIntoView\(\{\s*behavior:\s*["']smooth["']/);
+  assert.match(script, /aria-current/);
+  assert.match(script, /sheetUrl/);
+  assert.doesNotMatch(script, /\.innerHTML\s*=|document\.write\s*\(|\beval\s*\(/);
+});

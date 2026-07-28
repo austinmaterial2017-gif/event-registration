@@ -110,6 +110,21 @@ test("administrator workflow keeps the selected activity visible and hides maint
   assert.doesNotMatch(script, /\.innerHTML\s*=|document\.write\s*\(|\beval\s*\(/);
 });
 
+test("administrator seat controls include a responsive participant-style preview", async () => {
+  const admin = await readFile(adminUrl, "utf8");
+
+  assert.match(admin, /id=["']seat-preview["']/);
+  assert.match(admin, /id=["']seat-preview-stage["']/);
+  assert.match(admin, /id=["']seat-preview-floor["']/);
+  assert.match(admin, /id=["']seat-preview-message["']/);
+  assert.match(admin, /id=["']expand-seat-preview["']/);
+  assert.match(admin, /aria-label=["']座位预览图例["']/);
+  assert.match(admin, /data-preview-state=["']available["']/);
+  assert.match(admin, /data-preview-state=["']selected["']/);
+  assert.match(admin, /data-preview-state=["']unavailable["']/);
+  assert.match(admin, /@media\s*\(max-width:\s*1050px\)[\s\S]*?\.seat-workspace/);
+});
+
 test("administrator capacity controls explain and display zero as unlimited", async () => {
   const [admin, script] = await Promise.all([
     readFile(adminUrl, "utf8"),

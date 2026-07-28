@@ -105,6 +105,56 @@
       .activity-context p { margin: 5px 0 0; color: var(--muted); }
       .activity-context .pill { color: var(--ivory); border-color: var(--magenta); }
       .empty-selection { margin: 0; padding: 16px 0; color: var(--muted); }
+      .seat-workspace {
+        display: grid; grid-template-columns: minmax(300px, .72fr) minmax(420px, 1.28fr);
+        gap: 18px; align-items: start;
+      }
+      .seat-records { grid-column: 1 / -1; }
+      .seat-preview {
+        position: relative; display: grid; gap: 14px; min-width: 0; padding: 16px;
+        border: 1px solid var(--line); border-radius: 16px; background: #0d0b10;
+        background-image:
+          linear-gradient(rgba(248, 240, 223, .025) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(248, 240, 223, .025) 1px, transparent 1px);
+        background-size: 24px 24px;
+      }
+      .seat-preview.is-expanded {
+        position: fixed; z-index: 20; inset: 22px; overflow: auto;
+        box-shadow: 0 28px 100px rgba(0, 0, 0, .72);
+      }
+      .seat-preview-head {
+        display: flex; justify-content: space-between; gap: 12px; align-items: center;
+      }
+      .seat-preview-head h3 { margin: 3px 0 0; font-size: 20px; }
+      .seat-preview-stage {
+        padding: 14px 12px; border-radius: 10px; background: var(--ivory);
+        color: var(--charcoal); font-weight: 900; text-align: center; letter-spacing: .06em;
+        box-shadow: 0 12px 30px rgba(248, 240, 223, .12);
+      }
+      .seat-preview-legend { display: flex; flex-wrap: wrap; gap: 8px 14px; color: var(--muted); font-size: 12px; }
+      .seat-preview-legend span { display: inline-flex; align-items: center; gap: 6px; }
+      .seat-preview-legend span::before {
+        content: ""; width: 13px; height: 13px; border: 1px solid var(--line);
+        border-radius: 4px; background: var(--ivory);
+      }
+      .seat-preview-legend [data-preview-state="selected"]::before { background: var(--green); border-color: var(--green); }
+      .seat-preview-legend [data-preview-state="unavailable"]::before { background: #443b49; border-color: #665b6d; }
+      .seat-preview-message { margin: 0; color: var(--muted); font-size: 13px; }
+      .seat-preview-floor { display: grid; gap: 16px; min-height: 150px; align-content: start; overflow: auto; }
+      .seat-preview-zone { display: grid; gap: 9px; }
+      .seat-preview-zone-name { color: var(--ivory); font-size: 12px; }
+      .seat-preview-grid {
+        display: grid; grid-template-columns: repeat(var(--seat-columns, 6), minmax(42px, 1fr));
+        gap: 8px; min-width: max-content;
+      }
+      .seat-preview-button {
+        min-width: 42px; min-height: 42px; padding: 7px; border-color: #7d7182;
+        background: var(--ivory); color: var(--charcoal); font: 800 12px/1 "Consolas", monospace;
+      }
+      .seat-preview-button.is-selected { border-color: var(--green); background: var(--green); color: #10251b; }
+      .seat-preview-button.is-unavailable { border-color: #665b6d; background: #443b49; color: #b6acba; }
+      .seat-preview-button.is-unavailable:disabled { opacity: 1; }
+      body.has-seat-preview-modal { overflow: hidden; }
       .advanced-maintenance { border: 1px solid var(--line); border-radius: var(--radius); background: rgba(38, 29, 43, .96); }
       .advanced-maintenance > summary { padding: 16px 20px; color: var(--ivory); font: 700 12px/1.3 "Consolas", monospace; cursor: pointer; }
       .advanced-maintenance > summary:focus-visible { outline: none; }
@@ -117,6 +167,8 @@
         nav { display: flex; gap: 2px; overflow: auto; }
         nav a { flex: 0 0 auto; border-left: 0; border-bottom: 2px solid transparent; }
         .split { grid-template-columns: 1fr; }
+        .seat-workspace { grid-template-columns: 1fr; }
+        .seat-records { grid-column: auto; }
       }
       @media (max-width: 680px) {
         .workspace { padding-inline: 13px; }
@@ -251,7 +303,7 @@
 
           <section id="seats" class="panel selected-required">
             <div class="panel-head"><div><p class="eyebrow">Floor plan</p><h2>座位</h2><p>按活动／场次生成座位；已有座位只会保留或改变状态。</p></div></div>
-            <div class="panel-body split">
+            <div class="panel-body seat-workspace">
               <form id="seat-form">
                 <input name="eventId" type="hidden">
                 <div class="fields">
@@ -267,7 +319,21 @@
                   <button id="save-seat-plan" type="submit">生成／更新座位方案</button>
                 <p class="warning">保留、关闭与重新开放只改变座位状态，不会删除座位行。</p>
               </form>
-              <div id="seat-list" class="data-list" aria-label="座位列表"></div>
+              <section id="seat-preview" class="seat-preview" aria-label="参与者座位图预览">
+                <div class="seat-preview-head">
+                  <div><p class="eyebrow">Participant preview</p><h3>参与者将看到的样子</h3></div>
+                  <button id="expand-seat-preview" class="secondary" type="button" aria-expanded="false">放大预览</button>
+                </div>
+                <div id="seat-preview-stage" class="seat-preview-stage">舞台 / 白板</div>
+                <div class="seat-preview-legend" aria-label="座位预览图例">
+                  <span data-preview-state="available">可选择</span>
+                  <span data-preview-state="selected">暂选中</span>
+                  <span data-preview-state="unavailable">已被选择</span>
+                </div>
+                <p id="seat-preview-message" class="seat-preview-message">填写座位设置后，这里会即时变化；预览不会占用座位。</p>
+                <div id="seat-preview-floor" class="seat-preview-floor"></div>
+              </section>
+              <div id="seat-list" class="data-list seat-records" aria-label="座位列表"></div>
             </div>
           </section>
 

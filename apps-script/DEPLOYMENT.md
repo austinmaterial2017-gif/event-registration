@@ -27,25 +27,50 @@ Existing nonempty legacy activity data is not split automatically.
 them to the new activity catalog. Back up the legacy Sheet and complete a
 separately reviewed migration before removing or changing any old data.
 
-## One-time upgrade order
+## Updating existing protected deployments
+
+Keep the existing protected projects and official deployment URLs.
+Retain the prior public and staff deployment versions before upgrading.
 
 1. Back up the permanent registry and keep both existing deployment URLs in
    the protected deployment record.
-2. Replace the existing public project's files with the generated
+2. Pause participant submissions and staff or administrator mutations for a
+   controlled maintenance window.
+3. Replace the existing public project's files with the generated
    `source-bundles/public-backend.txt`, save, run `setupSystem()`, and approve
    the new Drive scope once.
-3. Deploy a new version of that same public project. Keep the official public
-   `/exec` URL in the protected record and participant configuration.
-4. Replace the existing staff project's files with
+4. Update that existing public deployment to the new version. Keep its
+   official `/exec` URL unchanged.
+5. Replace the existing staff project's files with
    `source-bundles/staff-admin.txt`, confirm its Script Properties still refer
    to the permanent registry and upgraded public backend, and deploy a new
-   version of that same staff project.
-5. From the protected administrator page, create two test activities and
+   version through the same official staff deployment URL.
+6. From the protected administrator page, create two test activities and
    confirm distinct private Sheet links before testing public registration,
    QR verification, and one check-in for each activity.
+7. Resume participant and staff traffic only after those checks pass.
 
 Do not create a new Apps Script project for each activity. After this upgrade,
 normal activity creation is entirely automatic.
+
+### Rollback
+
+Keep participant and staff traffic paused. If the upgrade verification fails,
+revert the staff deployment first, then revert the public deployment. This
+order prevents upgraded staff code from calling per-activity actions that an
+older public backend does not provide; the prior staff version can continue
+using the still-upgraded public backend during the short rollback interval.
+
+Re-test the old public registration, ticket, verification, and staff routes
+before resuming traffic. Code rollback does not undo registry initialization, private Sheets, or data writes.
+Review every created Sheet, catalog/index row, registration, and attendance
+write manually against the backup. Never delete those Sheets or rows automatically during rollback.
+
+## Fresh installation
+
+The project-creation instructions below apply only when no protected public
+and staff Apps Script projects exist yet. An upgrade must use the preceding
+existing-deployment procedure instead.
 
 ## Public project: `apps-script/`
 
@@ -134,7 +159,11 @@ The attendance allowlist does not grant administrator access. The attendance
 and administrator allowlists are independent:
 `ATTENDANCE_STAFF_ALLOWLIST` does not grant administrator access, and
 `ADMIN_EMAIL_ALLOWLIST` does not grant attendance access. An account that
-performs both roles must be present in both arrays and must have Sheet access.
+performs both roles must be present in both arrays.
+
+Gateway operations do not require direct sharing of the registry or activity Sheets.
+Direct editor access is required only for a user who follows the protected
+`sheetUrl` and views or edits that activity in Google Sheets.
 
 Blank and unauthorized sessions receive the same generic access-denied page.
 The server ignores any submitted identity and derives `checkedInBy` only from

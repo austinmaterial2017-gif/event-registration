@@ -110,6 +110,7 @@ function internalMutationFailure_(code) {
     CHECK_IN_CLOSED: '当前不在此场讲座的签到时间内。',
     ALREADY_CHECKED_IN: '此场讲座已完成签到。',
     MAINTENANCE: '系统正在切换数据连接，请稍后重试。',
+    LEGACY_MIGRATION_REQUIRED: 'Existing legacy activity data must be migrated before activation.',
     INTERNAL: '请求未能完成，请稍后重试。'
   };
   var safeCode = Object.prototype.hasOwnProperty.call(messages, code) ? code : 'INTERNAL';
@@ -298,6 +299,7 @@ function switchInternalAdminSheet_(payload, actor) {
   try {
     candidate = openSpreadsheetById_(request.spreadsheetId);
     validateAdminSpreadsheet_(candidate);
+    requireLegacyMigrationPreflight_(candidate);
   } catch (error) {
     if (error && error.publicCode) throw error;
     adminError_('SHEET_CONNECTION_FAILED');

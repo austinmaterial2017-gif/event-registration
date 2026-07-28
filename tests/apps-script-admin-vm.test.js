@@ -687,8 +687,8 @@ test("registry and event initializers keep their private schemas separate", asyn
   assert.deepEqual(eventSheets.Notes.rows, [["keep me"]]);
 });
 
-test("setupSystem requires an explicit legacy migration mapping before it mutates a populated permanent registry", async () => {
-  async function setupContext(sheets, inserts) {
+test("setupSystem requires every legacy event to have one reachable validated catalog mapping before it mutates", async () => {
+  async function setupContext(sheets, inserts, openedSpreadsheets = {}, propertyWrites = []) {
     const registry = {
       getId: () => "registry-id",
       getSheetByName: (name) => sheets[name] || null,
@@ -705,10 +705,13 @@ test("setupSystem requires an explicit legacy migration mapping before it mutate
       PropertiesService: {
         getScriptProperties: () => ({
           getProperty: () => "registry-id",
-          setProperty: () => {}
+          setProperty: (key, value) => { propertyWrites.push([key, value]); }
         })
       },
-      SpreadsheetApp: { openById: () => registry },
+      SpreadsheetApp: {
+        openById: (id) => id === "registry-id" || openedSpreadsheets[id] === "registry"
+          ? registry : openedSpreadsheets[id]
+      },
       LockService: { getScriptLock: () => ({ waitLock: () => {}, releaseLock: () => {} }) },
       Utilities: { getUuid: () => "test-audit-id" }
     });
@@ -716,36 +719,137 @@ test("setupSystem requires an explicit legacy migration mapping before it mutate
     return context;
   }
 
-  const legacyActivity = new FakeSheet("活动", [{ eventId: "legacy-event", title: "Legacy activity" }]);
-  const legacySheets = { "活动": legacyActivity };
-  const legacyInserts = [];
-  const legacyContext = await setupContext(legacySheets, legacyInserts);
-  const beforeLegacyRows = JSON.stringify(legacyActivity.rows);
+  function migratedActivitySpreadsheet(id, eventId) {
+    const eventSheets = Object.fromEntries([
+      "活动", "场次", "座位", "报名问题", "参加者", "报名项目", "签到记录", "操作记录"
+    ].map((name) => [name, new FakeSheet(name, name === "活动" ? [{
+      eventId,
+      title: `Migrated ${eventId}`,
+      status: "archived",
+      createdAt: "2026-07-01T00:00:00Z",
+      updatedAt: "2026-07-01T00:00:00Z"
+    }] : [])]));
+    return {
+      getId: () => id,
+      getSheetByName: (name) => eventSheets[name] || null
+    };
+  }
+  function catalogRow(eventId, spreadsheetId) {
+    return {
+      eventId, spreadsheetId, sheetName: "活动", title: `Legacy ${eventId}`,
+      status: "archived", createdAt: "2026-07-01T00:00:00Z",
+      updatedAt: "2026-07-01T00:00:00Z"
+    };
+  }
+  function assertPreflightRejected(context, sheets, inserts) {
+    const before = JSON.stringify(Object.fromEntries(Object.entries(sheets)
+      .map(([name, sheet]) => [name, sheet.rows])));
+    assert.throws(
+      () => context.setupSystem(),
+      (error) => error && error.publicCode === "LEGACY_MIGRATION_REQUIRED"
+    );
+    assert.equal(JSON.stringify(Object.fromEntries(Object.entries(sheets)
+      .map(([name, sheet]) => [name, sheet.rows]))), before);
+    assert.deepEqual(inserts, []);
+  }
 
-  assert.throws(
-    () => legacyContext.setupSystem(),
-    (error) => error && error.publicCode === "LEGACY_MIGRATION_REQUIRED"
+  const partialSheets = {
+    "活动": new FakeSheet("活动", [
+      { eventId: "legacy-a", title: "Legacy A" },
+      { eventId: "legacy-b", title: "Legacy B" }
+    ]),
+    "活动目录": new FakeSheet("活动目录", [catalogRow("legacy-a", "migrated-a")])
+  };
+  const partialInserts = [];
+  const partialContext = await setupContext(
+    partialSheets, partialInserts, { "migrated-a": migratedActivitySpreadsheet("migrated-a", "legacy-a") }
   );
-  assert.equal(JSON.stringify(legacyActivity.rows), beforeLegacyRows);
-  assert.deepEqual(legacyInserts, []);
-  assert.equal(legacySheets["活动目录"], undefined);
-  assert.equal(legacySheets["票券索引"], undefined);
+  assertPreflightRejected(partialContext, partialSheets, partialInserts);
+
+  const blankIdSheets = {
+    "活动": new FakeSheet("活动", [{ eventId: "", title: "No event ID" }])
+  };
+  const blankIdInserts = [];
+  const blankIdContext = await setupContext(blankIdSheets, blankIdInserts);
+  assertPreflightRejected(blankIdContext, blankIdSheets, blankIdInserts);
+
+  const selfMappedSheets = {
+    "活动": new FakeSheet("活动", [{ eventId: "legacy-a", title: "Legacy A" }]),
+    "活动目录": new FakeSheet("活动目录", [catalogRow("legacy-a", "registry-id")])
+  };
+  const selfMappedInserts = [];
+  const selfMappedContext = await setupContext(selfMappedSheets, selfMappedInserts);
+  assertPreflightRejected(selfMappedContext, selfMappedSheets, selfMappedInserts);
+
+  const duplicateMappedSheets = {
+    "活动": new FakeSheet("活动", [{ eventId: "legacy-a", title: "Legacy A" }]),
+    "活动目录": new FakeSheet("活动目录", [
+      catalogRow("legacy-a", "migrated-a"),
+      catalogRow("legacy-a", "migrated-b")
+    ])
+  };
+  const duplicateMappedInserts = [];
+  const duplicateMappedContext = await setupContext(duplicateMappedSheets, duplicateMappedInserts, {
+    "migrated-a": migratedActivitySpreadsheet("migrated-a", "legacy-a"),
+    "migrated-b": migratedActivitySpreadsheet("migrated-b", "legacy-a")
+  });
+  assertPreflightRejected(duplicateMappedContext, duplicateMappedSheets, duplicateMappedInserts);
+
+  const unreachableSheets = {
+    "活动": new FakeSheet("活动", [{ eventId: "legacy-a", title: "Legacy A" }]),
+    "活动目录": new FakeSheet("活动目录", [catalogRow("legacy-a", "missing-migration")])
+  };
+  const unreachableInserts = [];
+  const unreachableContext = await setupContext(unreachableSheets, unreachableInserts);
+  assertPreflightRejected(unreachableContext, unreachableSheets, unreachableInserts);
+
+  const mismatchedSheets = {
+    "活动": new FakeSheet("活动", [{ eventId: "legacy-a", title: "Legacy A" }]),
+    "活动目录": new FakeSheet("活动目录", [catalogRow("legacy-a", "migrated-a")])
+  };
+  const mismatchedInserts = [];
+  const mismatchedContext = await setupContext(
+    mismatchedSheets,
+    mismatchedInserts,
+    { "migrated-a": migratedActivitySpreadsheet("migrated-a", "different-event") }
+  );
+  assertPreflightRejected(mismatchedContext, mismatchedSheets, mismatchedInserts);
+
+  const fullyMappedSheets = {
+    "活动": new FakeSheet("活动", [
+      { eventId: "legacy-a", title: "Legacy A" },
+      { eventId: "legacy-b", title: "Legacy B" }
+    ]),
+    "活动目录": new FakeSheet("活动目录", [
+      catalogRow("legacy-a", "migrated-a"),
+      catalogRow("legacy-b", "migrated-b")
+    ])
+  };
+  const fullyMappedContext = await setupContext(fullyMappedSheets, [], {
+    "migrated-a": migratedActivitySpreadsheet("migrated-a", "legacy-a"),
+    "migrated-b": migratedActivitySpreadsheet("migrated-b", "legacy-b")
+  });
+  assert.equal(fullyMappedContext.setupSystem(), "registry-id");
 
   const freshSheets = {};
   const freshContext = await setupContext(freshSheets, []);
   assert.equal(freshContext.setupSystem(), "registry-id");
 
-  const catalogedLegacy = new FakeSheet("活动", [{ eventId: "legacy-event", title: "Legacy activity" }]);
-  const catalogedSheets = {
-    "活动": catalogedLegacy,
-    "活动目录": new FakeSheet("活动目录", [{
-      eventId: "legacy-event", spreadsheetId: "migrated-event-sheet", sheetName: "活动",
-      title: "Legacy activity", status: "archived", createdAt: "2026-07-01T00:00:00Z",
-      updatedAt: "2026-07-01T00:00:00Z"
-    }])
-  };
-  const catalogedContext = await setupContext(catalogedSheets, []);
-  assert.equal(catalogedContext.setupSystem(), "registry-id");
+  const candidateSheets = { "活动": new FakeSheet("活动", [{ eventId: "legacy-a", title: "Legacy A" }]) };
+  const candidateInserts = [];
+  const candidateWrites = [];
+  const candidateContext = await setupContext(
+    candidateSheets,
+    candidateInserts,
+    { "candidate-id": "registry" },
+    candidateWrites
+  );
+  assert.throws(
+    () => candidateContext.setActiveSpreadsheet("candidate-id"),
+    (error) => error && error.publicCode === "LEGACY_MIGRATION_REQUIRED"
+  );
+  assert.deepEqual(candidateInserts, []);
+  assert.deepEqual(candidateWrites, []);
 });
 
 test("registry routing resolves one validated activity and ticket route without raw tokens", async () => {
@@ -1016,6 +1120,7 @@ test("protected dashboard and mutations route only through the selected activity
     rows,
     additionalSpreadsheets: { "event-2-sheet": event2Sheets }
   });
+  addTicketRoute(harness.sourceSheets, event2Sheets);
 
   const catalogOnly = harness.context.getAdminDashboard({});
   assert.equal(catalogOnly.ok, true, JSON.stringify(catalogOnly));
@@ -1195,10 +1300,12 @@ test("record cancellation and seat adjustment ignore stray cross-event seats", a
       spreadsheetId: "event-2-sheet",
       sheetName: "活动"
     });
-    return createHarness({
+    const harness = await createHarness({
       rows,
       additionalSpreadsheets: { "event-2-sheet": event2Sheets }
     });
+    addTicketRoute(harness.sourceSheets, event2Sheets);
+    return harness;
   }
 
   function addStraySeat(event2Sheets) {
@@ -2033,7 +2140,7 @@ test("clearing the final identity flag persists policy first so a shared-setting
 });
 
 test("record cancellation and seat adjustment preserve rows and append auditable state changes", async () => {
-  const cancellationHarness = await createHarness();
+  const cancellationHarness = await createHarness({ seedTicketRouting: true });
   const cancellationCounts = Object.fromEntries(Object.entries(cancellationHarness.sourceSheets)
     .map(([name, sheet]) => [name, sheet.rows.length]));
   const cancelled = cancellationHarness.context.adminRecordAction({

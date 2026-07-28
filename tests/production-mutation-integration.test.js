@@ -6,6 +6,7 @@ import { readFile } from "node:fs/promises";
 
 const publicRoot = new URL("../apps-script/", import.meta.url);
 const staffRoot = new URL("../staff-apps-script/", import.meta.url);
+const adminScriptUrl = new URL("../staff-apps-script/AdminScript.html", import.meta.url);
 const sharedSecret = "production-integration-shared-secret-32";
 
 const headers = {
@@ -197,7 +198,7 @@ function utilityService() {
   };
 }
 
-async function createSystem({ onWrite, failActivityCreationStage } = {}) {
+async function createSystem({ onWrite, failActivityCreationStage, extraSheetData = {} } = {}) {
   let now = "2026-08-16T09:30:00.000Z";
   class ServerDate extends Date {
     constructor(value) { super(value === undefined ? now : value); }
@@ -288,6 +289,20 @@ async function createSystem({ onWrite, failActivityCreationStage } = {}) {
     getName: () => "Registry",
     getSheetByName: (name) => registrySheets[name] || null
   };
+  const extraSpreadsheets = Object.fromEntries(
+    Object.entries(extraSheetData).map(([id, source]) => {
+      const extraSheets = Object.fromEntries(Object.entries(source).map(([name, records]) => [
+        name,
+        new FakeSheet(name, records)
+      ]));
+      return [id, {
+        getId: () => id,
+        getName: () => id,
+        getSheetByName: (name) => extraSheets[name] || null,
+        sheets: extraSheets
+      }];
+    })
+  );
   const createdSpreadsheets = [];
   const createdById = {};
   let createdCount = 0;
@@ -301,6 +316,7 @@ async function createSystem({ onWrite, failActivityCreationStage } = {}) {
         if (id === "registry-sheet") return registrySpreadsheet;
         if (id === "activity-sheet") return activitySpreadsheet;
         if (createdById[id]) return createdById[id];
+        if (extraSpreadsheets[id]) return extraSpreadsheets[id];
         throw new Error("missing spreadsheet");
       },
       create: (name) => {
@@ -464,6 +480,7 @@ async function createSystem({ onWrite, failActivityCreationStage } = {}) {
     staffContext,
     sheets,
     registrySheets,
+    extraSpreadsheets,
     createdSpreadsheets,
     lockEvents,
     waiting,
@@ -471,6 +488,163 @@ async function createSystem({ onWrite, failActivityCreationStage } = {}) {
     get staffLockAccesses() { return staffLockAccesses; },
     get staffSheetAccesses() { return staffSheetAccesses; },
     setNow: (value) => { now = value; }
+  };
+}
+
+class UiElement {
+  constructor(tagName = "div") {
+    this.tagName = tagName;
+    this.attributes = new Map();
+    this.children = [];
+    this.dataset = {};
+    this.elements = {};
+    this.hidden = false;
+    this.listeners = new Map();
+    this.style = {};
+    this.textContent = "";
+    this.value = "";
+    this.checked = false;
+    this.disabled = false;
+  }
+  addEventListener(type, handler) {
+    const handlers = this.listeners.get(type) || [];
+    handlers.push(handler);
+    this.listeners.set(type, handlers);
+  }
+  dispatch(type) {
+    const event = { currentTarget: this, preventDefault() {} };
+    for (const handler of this.listeners.get(type) || []) handler(event);
+  }
+  append(...nodes) { this.children.push(...nodes); }
+  replaceChildren(...nodes) { this.children = nodes; }
+  setAttribute(name, value) { this.attributes.set(name, String(value)); }
+  getAttribute(name) { return this.attributes.get(name) ?? null; }
+  removeAttribute(name) { this.attributes.delete(name); }
+  focus() {}
+  scrollIntoView() {}
+  reset() {
+    for (const field of Object.values(this.elements)) {
+      field.value = "";
+      field.checked = false;
+    }
+  }
+  querySelector(selector) {
+    if (selector === "input[name=title]") return this.elements.title;
+    if (selector === "input:not([type=hidden]), select, textarea") {
+      return this.elements.title || this.elements.status;
+    }
+    return null;
+  }
+}
+
+class UiFormData {
+  constructor(form) {
+    this.values = Object.entries(form.elements).map(([name, field]) => [name, field.value]);
+  }
+  entries() { return this.values[Symbol.iterator](); }
+}
+
+function uiField(value = "") {
+  const node = new UiElement("input");
+  node.value = value;
+  return node;
+}
+
+function uiForm(names) {
+  const node = new UiElement("form");
+  for (const name of names) node.elements[name] = uiField();
+  return node;
+}
+
+async function runAdminUiThroughRealService(system) {
+  const elements = new Map();
+  const add = (selector, node = new UiElement()) => (elements.set(selector, node), node);
+  const eventForm = add("#event-form", uiForm([
+    "eventId", "title", "description", "status", "opensAt", "closesAt", "location",
+    "selectionMode", "minChoices", "maxChoices", "seatMode", "seatZones",
+    "showOpeningCountdown", "showClosingCountdown", "cancellationEnabled",
+    "seatExchangeEnabled", "seatHoldsEnabled", "seatHoldMinutes"
+  ]));
+  const seatForm = add("#seat-form", uiForm([
+    "eventId", "sessionId", "mode", "zoneName", "rows", "seatsPerRow"
+  ]));
+  const sessionForm = add("#session-form", uiForm([
+    "eventId", "sessionId", "title", "speaker", "startsAt", "endsAt", "location",
+    "capacity", "required", "groupRule", "status"
+  ]));
+  const questionForm = add("#question-form", uiForm([
+    "eventId", "questionId", "label", "type", "options", "validation", "sortOrder",
+    "status", "required", "showOnTicket", "duplicateIdentity", "semanticRole"
+  ]));
+  add("#record-search-form", uiForm(["search"]));
+  const recordAction = add("#record-action-form", uiForm(["registrationId", "seatId"]));
+  add("#sheet-form", uiForm(["spreadsheetId"]));
+  for (const selector of [
+    "#admin-status", "#connection-status", "#event-list", "#session-list", "#seat-list",
+    "#question-list", "#record-list", "#attendance-list", "#selected-activity",
+    "#selected-activity-title", "#selected-activity-meta", "#selected-activity-sheet",
+    "#activity-empty-state", "#clear-search", "#test-sheet", "#switch-sheet", "#new-activity"
+  ]) add(selector);
+  const selector = add("#activity-selector", new UiElement("select"));
+  const sections = ["#sessions", "#seats", "#questions", "#records", "#attendance"]
+    .map((id) => add(id));
+  const navLinks = ["#events", "#sessions", "#seats", "#questions", "#records", "#attendance"]
+    .map((href) => {
+      const link = new UiElement("a");
+      link.setAttribute("href", href);
+      return link;
+    });
+  const lifecycle = ["close", "reopen", "archive"].map((action) => {
+    const button = new UiElement("button");
+    button.dataset.action = action;
+    return button;
+  });
+  const recordActions = ["cancel_registration", "adjust_seat"].map((action) => {
+    const button = new UiElement("button");
+    button.dataset.action = action;
+    return button;
+  });
+  const document = {
+    createElement: (tag) => new UiElement(tag),
+    querySelector: (query) => elements.get(query) || null,
+    querySelectorAll: (query) => {
+      if (query === ".selected-required") return sections;
+      if (query === 'nav a[href^="#"]') return navLinks;
+      if (query === "#event-form [data-action]") return lifecycle;
+      if (query === "#record-action-form [data-action]") return recordActions;
+      if (query === "[data-copy-bundle]") return [];
+      return [];
+    }
+  };
+  const forwarded = [];
+  class Runner {
+    withSuccessHandler(handler) { this.success = handler; return this; }
+    withFailureHandler(handler) { this.failure = handler; return this; }
+    invoke(method, payload) {
+      const result = system.staffContext[method](payload);
+      forwarded.push({ method, payload, result });
+      this.success(result);
+    }
+    getAdminDashboard(payload) { this.invoke("getAdminDashboard", payload); }
+    saveAdminEvent(payload) { this.invoke("saveAdminEvent", payload); }
+    saveAdminSeatPlan(payload) { this.invoke("saveAdminSeatPlan", payload); }
+    adminRecordAction(payload) { this.invoke("adminRecordAction", payload); }
+  }
+  const context = vm.createContext({
+    document,
+    FormData: UiFormData,
+    URL,
+    console,
+    google: { script: { get run() { return new Runner(); } } },
+    navigator: { clipboard: { writeText: () => Promise.resolve() } },
+    window: { confirm: () => true, matchMedia: () => ({ matches: false }) }
+  });
+  const source = (await readFile(adminScriptUrl, "utf8"))
+    .replace(/^<script>\s*|\s*<\/script>\s*$/g, "");
+  vm.runInContext(source, context);
+  return {
+    elements, eventForm, seatForm, sessionForm, questionForm, recordAction,
+    selector, recordActions, forwarded
   };
 }
 
@@ -556,6 +730,163 @@ test("assembled administrator entry points accept the payloads emitted by the ac
   });
   assert.equal(cancelled.ok, true, JSON.stringify(cancelled));
   assert.equal(rows(system.sheets["报名项目"])[0].status, "cancelled");
+});
+
+test("the real administrator UI forwards emitted payload objects through real administrator validation", async () => {
+  const system = await createSystem();
+  const ui = await runAdminUiThroughRealService(system);
+
+  const initialDashboard = ui.forwarded.find((call) => call.method === "getAdminDashboard");
+  assert.ok(initialDashboard);
+  assert.equal(Object.hasOwn(initialDashboard.payload, "eventId"), false);
+  assert.equal(initialDashboard.result.ok, true, JSON.stringify(initialDashboard.result));
+
+  ui.elements.get("#new-activity").dispatch("click");
+  Object.assign(ui.eventForm.elements.title, { value: "UI-created activity" });
+  Object.assign(ui.eventForm.elements.status, { value: "draft" });
+  Object.assign(ui.eventForm.elements.selectionMode, { value: "none" });
+  Object.assign(ui.eventForm.elements.minChoices, { value: "0" });
+  Object.assign(ui.eventForm.elements.maxChoices, { value: "0" });
+  Object.assign(ui.eventForm.elements.seatMode, { value: "none" });
+  Object.assign(ui.eventForm.elements.seatHoldMinutes, { value: "5" });
+  ui.eventForm.dispatch("submit");
+  const created = ui.forwarded.find((call) => call.method === "saveAdminEvent");
+  assert.ok(created);
+  assert.equal(Object.hasOwn(created.payload, "eventId"), false);
+  assert.equal(created.result.ok, true, JSON.stringify(created.result));
+
+  ui.selector.value = "event-1";
+  ui.selector.dispatch("change");
+  ui.seatForm.elements.mode.value = "self";
+  ui.seatForm.elements.zoneName.value = "A";
+  ui.seatForm.elements.rows.value = "1";
+  ui.seatForm.elements.seatsPerRow.value = "1";
+  ui.seatForm.dispatch("submit");
+  const seatId = rows(system.sheets["座位"])[0].seatId;
+  const seatButtons = ui.elements.get("#seat-list").children[0].children.at(-1).children;
+  seatButtons.forEach((button) => button.dispatch("click"));
+
+  ui.recordAction.elements.registrationId.value = "registration-1";
+  ui.recordAction.elements.seatId.value = seatId;
+  ui.recordActions[1].dispatch("click");
+  ui.recordActions[0].dispatch("click");
+
+  const seatActions = ui.forwarded.filter((call) =>
+    call.method === "saveAdminSeatPlan" && ["reserve", "close", "reopen"].includes(call.payload.action));
+  const recordActions = ui.forwarded.filter((call) => call.method === "adminRecordAction");
+  assert.deepEqual(
+    seatActions.map((call) => call.payload.action),
+    ["reserve", "close", "reopen"]
+  );
+  assert.deepEqual(
+    recordActions.map((call) => call.payload.action),
+    ["adjust_seat", "cancel_registration"]
+  );
+  for (const call of seatActions.concat(recordActions)) {
+    assert.equal(call.payload.eventId, "event-1");
+    assert.equal(call.result.ok, true, `${call.method}: ${JSON.stringify(call.result)}`);
+  }
+  assert.equal(rows(system.sheets["报名项目"])[0].status, "cancelled");
+  assert.equal(rows(system.registrySheets["票券索引"])[0].status, "cancelled");
+});
+
+test("assembled administrator cancellation keeps the ticket index and public ticket views transactional", async (t) => {
+  const cancellationPayload = {
+    eventId: "event-1",
+    action: "cancel_registration",
+    registrationId: "registration-1",
+    confirm: true
+  };
+  const mutationSnapshot = (system) => JSON.stringify({
+    routes: rows(system.registrySheets["票券索引"]),
+    registrations: rows(system.sheets["报名项目"]),
+    seats: rows(system.sheets["座位"]),
+    audits: rows(system.sheets["操作记录"])
+  });
+
+  await t.test("success makes lookup and verification observe one cancelled route", async () => {
+    const system = await createSystem();
+    const result = system.staffContext.adminRecordAction(cancellationPayload);
+
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(rows(system.registrySheets["票券索引"])[0].status, "cancelled");
+    const lookup = system.publicContext.lookupTicket({
+      ticketNumber: "EVT-ONE",
+      verificationValue: "alice@example.com"
+    });
+    const verified = system.publicContext.verifyTicket({ token: "physical-camera-token" });
+    assert.equal(lookup.ok, true, JSON.stringify(lookup));
+    assert.equal(lookup.data.status, "cancelled");
+    assert.equal(verified.ok, true, JSON.stringify(verified));
+    assert.equal(verified.data.status, "cancelled");
+  });
+
+  await t.test("a mismatched active route changes nothing", async () => {
+    const system = await createSystem();
+    const route = system.registrySheets["票券索引"].rows[1];
+    route[headers["票券索引"].indexOf("registrationId")] = "other-registration";
+    const before = mutationSnapshot(system);
+
+    const result = system.staffContext.adminRecordAction(cancellationPayload);
+
+    assert.equal(result.ok, false, JSON.stringify(result));
+    assert.equal(result.code, "CONFLICT");
+    assert.equal(mutationSnapshot(system), before);
+  });
+
+  await t.test("a route write failure restores every mutation", async () => {
+    const system = await createSystem();
+    const before = mutationSnapshot(system);
+    system.registrySheets["票券索引"].afterNextWrite(() => {
+      throw new Error("injected route write failure");
+    });
+
+    const result = system.staffContext.adminRecordAction(cancellationPayload);
+
+    assert.equal(result.ok, false, JSON.stringify(result));
+    assert.equal(mutationSnapshot(system), before);
+  });
+
+  await t.test("a downstream audit failure restores a route that was already cancelled", async () => {
+    const system = await createSystem();
+    const before = mutationSnapshot(system);
+    let routeWasCancelledBeforeAuditFailure = false;
+    system.sheets["操作记录"].afterNextWrite(() => {
+      routeWasCancelledBeforeAuditFailure =
+        rows(system.registrySheets["票券索引"])[0].status === "cancelled";
+      throw new Error("injected cancellation audit failure");
+    });
+
+    const result = system.staffContext.adminRecordAction(cancellationPayload);
+
+    assert.equal(result.ok, false, JSON.stringify(result));
+    assert.equal(routeWasCancelledBeforeAuditFailure, true);
+    assert.equal(mutationSnapshot(system), before);
+  });
+});
+
+test("assembled advanced switching rejects an unmapped legacy candidate before activation", async () => {
+  const legacyCandidate = fixture();
+  legacyCandidate["活动目录"] = [];
+  legacyCandidate["票券索引"] = [];
+  const system = await createSystem({
+    extraSheetData: { "legacy-candidate": legacyCandidate }
+  });
+  const beforeRegistry = JSON.stringify(rows(system.registrySheets["系统设置"]));
+  const beforeAudit = JSON.stringify(rows(system.extraSpreadsheets["legacy-candidate"].sheets["操作记录"]));
+
+  const result = system.staffContext.switchAdminSheet({
+    spreadsheetId: "legacy-candidate",
+    confirm: true
+  });
+
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.equal(result.code, "LEGACY_MIGRATION_REQUIRED");
+  assert.equal(JSON.stringify(rows(system.registrySheets["系统设置"])), beforeRegistry);
+  assert.equal(
+    JSON.stringify(rows(system.extraSpreadsheets["legacy-candidate"].sheets["操作记录"])),
+    beforeAudit
+  );
 });
 
 test("assembled creation failures leave the existing catalog unchanged", async (t) => {

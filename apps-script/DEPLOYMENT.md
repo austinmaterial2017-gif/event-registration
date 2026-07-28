@@ -23,12 +23,15 @@ Creating later activities requires no Apps Script setup, edits, or redeployment.
 It also requires no Sheet ID entry.
 
 Existing nonempty legacy activity data is not split automatically.
-Before initialization, `setupSystem()` checks the permanent registry for
-nonempty legacy business tabs. If it finds them without a completed activity
-catalog mapping, it fails with `LEGACY_MIGRATION_REQUIRED` before adding or
-changing a catalog or ticket index and before moving or deleting any data.
-Back up the legacy Sheet and complete a separately reviewed migration before
-removing or changing any old data.
+Before initialization or activation, `setupSystem()` and a candidate registry
+check every nonempty legacy business row: it must have an `eventId`, and every
+distinct ID must map exactly once through the normal catalog validator to a
+non-registry activity Sheet with the exact event schema and matching activity
+row. Missing, partial, duplicate, self-mapped, unreachable, or mismatched
+mappings fail with `LEGACY_MIGRATION_REQUIRED` before adding or changing a
+catalog or ticket index and before moving or deleting any data. Back up the
+legacy Sheet and complete a separately reviewed migration before removing or
+changing any old data.
 
 ## Updating existing protected deployments
 

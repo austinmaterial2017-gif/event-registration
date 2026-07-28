@@ -112,6 +112,7 @@ function adminFailure_(code) {
     SHEET_CONNECTION_FAILED: '无法连接到指定的数据表。',
     INTEGRITY_ERROR: '数据一致性检查失败，请联系管理员。',
     MAINTENANCE: '系统正在切换数据连接，请稍后重试。',
+    LEGACY_MIGRATION_REQUIRED: 'Existing legacy activity data must be migrated before activation.',
     INTERNAL: '请求未能完成，请稍后重试。'
   };
   var safeCode = Object.prototype.hasOwnProperty.call(messages, code) ? code : 'INTERNAL';
@@ -712,6 +713,18 @@ function adminRecordAction_(payload, actor) {
     });
     var now = new Date().toISOString();
     if (action === 'cancel_registration') {
+      var route = requireAdminCancellationRoute_(
+        registry, eventId, request.registrationId.trim(), registrations
+      );
+      upsertTicketRoute_(registry, {
+        ticketNumber: route.ticketNumber,
+        tokenDigest: route.tokenDigest,
+        eventId: route.eventId,
+        registrationId: route.registrationId,
+        status: 'cancelled',
+        createdAt: route.createdAt,
+        updatedAt: now
+      });
       registrations.forEach(function(record) {
         record.status = 'cancelled';
         record.updatedAt = now;
@@ -829,6 +842,26 @@ function adminRecordAction_(payload, actor) {
     );
     return { registrationId: request.registrationId.trim(), action: action, status: 'completed' };
   });
+}
+
+function requireAdminCancellationRoute_(registry, eventId, registrationId, registrations) {
+  var ticketNumber = '';
+  registrations.forEach(function(record) {
+    var status = String(record.status || '').trim().toLowerCase();
+    var candidate = String(record.ticketNumber || '').trim();
+    if ((status !== 'active' && status !== 'confirmed') || !candidate ||
+        (ticketNumber && ticketNumber !== candidate)) {
+      adminError_('CONFLICT');
+    }
+    ticketNumber = candidate;
+  });
+  var route = getTicketRouteByNumber_(registry, ticketNumber);
+  if (route.eventId !== eventId || route.registrationId !== registrationId ||
+      route.ticketNumber !== ticketNumber ||
+      String(route.status || '').toLowerCase() !== 'active') {
+    adminError_('CONFLICT');
+  }
+  return route;
 }
 
 function testAdminSheetConnection_(payload) {

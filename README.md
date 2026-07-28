@@ -95,6 +95,12 @@
 
 ## 旧系统资料与高级维护
 
+Legacy preflight is strict: every nonempty legacy business row needs a nonblank
+`eventId`, and every distinct ID must resolve exactly once through the normal
+catalog route to a non-registry activity Sheet with exact schema and matching
+activity row. This check also runs before a candidate registry can be
+activated, so advanced switching cannot bypass migration review.
+
 这次升级只会为**升级后新建**的活动自动建立独立 Sheet，不会扫描或重排旧表。`setupSystem()` 会在初始化前检查永久注册表：若发现非空的「活动」「场次」「座位」「报名问题」「参加者」「报名项目」或「签到记录」旧业务资料、但没有完成的活动目录映射，就会以 `LEGACY_MIGRATION_REQUIRED` 失败。失败不会新增或修改目录／索引，也不会移动或删除旧资料；必须保持旧部署版本生效，先完整备份并完成逐项迁移与核对，再重新运行预检。完成前不要删除旧表或手工伪造活动目录／票券索引。
 
 管理员页「高级维护」中的整表切换属于旧系统维护工具，不是新增活动的正常流程。切换只可由已授权管理员发起。先用「测试连接」确认候选 Sheet 已有精确的初始化表头和权限，再明确确认切换。系统会：

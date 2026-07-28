@@ -156,6 +156,7 @@ function setActiveSpreadsheet(spreadsheetId) {
 
   return withScriptLock(function() {
     var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+    requireLegacyMigrationPreflight_(spreadsheet);
     initializeRegistrySpreadsheet_(spreadsheet);
     PropertiesService.getScriptProperties().setProperty(ACTIVE_SPREADSHEET_ID, spreadsheet.getId());
     appendAuditRow_(spreadsheet, 'SET_ACTIVE_SPREADSHEET', 'spreadsheet', 'active', 'Configured active spreadsheet.');
@@ -223,31 +224,45 @@ function initializeEventSpreadsheet_(spreadsheet) {
 }
 
 function requireLegacyMigrationPreflight_(registry) {
-  if (hasCompletedLegacyCatalogMapping_(registry)) return;
-  var containsLegacyBusinessData = LEGACY_BUSINESS_SHEET_NAMES_.some(function(sheetName) {
-    var sheet = registry && registry.getSheetByName(sheetName);
-    return !!sheet && sheet.getLastRow() > 1;
+  var legacyEventIds = collectLegacyBusinessEventIds_(registry);
+  legacyEventIds.forEach(function(eventId) {
+    try {
+      // Use the same catalog and activity-sheet validation path as every routed request.
+      getEventSpreadsheet_(registry, eventId);
+    } catch (_ignored) {
+      legacyMigrationRequired_();
+    }
   });
-  if (!containsLegacyBusinessData) return;
+}
+
+function collectLegacyBusinessEventIds_(registry) {
+  var eventIds = {};
+  LEGACY_BUSINESS_SHEET_NAMES_.forEach(function(sheetName) {
+    var sheet = registry && registry.getSheetByName(sheetName);
+    if (!sheet || sheet.getLastRow() <= 1) return;
+    var columnCount = typeof sheet.getLastColumn === 'function'
+      ? sheet.getLastColumn() : SHEET_DEFINITIONS[sheetName].length;
+    var headers = sheet.getRange(1, 1, 1, columnCount).getValues()[0];
+    var eventIdColumn = headers.indexOf('eventId');
+    if (eventIdColumn === -1) legacyMigrationRequired_();
+    var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, columnCount).getValues();
+    rows.forEach(function(row) {
+      var hasData = row.some(function(value) {
+        return value !== null && value !== undefined && String(value).trim() !== '';
+      });
+      if (!hasData) return;
+      var eventId = normalizeRoutingValue_(row[eventIdColumn]);
+      if (!eventId) legacyMigrationRequired_();
+      eventIds[eventId] = true;
+    });
+  });
+  return Object.keys(eventIds);
+}
+
+function legacyMigrationRequired_() {
   var error = new Error('Legacy activity data requires a reviewed migration before activation.');
   error.publicCode = 'LEGACY_MIGRATION_REQUIRED';
   throw error;
-}
-
-function hasCompletedLegacyCatalogMapping_(registry) {
-  var sheet = registry && registry.getSheetByName('活动目录');
-  if (!sheet || !hasExactHeaderRow_(sheet, SHEET_DEFINITIONS['活动目录']) ||
-      sheet.getLastRow() <= 1) {
-    return false;
-  }
-  var headers = SHEET_DEFINITIONS['活动目录'];
-  return sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues()
-    .some(function(values) {
-      var eventId = typeof values[0] === 'string' ? values[0].trim() : '';
-      var spreadsheetId = typeof values[1] === 'string' ? values[1].trim() : '';
-      var sheetName = typeof values[2] === 'string' ? values[2].trim() : '';
-      return !!eventId && !!spreadsheetId && sheetName === '活动';
-    });
 }
 
 function reuseDefaultBlankSheet_(spreadsheet, sheetNames) {
@@ -385,11 +400,17 @@ function upsertTicketRoute_(registry, route) {
     }
   }
   var values = normalizeRow_('票券索引', normalized);
-  if (matchingTickets.length === 1) {
-    indexSheet.getRange(matchingTickets[0].rowNumber, 1, 1, values.length).setValues([values]);
-  } else {
-    indexSheet.getRange(indexSheet.getLastRow() + 1, 1, 1, values.length).setValues([values]);
+  var targetRow = matchingTickets.length === 1
+    ? matchingTickets[0].rowNumber : indexSheet.getLastRow() + 1;
+  if (typeof journalAdminWrite_ === 'function') {
+    journalAdminWrite_(
+      indexSheet,
+      targetRow,
+      values.length,
+      matchingTickets.length === 0
+    );
   }
+  indexSheet.getRange(targetRow, 1, 1, values.length).setValues([values]);
   return normalized;
 }
 

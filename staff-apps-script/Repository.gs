@@ -393,11 +393,17 @@ function upsertTicketRoute_(registry, route) {
     }
   }
   var values = normalizeRow_('票券索引', normalized);
-  if (matchingTickets.length === 1) {
-    indexSheet.getRange(matchingTickets[0].rowNumber, 1, 1, values.length).setValues([values]);
-  } else {
-    indexSheet.getRange(indexSheet.getLastRow() + 1, 1, 1, values.length).setValues([values]);
+  var targetRow = matchingTickets.length === 1
+    ? matchingTickets[0].rowNumber : indexSheet.getLastRow() + 1;
+  if (typeof journalAdminWrite_ === 'function') {
+    journalAdminWrite_(
+      indexSheet,
+      targetRow,
+      values.length,
+      matchingTickets.length === 0
+    );
   }
+  indexSheet.getRange(targetRow, 1, 1, values.length).setValues([values]);
   return normalized;
 }
 

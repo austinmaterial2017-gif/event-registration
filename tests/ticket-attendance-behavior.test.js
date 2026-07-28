@@ -243,6 +243,8 @@ test("public verification stays read-only, ticket mutations require owner verifi
   assert.match(staffHtml, /google\.script\.run/);
   assert.match(staffHtml, /confirmCheckIn/);
   assert.match(staffHtml, /sessionId/);
+  assert.match(staffHtml, /确认整个活动签到/);
+  assert.match(staffHtml, /此活动不需要签到；二维码仍可用于验票/);
   assert.doesNotMatch(staffHtml, /staffIdentity/);
 });
 

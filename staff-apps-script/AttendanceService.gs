@@ -36,6 +36,7 @@ function staffAttendanceFailure_(code) {
     TICKET_INACTIVE: '该凭证当前不可签到。',
     SESSION_NOT_REGISTERED: '该凭证未报名此场讲座。',
     CHECK_IN_CLOSED: '当前不在此场讲座的签到时间内。',
+    CHECK_IN_DISABLED: '此活动不需要签到，二维码仍可用于验票。',
     ALREADY_CHECKED_IN: '此场讲座已完成签到。',
     MAINTENANCE: '系统正在切换数据连接，请稍后重试。',
     INTERNAL: '请求未能完成，请稍后重试。'

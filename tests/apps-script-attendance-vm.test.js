@@ -172,7 +172,7 @@ async function createHarness(options = {}) {
         normalizeRow_: normalizeRow,
         readRows,
         readRows_: readRows,
-        getAdminSettings: () => ({}),
+        getAdminSettings: () => options.adminSettings || {},
         requireNoSwitchMaintenance_: () => {},
         withScriptLock_: withScriptLock
       }
@@ -432,6 +432,38 @@ test("valid check-in writes server time once, duplicates only that session, and 
   assert.deepEqual(attendance.map((row) => row.sessionId), ["s1", "s2"]);
   assert.ok(attendance.every((row) => row.checkedInAt === "2026-08-16T09:30:00.000Z"));
   assert.ok(attendance.every((row) => row.checkedInBy === "staff@example.com"));
+});
+
+test("event check-in mode writes one reserved attendance row and ignores submitted sessions", async () => {
+  const harness = await createHarness({
+    staffProject: true,
+    sessionEmail: "staff@example.com",
+    adminSettings: {
+      registration: { events: { "event-1": { checkInMode: "event" } } }
+    }
+  });
+  const first = harness.context.checkIn({ token: "opaque-token", sessionId: "s2" });
+  const duplicate = harness.context.checkIn({ token: "opaque-token" });
+
+  assert.equal(first.ok, true);
+  assert.equal(first.data.sessionId, "__EVENT__");
+  assert.equal(duplicate.code, "ALREADY_CHECKED_IN");
+  assert.deepEqual(rows(harness.sheets["签到记录"]).map((row) => row.sessionId), ["__EVENT__"]);
+});
+
+test("none check-in mode keeps verification readable but rejects attendance writes", async () => {
+  const publicHarness = await createHarness();
+  const harness = await createHarness({
+    staffProject: true,
+    sessionEmail: "staff@example.com",
+    adminSettings: {
+      registration: { events: { "event-1": { checkInMode: "none" } } }
+    }
+  });
+  assert.equal(publicHarness.context.verifyTicket({ token: "opaque-token" }).ok, true);
+  const result = harness.context.checkIn({ token: "opaque-token", sessionId: "s1" });
+  assert.equal(result.code, "CHECK_IN_DISABLED");
+  assert.equal(rows(harness.sheets["签到记录"]).length, 0);
 });
 
 test("serialized check-ins make a concurrent duplicate observe the first committed row", async () => {

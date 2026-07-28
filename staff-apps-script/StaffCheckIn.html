@@ -25,14 +25,14 @@
       </form>
       <form id="check-in-form" hidden>
         <p id="ticket-summary"></p>
-        <label>签到场次
+        <label id="session-checkin-field">签到场次
           <select name="sessionId" required>
             <option value="">请选择场次</option>
           </select>
         </label>
         <label class="confirm">
           <input name="confirmCheckIn" type="checkbox" required>
-          我已当面核对参与者和本场讲座
+          <span id="confirm-checkin-copy">我已当面核对参与者和本场讲座</span>
         </label>
         <button type="submit">确认本场签到</button>
       </form>
@@ -43,11 +43,18 @@
       const checkInForm = document.querySelector("#check-in-form");
       const message = document.querySelector("#message");
       const summary = document.querySelector("#ticket-summary");
+      const sessionField = document.querySelector("#session-checkin-field");
+      const confirmCopy = document.querySelector("#confirm-checkin-copy");
       const lookupButton = lookupForm.querySelector('button[type="submit"]');
       const checkInButton = checkInForm.querySelector('button[type="submit"]');
       let activeToken = "";
       let lookupPending = false;
       let checkInPending = false;
+      let activeCheckInMode = "session";
+
+      function checkInIdleText() {
+        return activeCheckInMode === "event" ? "确认整个活动签到" : "确认本场签到";
+      }
 
       function setPending(button, pending, pendingText, idleText) {
         if (!button) return;
@@ -74,6 +81,8 @@
           return;
         }
         const ticket = result.data;
+        activeCheckInMode = ["session", "event", "none"].includes(ticket.checkInMode)
+          ? ticket.checkInMode : "session";
         summary.textContent = `${ticket.participantName} · ${ticket.event.title} · ${ticket.status}`;
         const select = checkInForm.elements.sessionId;
         select.length = 1;
@@ -83,8 +92,20 @@
           option.textContent = `${session.title} · ${session.speaker || "讲师待公布"}`;
           select.append(option);
         });
-        checkInForm.hidden = ticket.status !== "active";
-        message.textContent = "已读取凭证；请选择本次签到场次。";
+        const sessionMode = activeCheckInMode === "session";
+        sessionField.hidden = !sessionMode;
+        select.required = sessionMode;
+        checkInForm.elements.confirmCheckIn.checked = false;
+        confirmCopy.textContent = sessionMode
+          ? "我已当面核对参与者和本场讲座"
+          : "我已当面核对参与者和整个活动";
+        checkInButton.textContent = checkInIdleText();
+        checkInForm.hidden = ticket.status !== "active" || activeCheckInMode === "none";
+        message.textContent = activeCheckInMode === "none"
+          ? "此活动不需要签到；二维码仍可用于验票。"
+          : activeCheckInMode === "event"
+            ? "已读取凭证；此活动只需要签到一次。"
+            : "已读取凭证；请选择本次签到场次。";
       }
 
       function lookupTicketForCheckIn(value) {
@@ -122,21 +143,25 @@
         if (checkInPending || !checkInForm.elements.confirmCheckIn.checked) return;
         message.textContent = "正在提交签到…";
         checkInPending = true;
-        setPending(checkInButton, true, "正在签到…", "确认本场签到");
+        setPending(checkInButton, true, "正在签到…", checkInIdleText());
         google.script.run
           .withSuccessHandler((result) => {
             checkInPending = false;
-            setPending(checkInButton, false, "正在签到…", "确认本场签到");
+            setPending(checkInButton, false, "正在签到…", checkInIdleText());
             message.textContent = result && result.ok
-              ? "本场签到成功。"
+              ? activeCheckInMode === "event" ? "整个活动签到成功。" : "本场签到成功。"
               : result && result.message ? result.message : "签到未完成。";
           })
           .withFailureHandler(() => {
             checkInPending = false;
-            setPending(checkInButton, false, "正在签到…", "确认本场签到");
+            setPending(checkInButton, false, "正在签到…", checkInIdleText());
             message.textContent = "员工签到不可用。";
           })
-          .checkIn({ token: activeToken, sessionId: checkInForm.elements.sessionId.value });
+          .checkIn({
+            token: activeToken,
+            sessionId: activeCheckInMode === "session"
+              ? checkInForm.elements.sessionId.value : ""
+          });
       });
 
       const initialParameters = new URLSearchParams(window.location.search);

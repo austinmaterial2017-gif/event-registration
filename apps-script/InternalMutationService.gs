@@ -128,9 +128,15 @@ function executeInternalActionLocked_(action, payload, actor) {
       var registry = getRegistrySpreadsheet_();
       var route = requireAttendanceTicketRoute_(registry, payload && payload.token);
       var spreadsheet = getEventSpreadsheet_(registry, route.eventId);
-      return attendancePublicProjection_(
+      var projection = attendancePublicProjection_(
         findAttendanceTicket_(spreadsheet, payload && payload.token, route)
       );
+      var settings = getAdminSettings(registry);
+      var policy = settings && settings.registration &&
+        settings.registration.events && settings.registration.events[route.eventId] || {};
+      var mode = String(policy.checkInMode || 'session').toLowerCase();
+      projection.checkInMode = mode === 'event' || mode === 'none' ? mode : 'session';
+      return projection;
     },
     'staff.checkIn': function() {
       return internalStaffCheckInLocked_(payload, actor);
@@ -201,6 +207,7 @@ function internalMutationFailure_(code) {
     TOKEN_INVALID: '凭证无效或已过期。',
     SESSION_NOT_REGISTERED: '该凭证未报名此场讲座。',
     CHECK_IN_CLOSED: '当前不在此场讲座的签到时间内。',
+    CHECK_IN_DISABLED: '此活动不需要签到，二维码仍可用于验票。',
     ALREADY_CHECKED_IN: '此场讲座已完成签到。',
     MAINTENANCE: '系统正在切换数据连接，请稍后重试。',
     LEGACY_MIGRATION_REQUIRED: 'Existing legacy activity data must be migrated before activation.',
@@ -327,8 +334,7 @@ function openSpreadsheetById_(spreadsheetId) {
 function internalStaffCheckInLocked_(payload, actor) {
   var registry = getRegistrySpreadsheet_();
   requireNoSwitchMaintenance_(registry);
-  if (!payload || typeof payload !== 'object' ||
-      typeof payload.sessionId !== 'string' || !payload.sessionId.trim()) {
+  if (!payload || typeof payload !== 'object') {
     adminError_('INVALID_REQUEST');
   }
   var route = requireAttendanceTicketRoute_(registry, payload.token);
@@ -341,17 +347,33 @@ function internalStaffCheckInLocked_(payload, actor) {
   if (String(match.event.status || '').toLowerCase() !== 'live') {
     adminError_('CHECK_IN_CLOSED');
   }
-  var sessionId = payload.sessionId.trim();
-  var session = match.sessions.filter(function(candidate) {
-    return candidate.sessionId === sessionId;
-  })[0];
-  if (!session) adminError_('SESSION_NOT_REGISTERED');
-  var sessionStatus = String(session.status || '').toLowerCase();
-  if (sessionStatus !== 'live' && sessionStatus !== 'open') {
-    adminError_('CHECK_IN_CLOSED');
+  var settings = getAdminSettings(registry);
+  var eventPolicy = settings && settings.registration &&
+    settings.registration.events && settings.registration.events[route.eventId] || {};
+  var checkInMode = String(eventPolicy.checkInMode || 'session').toLowerCase();
+  if (checkInMode !== 'session' && checkInMode !== 'event' && checkInMode !== 'none') {
+    checkInMode = 'session';
+  }
+  if (checkInMode === 'none') adminError_('CHECK_IN_DISABLED');
+  var sessionId = '__EVENT__';
+  var session = null;
+  if (checkInMode === 'session') {
+    if (typeof payload.sessionId !== 'string' || !payload.sessionId.trim()) {
+      adminError_('INVALID_REQUEST');
+    }
+    sessionId = payload.sessionId.trim();
+    session = match.sessions.filter(function(candidate) {
+      return candidate.sessionId === sessionId;
+    })[0];
+    if (!session) adminError_('SESSION_NOT_REGISTERED');
+    var sessionStatus = String(session.status || '').toLowerCase();
+    if (sessionStatus !== 'live' && sessionStatus !== 'open') {
+      adminError_('CHECK_IN_CLOSED');
+    }
   }
   var now = new Date();
-  if (!isWithinInternalAttendanceWindow_(registry, session, now)) {
+  if (checkInMode === 'session' &&
+      !isWithinInternalAttendanceWindow_(registry, session, now)) {
     adminError_('CHECK_IN_CLOSED');
   }
   var duplicate = readRows(spreadsheet, '签到记录').some(function(record) {

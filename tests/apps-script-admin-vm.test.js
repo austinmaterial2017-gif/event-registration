@@ -1496,6 +1496,45 @@ test("protected dashboard and mutations route only through the selected activity
   assert.equal(records(harness.sourceSheets["报名项目"])[0].status, "active");
 });
 
+test("dashboard reads the activity catalog only once even when many activities exist", async () => {
+  const rows = baseRows();
+  const additionalSpreadsheets = {};
+  rows["活动目录"] = [];
+  for (let index = 1; index <= 12; index += 1) {
+    const eventId = `event-${index}`;
+    const spreadsheetId = `event-${index}-sheet`;
+    const sheets = eventSpreadsheetSheets(eventId, `Activity ${index}`);
+    rows["活动目录"].push({
+      ...records(sheets["活动"])[0],
+      spreadsheetId,
+      sheetName: "活动"
+    });
+    additionalSpreadsheets[spreadsheetId] = sheets;
+  }
+  const harness = await createHarness({
+    rows,
+    additionalSpreadsheets,
+    seedAdminRouting: false
+  });
+  const originalReadAdminRows = harness.context.readAdminRows_;
+  const originalReadRows = harness.context.readRows_;
+  let catalogReadCount = 0;
+  harness.context.readAdminRows_ = (spreadsheet, sheetName) => {
+    if (sheetName === "活动目录") catalogReadCount += 1;
+    return originalReadAdminRows(spreadsheet, sheetName);
+  };
+  harness.context.readRows_ = (spreadsheet, sheetName) => {
+    if (sheetName === "活动目录") catalogReadCount += 1;
+    return originalReadRows(spreadsheet, sheetName);
+  };
+
+  const dashboard = harness.context.getAdminDashboard({});
+
+  assert.equal(dashboard.ok, true, JSON.stringify(dashboard));
+  assert.equal(dashboard.data.events.length, 12);
+  assert.equal(catalogReadCount, 1);
+});
+
 test("session, question, and seat IDs fail closed when stray cross-event rows share the selected Sheet", async (t) => {
   async function harnessFor(event2Sheets) {
     const rows = baseRows();

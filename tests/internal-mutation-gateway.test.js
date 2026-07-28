@@ -212,3 +212,96 @@ test("large draft retries fit within the Apps Script property value limit", asyn
   );
   assert.equal(executions, 1);
 });
+
+test("dashboard reads do not fill script properties with large cached responses", async () => {
+  const [clientSource, gatewaySource] = await Promise.all([
+    readFile(new URL("InternalClient.gs", staffRoot), "utf8"),
+    readFile(new URL("InternalGateway.gs", publicRoot), "utf8")
+  ]);
+  let now = 1_800_000_000_000;
+  const legacyKey = "INTERNAL_IDEMPOTENCY_legacy-dashboard";
+  const properties = {
+    INTERNAL_API_SHARED_SECRET: secret,
+    [legacyKey]: JSON.stringify({
+      fingerprint: "legacy",
+      expiresAt: now + 86_400_000,
+      result: {
+        ok: true,
+        data: {
+          connection: { connected: true },
+          drafts: [{ payload: "x".repeat(12_000) }],
+          events: []
+        }
+      }
+    })
+  };
+  const scriptProperties = {
+    getProperty: (key) => properties[key] ?? null,
+    setProperty: (key, value) => {
+      const next = { ...properties, [key]: String(value) };
+      const total = Object.values(next).reduce((sum, entry) => sum + entry.length, 0);
+      if (total > 18_000) throw new Error("Script property storage full");
+      properties[key] = String(value);
+    },
+    deleteProperty: (key) => { delete properties[key]; },
+    getProperties: () => ({ ...properties })
+  };
+  class ServerDate extends Date {
+    constructor(value) { super(value === undefined ? now : value); }
+    static now() { return now; }
+  }
+  const common = {
+    JSON, Object, Array, String, Number, RegExp, Error, Math, isFinite,
+    Date: ServerDate,
+    Utilities: utilities(),
+    PropertiesService: { getScriptProperties: () => scriptProperties }
+  };
+  const staff = vm.createContext({ ...common });
+  vm.runInContext(clientSource, staff, { filename: "InternalClient.gs" });
+
+  let executions = 0;
+  const publicContext = vm.createContext({
+    ...common,
+    LockService: {
+      getScriptLock: () => ({ waitLock() {}, releaseLock() {} })
+    },
+    executeInternalActionLocked_: () => {
+      executions += 1;
+      return {
+        ok: true,
+        data: {
+          connection: { connected: true },
+          drafts: [{ payload: "y".repeat(12_000) }],
+          events: []
+        }
+      };
+    }
+  });
+  vm.runInContext(gatewaySource, publicContext, { filename: "InternalGateway.gs" });
+
+  const first = staff.createInternalRequestEnvelope_(
+    "admin.getDashboard",
+    {},
+    "admin@example.com",
+    "dashboard-read-1",
+    now
+  );
+  const accepted = publicContext.handleInternalRequest_(first);
+  assert.equal(accepted.ok, true);
+  assert.equal(accepted.data.drafts[0].payload.length, 12_000);
+  assert.equal(properties[legacyKey], undefined);
+  assert.equal(
+    Object.keys(properties).some((key) => key === "INTERNAL_IDEMPOTENCY_dashboard-read-1"),
+    false
+  );
+
+  const retry = staff.createInternalRequestEnvelope_(
+    "admin.getDashboard",
+    {},
+    "admin@example.com",
+    "dashboard-read-1",
+    now + 1
+  );
+  assert.equal(publicContext.handleInternalRequest_(retry).ok, true);
+  assert.equal(executions, 2, "read-only dashboard retries should execute a fresh read");
+});

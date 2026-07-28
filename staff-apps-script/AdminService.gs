@@ -578,7 +578,11 @@ function getAdminDashboard_(payload) {
       return adminDraftProjection_(row);
     });
     var events = catalogEntries.map(function(entry) {
-      var validated = getEventCatalogEntry_(registry, entry.eventId);
+      var validated = validateStaffEventCatalogEntry_(
+        registry,
+        entry,
+        normalizeStaffRoutingValue_(entry.eventId)
+      );
       var projection = adminEventProjection_(validated, settings);
       projection.sheetUrl = activitySheetUrl_(validated.spreadsheetId);
       return projection;

@@ -4,6 +4,10 @@ var INTERNAL_NONCE_TTL_MS_ = 600000;
 var INTERNAL_IDEMPOTENCY_TTL_MS_ = 86400000;
 var INTERNAL_NONCE_PREFIX_ = 'INTERNAL_NONCE_';
 var INTERNAL_IDEMPOTENCY_PREFIX_ = 'INTERNAL_IDEMPOTENCY_';
+var INTERNAL_UNCACHED_ACTIONS_ = {
+  'admin.getDashboard': true,
+  'staff.getTicket': true
+};
 
 function handleInternalRequest_(request) {
   if (!isValidInternalRequest_(request)) return internalRequestDenied_();
@@ -16,6 +20,9 @@ function handleInternalRequest_(request) {
     }
     properties.setProperty(nonceKey, String(Date.now() + INTERNAL_NONCE_TTL_MS_));
 
+    if (INTERNAL_UNCACHED_ACTIONS_[request.action]) {
+      return { handled: false, idempotencyKey: '', fingerprint: '' };
+    }
     var idempotencyKey = INTERNAL_IDEMPOTENCY_PREFIX_ + request.idempotencyKey;
     var fingerprint = internalRequestFingerprint_(request);
     var stored = parseInternalStoredState_(properties.getProperty(idempotencyKey));
@@ -50,16 +57,18 @@ function handleInternalRequest_(request) {
   } catch (_ignored) {
     result = { ok: false, code: 'INTERNAL', message: '请求未能完成，请稍后重试。' };
   }
-  withInternalGatewayLock_(function() {
-    PropertiesService.getScriptProperties().setProperty(
-      claim.idempotencyKey,
-      JSON.stringify({
-      fingerprint: claim.fingerprint,
-      expiresAt: Date.now() + INTERNAL_IDEMPOTENCY_TTL_MS_,
-      result: result
-      })
-    );
-  });
+  if (claim.idempotencyKey) {
+    withInternalGatewayLock_(function() {
+      PropertiesService.getScriptProperties().setProperty(
+        claim.idempotencyKey,
+        JSON.stringify({
+        fingerprint: claim.fingerprint,
+        expiresAt: Date.now() + INTERNAL_IDEMPOTENCY_TTL_MS_,
+        result: result
+        })
+      );
+    });
+  }
   return result;
 }
 
@@ -158,11 +167,20 @@ function purgeInternalRequestState_() {
     var expiresAt = Number(all[key]);
     if (key.indexOf(INTERNAL_IDEMPOTENCY_PREFIX_) === 0) {
       var stored = parseInternalStoredState_(all[key]);
-      if (stored) return;
+      if (stored && !isStoredDashboardResponse_(stored)) return;
       expiresAt = 0;
     }
     if (!isFinite(expiresAt) || expiresAt <= Date.now()) properties.deleteProperty(key);
   });
+}
+
+function isStoredDashboardResponse_(stored) {
+  var data = stored && stored.result && stored.result.data;
+  return Boolean(
+    data && typeof data === 'object' && !Array.isArray(data) &&
+    data.connection && typeof data.connection === 'object' &&
+    Array.isArray(data.drafts) && Array.isArray(data.events)
+  );
 }
 
 function withInternalGatewayLock_(callback) {

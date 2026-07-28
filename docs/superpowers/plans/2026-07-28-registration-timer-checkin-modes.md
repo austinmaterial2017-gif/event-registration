@@ -247,7 +247,7 @@ Commit: `feat: adapt staff check-in to event policy`
 - Regenerate: `staff-apps-script/SourceBundles.gs`
 - Regenerate: `source-bundles/staff-admin.txt`
 - Regenerate: `source-bundles/public-backend.txt`
-- Update participant cache-bust query strings in public HTML or module entry points as required.
+- Update cache-bust query strings in `public/index.html`, `public/register.html`, `public/js/index-page.js`, and `public/js/register-page.js`.
 
 **Interfaces:**
 - Deploys the existing public backend, staff/admin web app, and GitHub Pages participant site without changing their permanent URLs.

@@ -82,6 +82,17 @@ test("the production timeout tolerates an Apps Script cold start", async () => {
   assert.ok(Number(match[1].replaceAll("_", "")) >= 60_000);
 });
 
+test("participant entry modules cache-bust the production API client", async () => {
+  const root = new URL("../public/js/", import.meta.url);
+  const sources = await Promise.all(
+    ["index-page.js", "register-page.js", "ticket-page.js", "verify-page.js"]
+      .map((name) => readFile(new URL(name, root), "utf8"))
+  );
+  for (const source of sources) {
+    assert.match(source, /from\s+["']\.\/api\.js\?v=20260728-stable["']/);
+  }
+});
+
 test("malformed JSON and non-success HTTP statuses are safe normalized failures", async () => {
   const malformed = createApiClient({ endpoint, fetchImpl: async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError("unexpected private detail"); } }) });
   const unavailable = createApiClient({ endpoint, fetchImpl: async () => jsonResponse({ message: "internal stack trace" }, 503) });
@@ -158,8 +169,8 @@ test("participant controllers use the public client instead of temporary registr
     readFile(new URL("register-page.js", root), "utf8")
   ]);
 
-  assert.match(indexPage, /import\s*\{\s*listEvents\s*\}\s*from\s*["']\.\/api\.js["']/);
-  assert.match(registerPage, /import\s*\{\s*createRegistration\s*,\s*getEvent\s*\}\s*from\s*["']\.\/api\.js["']/);
+  assert.match(indexPage, /import\s*\{\s*listEvents\s*\}\s*from\s*["']\.\/api\.js(?:\?[^"']+)?["']/);
+  assert.match(registerPage, /import\s*\{\s*createRegistration\s*,\s*getEvent\s*\}\s*from\s*["']\.\/api\.js(?:\?[^"']+)?["']/);
   assert.doesNotMatch(registerPage, /demoRegistrationAdapter|registrationApi/);
   assert.doesNotMatch(`${indexPage}\n${registerPage}`, /const\s+serverNow\s*=/);
 });

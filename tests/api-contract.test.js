@@ -96,8 +96,8 @@ test("participant entry modules cache-bust the production API client", async () 
 test("participant HTML cache-busts each updated entry module", async () => {
   const root = new URL("../public/", import.meta.url);
   const pages = [
-    ["index.html", "index-page.js", "20260728-stable"],
-    ["register.html", "register-page.js", "20260728-final"],
+    ["index.html", "index-page.js", "20260728-timer"],
+    ["register.html", "register-page.js", "20260728-timer"],
     ["ticket.html", "ticket-page.js", "20260728-final"],
     ["verify.html", "verify-page.js", "20260728-final"],
     ["v.html", "verify-page.js", "20260728-final"]

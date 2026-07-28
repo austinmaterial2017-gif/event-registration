@@ -224,7 +224,9 @@
       const requestedEventId = state.selectedEventId;
       const isCurrent = () => state.dashboardRequestId === requestId && state.selectedEventId === requestedEventId;
       setStatus("正在读取管理数据…");
-      adminRunner_(renderDashboard, isCurrent).getAdminDashboard({ eventId: requestedEventId || undefined, search });
+      const payload = { search };
+      if (requestedEventId) payload.eventId = requestedEventId;
+      adminRunner_(renderDashboard, isCurrent).getAdminDashboard(payload);
     }
 
     function formObject(form) {
@@ -316,9 +318,10 @@
     function eventPayload(action) {
       const form = document.querySelector("#event-form");
       const values = formObject(form);
-      return {
+      const eventId = values.eventId;
+      delete values.eventId;
+      const payload = {
         ...values,
-        eventId: values.eventId || undefined,
         action,
         opensAt: localDateValue(values.opensAt),
         closesAt: localDateValue(values.closesAt),
@@ -332,6 +335,8 @@
         seatHoldsEnabled: checked(form, "seatHoldsEnabled"),
         seatHoldMinutes: Number(values.seatHoldMinutes)
       };
+      if (eventId) payload.eventId = eventId;
+      return payload;
     }
 
     function saveEvent(action) {
@@ -403,8 +408,16 @@
     });
 
     function saveSeatAction(action, seatId) {
+      if (!state.selectedEventId) {
+        setStatus("请先选择一个活动，再更新座位。", "error");
+        return;
+      }
       setStatus("正在更新座位…");
-      adminRunner_(() => loadDashboard()).saveAdminSeatPlan({ action, seatId });
+      adminRunner_(() => loadDashboard()).saveAdminSeatPlan({
+        eventId: state.selectedEventId,
+        action,
+        seatId
+      });
     }
 
     document.querySelector("#question-form").addEventListener("submit", (event) => {
@@ -443,10 +456,15 @@
     });
     document.querySelectorAll("#record-action-form [data-action]").forEach((button) => {
       button.addEventListener("click", () => {
+        if (!state.selectedEventId) {
+          setStatus("请先选择一个活动，再更新报名记录。", "error");
+          return;
+        }
         const form = document.querySelector("#record-action-form");
         const values = formObject(form);
         if (!window.confirm("确认执行此操作并保留完整历史记录？")) return;
         const payload = {
+          eventId: state.selectedEventId,
           action: button.dataset.action,
           registrationId: values.registrationId,
           seatId: values.seatId,

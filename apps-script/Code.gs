@@ -2,6 +2,7 @@ var PUBLIC_ERROR_MESSAGES = {
   CANCELLATION_DISABLED: 'Cancellation is not enabled for this event.',
   SEAT_HOLD_DISABLED: 'Seat holds are not enabled for this event.',
   SEAT_HOLD_OWNERSHIP: 'This seat hold belongs to another browser session.',
+  LEGACY_MIGRATION_REQUIRED: 'Existing legacy activity data must be migrated before activation.',
   EVENT_NOT_FOUND: '未找到该活动。',
   INVALID_REQUEST: '提交信息无效，请检查后重试。',
   REGISTRATION_CLOSED: '报名已截止。',

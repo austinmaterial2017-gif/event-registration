@@ -25,11 +25,15 @@ var EVENT_SHEET_NAMES_ = [
   '活动', '场次', '座位', '报名问题', '参加者',
   '报名项目', '签到记录', '操作记录'
 ];
+var LEGACY_BUSINESS_SHEET_NAMES_ = [
+  '活动', '场次', '座位', '报名问题', '参加者', '报名项目', '签到记录'
+];
 
 /** Initializes all private sheets without replacing any populated cells. */
 function setupSystem() {
   return withScriptLock(function() {
     var spreadsheet = getRegistrySpreadsheet_();
+    requireLegacyMigrationPreflight_(spreadsheet);
     initializeRegistrySpreadsheet_(spreadsheet);
     seedInitialAdminSettings_(spreadsheet);
     return spreadsheet.getId();
@@ -216,6 +220,34 @@ function initializeRegistrySpreadsheet_(registry) {
 function initializeEventSpreadsheet_(spreadsheet) {
   reuseDefaultBlankSheet_(spreadsheet, EVENT_SHEET_NAMES_);
   initializeNamedSheets_(spreadsheet, EVENT_SHEET_NAMES_);
+}
+
+function requireLegacyMigrationPreflight_(registry) {
+  if (hasCompletedLegacyCatalogMapping_(registry)) return;
+  var containsLegacyBusinessData = LEGACY_BUSINESS_SHEET_NAMES_.some(function(sheetName) {
+    var sheet = registry && registry.getSheetByName(sheetName);
+    return !!sheet && sheet.getLastRow() > 1;
+  });
+  if (!containsLegacyBusinessData) return;
+  var error = new Error('Legacy activity data requires a reviewed migration before activation.');
+  error.publicCode = 'LEGACY_MIGRATION_REQUIRED';
+  throw error;
+}
+
+function hasCompletedLegacyCatalogMapping_(registry) {
+  var sheet = registry && registry.getSheetByName('活动目录');
+  if (!sheet || !hasExactHeaderRow_(sheet, SHEET_DEFINITIONS['活动目录']) ||
+      sheet.getLastRow() <= 1) {
+    return false;
+  }
+  var headers = SHEET_DEFINITIONS['活动目录'];
+  return sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues()
+    .some(function(values) {
+      var eventId = typeof values[0] === 'string' ? values[0].trim() : '';
+      var spreadsheetId = typeof values[1] === 'string' ? values[1].trim() : '';
+      var sheetName = typeof values[2] === 'string' ? values[2].trim() : '';
+      return !!eventId && !!spreadsheetId && sheetName === '活动';
+    });
 }
 
 function reuseDefaultBlankSheet_(spreadsheet, sheetNames) {

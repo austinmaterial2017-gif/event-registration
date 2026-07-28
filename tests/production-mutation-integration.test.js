@@ -512,6 +512,52 @@ test("assembled automatic activity creation prepares private Sheets before catal
   );
 });
 
+test("assembled administrator entry points accept the payloads emitted by the activity selector", async () => {
+  const system = await createSystem();
+  const initialDashboardPayload = { search: "" };
+  const createPayload = { title: "Selector-created activity", status: "draft" };
+
+  assert.equal(Object.hasOwn(initialDashboardPayload, "eventId"), false);
+  assert.equal(Object.hasOwn(createPayload, "eventId"), false);
+  assert.equal(
+    system.staffContext.getAdminDashboard(initialDashboardPayload).ok,
+    true
+  );
+  assert.equal(system.staffContext.saveAdminEvent(createPayload).ok, true);
+
+  const generated = system.staffContext.saveAdminSeatPlan({
+    eventId: "event-1",
+    action: "generate",
+    mode: "self",
+    zones: [{ name: "A", rows: 1, seatsPerRow: 1 }]
+  });
+  assert.equal(generated.ok, true, JSON.stringify(generated));
+  const seatId = rows(system.sheets["座位"])[0].seatId;
+  for (const [action, status] of [["reserve", "reserved"], ["close", "closed"], ["reopen", "available"]]) {
+    const result = system.staffContext.saveAdminSeatPlan({ eventId: "event-1", action, seatId });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(rows(system.sheets["座位"])[0].status, status);
+  }
+
+  const adjusted = system.staffContext.adminRecordAction({
+    eventId: "event-1",
+    action: "adjust_seat",
+    registrationId: "registration-1",
+    seatId,
+    confirm: true
+  });
+  assert.equal(adjusted.ok, true, JSON.stringify(adjusted));
+  const cancelled = system.staffContext.adminRecordAction({
+    eventId: "event-1",
+    action: "cancel_registration",
+    registrationId: "registration-1",
+    seatId,
+    confirm: true
+  });
+  assert.equal(cancelled.ok, true, JSON.stringify(cancelled));
+  assert.equal(rows(system.sheets["报名项目"])[0].status, "cancelled");
+});
+
 test("assembled creation failures leave the existing catalog unchanged", async (t) => {
   for (const stage of ["create", "initialize", "event", "catalog", "catalog-post-write"]) {
     await t.test(stage, async () => {

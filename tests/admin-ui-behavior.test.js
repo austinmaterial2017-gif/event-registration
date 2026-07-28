@@ -100,7 +100,14 @@ function dashboard(eventId, title, sheetUrl = "https://docs.google.com/spreadshe
     connection: { connected: true, sheetName: "Private Sheet" },
     events: [eventId === "B" ? { ...event, eventId: "A", title: "Activity A", sheetUrl: "https://docs.google.com/spreadsheets/d/a/edit" } : { ...event, eventId: "B", title: "Activity B", sheetUrl: "https://docs.google.com/spreadsheets/d/b/edit" }, event],
     sessions: [{ eventId, title: `Session ${eventId}`, speaker: "Speaker", location: "Hall", startsAt: "", endsAt: "", capacity: 10, required: false, groupRule: "", status: "open" }],
-    seats: [], questions: [], records: [], attendance: []
+    seats: [{ seatId: `seat-${eventId}`, eventId, label: "A-01", zone: "A", sessionId: "", status: "available" }],
+    questions: [],
+    records: [{
+      eventId, registrationId: `registration-${eventId}`, ticketNumber: "EVT-TEST",
+      participantName: "Test User", status: "active", email: "test@example.com",
+      phone: "", sessionIds: [], seatChoices: []
+    }],
+    attendance: []
   };
 }
 
@@ -127,6 +134,11 @@ async function createHarness() {
     button.dataset.action = action;
     return button;
   });
+  const recordActions = ["cancel_registration", "adjust_seat"].map((action) => {
+    const button = new FakeElement("button");
+    button.dataset.action = action;
+    return button;
+  });
   const document = {
     createElement: (tag) => new FakeElement(tag),
     querySelector: (query) => elements.get(query) || null,
@@ -134,7 +146,8 @@ async function createHarness() {
       if (query === ".selected-required") return sections;
       if (query === 'nav a[href^="#"]') return navLinks;
       if (query === "#event-form [data-action]") return lifecycle;
-      if (query === "#record-action-form [data-action]" || query === "[data-copy-bundle]") return [];
+      if (query === "#record-action-form [data-action]") return recordActions;
+      if (query === "[data-copy-bundle]") return [];
       return [];
     }
   };
@@ -145,7 +158,10 @@ async function createHarness() {
     withFailureHandler(handler) { this.failure = handler; return this; }
     getAdminDashboard(payload) { requests.push({ payload, success: this.success, failure: this.failure }); }
     saveAdminEvent(payload) { mutations.push({ kind: "event", payload, success: this.success }); }
-    saveAdminSession() {} saveAdminSeatPlan() {} saveAdminQuestion() {} adminRecordAction() {}
+    saveAdminSession() {}
+    saveAdminSeatPlan(payload) { mutations.push({ kind: "seat", payload, success: this.success }); }
+    saveAdminQuestion() {}
+    adminRecordAction(payload) { mutations.push({ kind: "record", payload, success: this.success }); }
     testAdminSheetConnection() {} switchAdminSheet() {} getAdminSourceBundles() {}
   }
   const context = vm.createContext({
@@ -159,7 +175,10 @@ async function createHarness() {
   });
   const source = (await readFile(scriptUrl, "utf8")).replace(/^<script>\s*|\s*<\/script>\s*$/g, "");
   vm.runInContext(source, context);
-  return { elements, eventForm, sessionForm, seatForm, questionForm, selector, sections, navLinks, lifecycle, requests, mutations };
+  return {
+    elements, eventForm, sessionForm, seatForm, questionForm, recordAction,
+    selector, sections, navLinks, lifecycle, recordActions, requests, mutations
+  };
 }
 
 test("later selected dashboard response wins when older request resolves last", async () => {
@@ -202,8 +221,52 @@ test("selection syncs dependent IDs, rejects unsafe sheet links, and create succ
   ui.eventForm.elements.title.value = "Created";
   ui.eventForm.dispatch("submit");
   assert.equal(ui.mutations.length, 1);
+  assert.equal(Object.hasOwn(ui.mutations[0].payload, "eventId"), false);
   ui.mutations[0].success({ ok: true, data: { eventId: "C" } });
   assert.equal(ui.requests.at(-1).payload.eventId, "C");
+});
+
+test("administrator UI omits an absent event ID and attaches the selected ID to seat and record actions", async () => {
+  const ui = await createHarness();
+
+  assert.equal(Object.hasOwn(ui.requests[0].payload, "eventId"), false);
+
+  ui.selector.value = "B";
+  ui.selector.dispatch("change");
+  ui.requests.at(-1).success({ ok: true, data: dashboard("B", "Activity B") });
+
+  const seatActions = ui.elements.get("#seat-list").children[0].children.at(-1).children;
+  seatActions.forEach((button) => button.dispatch("click"));
+  ui.recordAction.elements.registrationId.value = "registration-B";
+  ui.recordAction.elements.seatId.value = "seat-B";
+  ui.recordActions.forEach((button) => button.dispatch("click"));
+
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(ui.mutations
+      .filter((mutation) => mutation.kind === "seat")
+      .map((mutation) => mutation.payload))),
+    [
+      { eventId: "B", action: "reserve", seatId: "seat-B" },
+      { eventId: "B", action: "close", seatId: "seat-B" },
+      { eventId: "B", action: "reopen", seatId: "seat-B" }
+    ]
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(ui.mutations
+      .filter((mutation) => mutation.kind === "record")
+      .map((mutation) => mutation.payload))),
+    [
+      { eventId: "B", action: "cancel_registration", registrationId: "registration-B", seatId: "seat-B", confirm: true },
+      { eventId: "B", action: "adjust_seat", registrationId: "registration-B", seatId: "seat-B", confirm: true }
+    ]
+  );
+
+  ui.selector.value = "";
+  ui.selector.dispatch("change");
+  const mutationCount = ui.mutations.length;
+  seatActions[0].dispatch("click");
+  ui.recordActions[0].dispatch("click");
+  assert.equal(ui.mutations.length, mutationCount);
 });
 
 test("navigation declines hidden sections until an activity is selected", async () => {

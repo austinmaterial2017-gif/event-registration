@@ -97,7 +97,8 @@ test("administrator workflow keeps the selected activity visible and hides maint
   assert.doesNotMatch(html, /活动\s*ID\s*<input/i);
 
   assert.match(script, /selectedEventId/);
-  assert.match(script, /getAdminDashboard\(\{\s*eventId/);
+  assert.match(script, /const payload = \{ search \}/);
+  assert.match(script, /if \(requestedEventId\) payload\.eventId = requestedEventId/);
   assert.match(script, /function\s+scrollToAdminSection_/);
   assert.match(script, /nav a\[href\^=["']#["']\]/);
   assert.match(script, /event\.preventDefault\(\)/);

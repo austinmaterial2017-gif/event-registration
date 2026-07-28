@@ -74,7 +74,10 @@ test("setupSystem seeds one valid conservative ADMIN_SETTINGS row without overwr
     },
     appendRow: (row) => rows.push(row)
   };
-  const spreadsheet = { getId: () => "registry-sheet", getSheetByName: () => settingsSheet };
+  const spreadsheet = {
+    getId: () => "registry-sheet",
+    getSheetByName: (name) => name === "系统设置" ? settingsSheet : null
+  };
   const context = vm.createContext({
     Date, JSON, Object, Array, String, Number, Error,
     PropertiesService: { getScriptProperties: () => ({ getProperty: () => "registry-sheet" }) },
@@ -83,7 +86,7 @@ test("setupSystem seeds one valid conservative ADMIN_SETTINGS row without overwr
   });
   const source = await readFile(new URL("../apps-script/Repository.gs", import.meta.url), "utf8");
   vm.runInContext(source, context);
-  context.initializeSpreadsheet_ = () => {};
+  context.initializeRegistrySpreadsheet_ = () => {};
 
   assert.equal(context.setupSystem(), "registry-sheet");
   assert.equal(rows.length, 2);

@@ -687,6 +687,67 @@ test("registry and event initializers keep their private schemas separate", asyn
   assert.deepEqual(eventSheets.Notes.rows, [["keep me"]]);
 });
 
+test("setupSystem requires an explicit legacy migration mapping before it mutates a populated permanent registry", async () => {
+  async function setupContext(sheets, inserts) {
+    const registry = {
+      getId: () => "registry-id",
+      getSheetByName: (name) => sheets[name] || null,
+      insertSheet: (name) => {
+        inserts.push(name);
+        const sheet = new FakeSheet(name, []);
+        sheet.rows = [];
+        sheets[name] = sheet;
+        return sheet;
+      }
+    };
+    const context = vm.createContext({
+      Date, JSON, Object, Array, String, Number, RegExp, Error, Math, isFinite,
+      PropertiesService: {
+        getScriptProperties: () => ({
+          getProperty: () => "registry-id",
+          setProperty: () => {}
+        })
+      },
+      SpreadsheetApp: { openById: () => registry },
+      LockService: { getScriptLock: () => ({ waitLock: () => {}, releaseLock: () => {} }) },
+      Utilities: { getUuid: () => "test-audit-id" }
+    });
+    vm.runInContext(await readFile(new URL("Repository.gs", publicScriptRoot), "utf8"), context);
+    return context;
+  }
+
+  const legacyActivity = new FakeSheet("活动", [{ eventId: "legacy-event", title: "Legacy activity" }]);
+  const legacySheets = { "活动": legacyActivity };
+  const legacyInserts = [];
+  const legacyContext = await setupContext(legacySheets, legacyInserts);
+  const beforeLegacyRows = JSON.stringify(legacyActivity.rows);
+
+  assert.throws(
+    () => legacyContext.setupSystem(),
+    (error) => error && error.publicCode === "LEGACY_MIGRATION_REQUIRED"
+  );
+  assert.equal(JSON.stringify(legacyActivity.rows), beforeLegacyRows);
+  assert.deepEqual(legacyInserts, []);
+  assert.equal(legacySheets["活动目录"], undefined);
+  assert.equal(legacySheets["票券索引"], undefined);
+
+  const freshSheets = {};
+  const freshContext = await setupContext(freshSheets, []);
+  assert.equal(freshContext.setupSystem(), "registry-id");
+
+  const catalogedLegacy = new FakeSheet("活动", [{ eventId: "legacy-event", title: "Legacy activity" }]);
+  const catalogedSheets = {
+    "活动": catalogedLegacy,
+    "活动目录": new FakeSheet("活动目录", [{
+      eventId: "legacy-event", spreadsheetId: "migrated-event-sheet", sheetName: "活动",
+      title: "Legacy activity", status: "archived", createdAt: "2026-07-01T00:00:00Z",
+      updatedAt: "2026-07-01T00:00:00Z"
+    }])
+  };
+  const catalogedContext = await setupContext(catalogedSheets, []);
+  assert.equal(catalogedContext.setupSystem(), "registry-id");
+});
+
 test("registry routing resolves one validated activity and ticket route without raw tokens", async () => {
   const rows = baseRows();
   const tokenDigest = createHash("sha256").update("raw-secret-token").digest("hex");

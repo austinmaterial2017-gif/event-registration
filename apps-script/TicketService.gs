@@ -76,13 +76,13 @@ function cancelRegistration(payload) {
           return record;
         });
         releaseTicketSeats_(spreadsheet, occupiedSeats);
-        auditSnapshot = appendTicketAudit_(spreadsheet, 'CANCEL_REGISTRATION', match.registrationId, {
-          eventId: match.event.eventId
-        });
         routeWriteAttempted = true;
         updateTicketRouteSnapshot_(registry, routeSnapshot, {
           status: 'cancelled',
           updatedAt: cancelledAt
+        });
+        auditSnapshot = appendTicketAudit_(spreadsheet, 'CANCEL_REGISTRATION', match.registrationId, {
+          eventId: match.event.eventId
         });
         match.records.forEach(function(record) { record.status = 'cancelled'; });
         match.status = 'cancelled';

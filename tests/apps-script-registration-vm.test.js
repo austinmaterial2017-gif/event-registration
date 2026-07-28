@@ -846,6 +846,7 @@ test("a failed cancellation index update restores the active registration and oc
     }
   });
   const created = harness.context.createRegistration(registrationPayload({ seatChoices: ["A1"] }));
+  const beforeAudits = JSON.stringify(sheetObjects(harness.sheets["操作记录"]));
   phase = "cancel";
 
   const failed = harness.context.cancelRegistration({
@@ -861,6 +862,55 @@ test("a failed cancellation index update restores the active registration and oc
   );
   assert.equal(
     harness.context.getTicketRouteByNumber_(harness.registry, created.data.ticketNumber).status,
+    "active"
+  );
+  assert.equal(JSON.stringify(sheetObjects(harness.sheets["操作记录"])), beforeAudits);
+});
+
+test("a downstream cancellation failure after the index write restores the route, registration, seat, and audit", async () => {
+  let phase = "create";
+  let routeWasCancelled = false;
+  const harness = await createHarness({
+    rows: baseRows({
+      event: { seatMode: "self" },
+      seats: [
+        { seatId: "a1", eventId: "event-1", sessionId: "", label: "A1", zone: "front", status: "available" }
+      ]
+    }),
+    onWrite: ({ sheet, values }) => {
+      if (phase !== "cancel") return;
+      if (sheet.name === "票券索引" &&
+          values[0][headers["票券索引"].indexOf("status")] === "cancelled") {
+        routeWasCancelled = true;
+      }
+      if (sheet.name === "操作记录" && values[0][1] === "CANCEL_REGISTRATION") {
+        throw new Error("audit write failed after index update");
+      }
+    }
+  });
+  const created = harness.context.createRegistration(registrationPayload({ seatChoices: ["A1"] }));
+  const beforeAudits = JSON.stringify(sheetObjects(harness.sheets["操作记录"]));
+  phase = "cancel";
+
+  const failed = harness.context.cancelRegistration({
+    ticketNumber: created.data.ticketNumber,
+    verificationValue: "alice@example.com"
+  });
+
+  assert.equal(failed.ok, false);
+  assert.equal(routeWasCancelled, true);
+  assert.equal(sheetObjects(harness.sheets["报名项目"])[0].status, "active");
+  assert.equal(sheetObjects(harness.sheets["座位"])[0].holderRegistrationId, created.data.registrationId);
+  assert.equal(
+    harness.context.getTicketRouteByNumber_(harness.registry, created.data.ticketNumber).status,
+    "active"
+  );
+  assert.equal(JSON.stringify(sheetObjects(harness.sheets["操作记录"])), beforeAudits);
+  assert.equal(
+    harness.context.lookupTicket({
+      ticketNumber: created.data.ticketNumber,
+      verificationValue: "alice@example.com"
+    }).data.status,
     "active"
   );
 });

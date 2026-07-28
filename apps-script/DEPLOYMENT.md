@@ -23,9 +23,12 @@ Creating later activities requires no Apps Script setup, edits, or redeployment.
 It also requires no Sheet ID entry.
 
 Existing nonempty legacy activity data is not split automatically.
-`setupSystem()` preserves those rows but does not copy, repartition, or add
-them to the new activity catalog. Back up the legacy Sheet and complete a
-separately reviewed migration before removing or changing any old data.
+Before initialization, `setupSystem()` checks the permanent registry for
+nonempty legacy business tabs. If it finds them without a completed activity
+catalog mapping, it fails with `LEGACY_MIGRATION_REQUIRED` before adding or
+changing a catalog or ticket index and before moving or deleting any data.
+Back up the legacy Sheet and complete a separately reviewed migration before
+removing or changing any old data.
 
 ## Updating existing protected deployments
 
@@ -37,9 +40,14 @@ Retain the prior public and staff deployment versions before upgrading.
 2. Pause participant submissions and staff or administrator mutations for a
    controlled maintenance window.
 3. Replace the existing public project's files with the generated
-   `source-bundles/public-backend.txt`, save, run `setupSystem()`, and approve
-   the new Drive scope once.
-4. Update that existing public deployment to the new version. Keep its
+   `source-bundles/public-backend.txt`, save a candidate version, and run
+   `setupSystem()` as a preflight before activating that version. Approve the
+   new Drive scope once if requested. If it returns `LEGACY_MIGRATION_REQUIRED`,
+   stop the upgrade: do not activate either project, and keep the prior public
+   and staff deployment versions active until a reviewed migration mapping is
+   complete.
+4. Only after that preflight succeeds, update the existing public deployment
+   to the new version. Keep its
    official `/exec` URL unchanged.
 5. Replace the existing staff project's files with
    `source-bundles/staff-admin.txt`, confirm its Script Properties still refer

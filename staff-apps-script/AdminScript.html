@@ -14,7 +14,8 @@
       eventSavePending: false,
       eventSaveNotice: "",
       sessionSaveNotice: false,
-      actionNotice: ""
+      actionNotice: "",
+      previewSelectedSeatId: ""
     };
     const statusNode = document.querySelector("#admin-status");
 
@@ -365,6 +366,7 @@
       if (selectedDraft) fillEventEditor(selectedDraft.draft.event);
       else if (selectedEvent) fillEventEditor(selectedEvent);
       updateConditionalEventFields_();
+      renderSeatPreview_();
       if ((selectedDraft || selectedEvent) && state.eventSaveNotice) {
         setStatus(state.eventSaveNotice);
         state.eventSaveNotice = "";
@@ -627,6 +629,116 @@
       return "";
     }
 
+    function seatPreviewModel_() {
+      const eventForm = document.querySelector("#event-form");
+      const seatForm = document.querySelector("#seat-form");
+      const values = formObject(seatForm);
+      const mode = values.mode || "none";
+      const stageLabel = String(eventForm.elements.seatMapLabel.value || "").trim() ||
+        "舞台 / 白板";
+      if (mode === "none") {
+        return {
+          mode,
+          stageLabel,
+          message: "参与者会看到自由入座，不需要选择座位。",
+          zones: []
+        };
+      }
+
+      const selectedSessionId = String(values.sessionId || "").trim();
+      const savedSeats = state.dashboard && Array.isArray(state.dashboard.seats)
+        ? state.dashboard.seats.filter((seat) =>
+          seat.eventId === state.selectedEventId &&
+          String(seat.sessionId || "") === selectedSessionId)
+        : [];
+      const zoneMap = new Map();
+      if (savedSeats.length) {
+        savedSeats.forEach((seat) => {
+          const zoneName = String(seat.zone || values.zoneName || "座位区");
+          if (!zoneMap.has(zoneName)) zoneMap.set(zoneName, []);
+          zoneMap.get(zoneName).push({
+            id: seat.seatId,
+            label: seat.label,
+            state: seat.status === "available" ? "available" : "unavailable"
+          });
+        });
+      } else {
+        const rows = Math.min(Math.max(Number(values.rows) || 0, 0), 20);
+        const seatsPerRow = Math.min(
+          Math.max(Number(values.seatsPerRow) || 0, 0), 20
+        );
+        const zoneName = String(values.zoneName || "").trim() ||
+          (mode === "zone" ? "请填写区域名称" : "座位区");
+        const generated = [];
+        for (let row = 1; row <= rows; row += 1) {
+          for (let seat = 1; seat <= seatsPerRow; seat += 1) {
+            generated.push({
+              id: `preview-${zoneName}-${row}-${seat}`,
+              label: `${zoneName === "座位区" ? "" : `${zoneName}-`}${row}-${seat}`,
+              state: "available"
+            });
+          }
+        }
+        if (generated.length) zoneMap.set(zoneName, generated);
+      }
+      const columns = Math.min(Math.max(Number(values.seatsPerRow) || 6, 1), 20);
+      const zones = Array.from(zoneMap, ([name, seats]) => ({
+        name,
+        columns,
+        seats: seats.map((seat) => ({
+          ...seat,
+          state: seat.state === "available" &&
+            seat.id === state.previewSelectedSeatId ? "selected" : seat.state
+        }))
+      }));
+      return {
+        mode,
+        stageLabel,
+        message: zones.length
+          ? (mode === "auto"
+            ? "这是座位排列预览；参与者提交后由系统自动分配。"
+            : "点击可选座位可模拟参与者暂选；这不会占用真实座位。")
+          : "请填写有效的行数和每行座位数，预览会立即出现。",
+        zones
+      };
+    }
+
+    function renderSeatPreview_() {
+      const model = seatPreviewModel_();
+      document.querySelector("#seat-preview-stage").textContent = model.stageLabel;
+      document.querySelector("#seat-preview-message").textContent = model.message;
+      const floor = document.querySelector("#seat-preview-floor");
+      floor.replaceChildren();
+      model.zones.forEach((zoneModel) => {
+        const zone = element("section", null, "seat-preview-zone");
+        zone.append(element("strong", zoneModel.name, "seat-preview-zone-name"));
+        const grid = element("div", null, "seat-preview-grid");
+        grid.style.setProperty("--seat-columns", zoneModel.columns);
+        zoneModel.seats.forEach((seat) => {
+          const button = element("button", seat.label, "seat-preview-button");
+          button.type = "button";
+          button.setAttribute("aria-label", `${seat.label} · ${
+            seat.state === "available" ? "可选择" :
+              seat.state === "selected" ? "暂选中" : "已被选择"
+          }`);
+          if (seat.state === "selected") button.classList.add("is-selected");
+          if (seat.state === "unavailable") {
+            button.classList.add("is-unavailable");
+            button.disabled = true;
+          } else {
+            button.addEventListener("click", () => {
+              state.previewSelectedSeatId =
+                state.previewSelectedSeatId === seat.id ? "" : seat.id;
+              renderSeatPreview_();
+            });
+          }
+          grid.append(button);
+        });
+        zone.append(grid);
+        floor.append(zone);
+      });
+    }
+
     function bindEditedFeedback_(form, message) {
       ["input", "change"].forEach((eventName) => {
         form.addEventListener(eventName, () => {
@@ -702,6 +814,7 @@
       document.querySelector("#event-form"),
       "内容已修改，请按“保存活动”确认。"
     );
+    document.querySelector("#event-form").addEventListener("input", renderSeatPreview_);
     document.querySelectorAll("#event-form [data-action]").forEach((button) => {
       button.addEventListener("click", () => saveEvent(button.dataset.action, button));
     });
@@ -836,6 +949,32 @@
         (runner) => runner.saveAdminSeatPlan(payload),
         () => loadDashboard()
       );
+    });
+    ["input", "change"].forEach((eventName) => {
+      document.querySelector("#seat-form").addEventListener(eventName, () => {
+        state.previewSelectedSeatId = "";
+        renderSeatPreview_();
+      });
+    });
+
+    document.querySelector("#expand-seat-preview").addEventListener("click", (event) => {
+      const preview = document.querySelector("#seat-preview");
+      const expanded = !preview.classList.contains("is-expanded");
+      preview.classList.toggle("is-expanded", expanded);
+      document.body.classList.toggle("has-seat-preview-modal", expanded);
+      event.currentTarget.setAttribute("aria-expanded", String(expanded));
+      event.currentTarget.textContent = expanded ? "关闭放大预览" : "放大预览";
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      const preview = document.querySelector("#seat-preview");
+      if (!preview.classList.contains("is-expanded")) return;
+      preview.classList.remove("is-expanded");
+      document.body.classList.remove("has-seat-preview-modal");
+      const button = document.querySelector("#expand-seat-preview");
+      button.setAttribute("aria-expanded", "false");
+      button.textContent = "放大预览";
+      button.focus();
     });
 
     function saveSeatAction(action, seatId, button) {

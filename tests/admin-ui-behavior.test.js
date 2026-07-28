@@ -14,7 +14,19 @@ class FakeElement {
     this.elements = {};
     this.hidden = false;
     this.listeners = new Map();
-    this.style = {};
+    this.style = { setProperty: (name, value) => { this.style[name] = String(value); } };
+    const classes = new Set();
+    this.classList = {
+      add: (...names) => names.forEach((name) => classes.add(name)),
+      remove: (...names) => names.forEach((name) => classes.delete(name)),
+      contains: (name) => classes.has(name),
+      toggle: (name, force) => {
+        const enabled = force === undefined ? !classes.has(name) : Boolean(force);
+        if (enabled) classes.add(name);
+        else classes.delete(name);
+        return enabled;
+      }
+    };
     this.textContent = "";
     this.value = "";
     this.checked = false;
@@ -157,7 +169,7 @@ async function createHarness() {
   const recordSearch = add("#record-search-form", form(["search"]));
   const recordAction = add("#record-action-form", form(["registrationId", "seatId"]));
   const sheetForm = add("#sheet-form", form(["spreadsheetId"]));
-  for (const selector of ["#admin-status", "#connection-status", "#event-list", "#session-list", "#seat-list", "#question-list", "#record-list", "#attendance-list", "#selected-activity", "#selected-activity-title", "#selected-activity-meta", "#selected-activity-sheet", "#finalize-draft", "#delete-draft", "#delete-empty-event", "#min-session-field", "#max-session-field", "#seat-zone-field", "#activity-empty-state", "#clear-search", "#test-sheet", "#switch-sheet", "#new-activity", "#new-session", "#session-editor-mode", "#save-event", "#save-session", "#save-seat-plan", "#save-question"]) add(selector);
+  for (const selector of ["#admin-status", "#connection-status", "#event-list", "#session-list", "#seat-list", "#question-list", "#record-list", "#attendance-list", "#selected-activity", "#selected-activity-title", "#selected-activity-meta", "#selected-activity-sheet", "#finalize-draft", "#delete-draft", "#delete-empty-event", "#min-session-field", "#max-session-field", "#seat-zone-field", "#activity-empty-state", "#clear-search", "#test-sheet", "#switch-sheet", "#new-activity", "#new-session", "#session-editor-mode", "#save-event", "#save-session", "#save-seat-plan", "#save-question", "#seat-preview", "#seat-preview-stage", "#seat-preview-floor", "#seat-preview-message", "#expand-seat-preview"]) add(selector);
   const selector = add("#activity-selector", new FakeElement("select"));
   const sections = ["#sessions", "#seats", "#questions", "#records", "#attendance"].map((id) => add(id));
   const navLinks = ["#events", "#sessions", "#seats", "#questions", "#records", "#attendance"].map((href) => {
@@ -176,6 +188,8 @@ async function createHarness() {
     return button;
   });
   const document = {
+    body: new FakeElement("body"),
+    addEventListener() {},
     createElement: (tag) => new FakeElement(tag),
     querySelector: (query) => elements.get(query) || null,
     querySelectorAll: (query) => {
@@ -474,6 +488,41 @@ test("session, seat, question, and record forms reject invalid fields with exact
   ui.recordActions[0].dispatch("click");
   assert.equal(ui.mutations.length, 0);
   assert.equal(ui.elements.get("#admin-status").textContent, "请填写要处理的报名 ID。");
+});
+
+test("seat preview updates from form fields, toggles locally, and never sends a mutation", async () => {
+  const ui = await createHarness();
+  ui.selector.value = "B";
+  ui.selector.dispatch("change");
+  const data = dashboard("B", "Activity B");
+  data.seats = [];
+  ui.requests.at(-1).success({ ok: true, data });
+
+  ui.eventForm.elements.seatMapLabel.value = "WHITE BOARD";
+  ui.seatForm.elements.mode.value = "self";
+  ui.seatForm.elements.zoneName.value = "A";
+  ui.seatForm.elements.rows.value = "2";
+  ui.seatForm.elements.seatsPerRow.value = "3";
+  ui.seatForm.dispatch("input");
+
+  const floor = ui.elements.get("#seat-preview-floor");
+  assert.equal(ui.elements.get("#seat-preview-stage").textContent, "WHITE BOARD");
+  assert.equal(floor.children.length, 1);
+  const grid = floor.children[0].children[1];
+  assert.equal(grid.children.length, 6);
+  assert.equal(grid.children[0].textContent, "A-1-1");
+
+  grid.children[0].dispatch("click");
+  const selectedGrid = floor.children[0].children[1];
+  assert.equal(selectedGrid.children[0].classList.contains("is-selected"), true);
+  assert.equal(ui.mutations.length, 0);
+
+  ui.seatForm.elements.mode.value = "none";
+  ui.seatForm.dispatch("change");
+  assert.equal(
+    ui.elements.get("#seat-preview-message").textContent,
+    "参与者会看到自由入座，不需要选择座位。"
+  );
 });
 
 test("a successful session save clears editing state and reports the current session total", async () => {

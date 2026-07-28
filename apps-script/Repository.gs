@@ -237,15 +237,24 @@ function requireLegacyMigrationPreflight_(registry) {
 
 function collectLegacyBusinessEventIds_(registry) {
   var eventIds = {};
+  var participantRows = null;
+  var registrationParticipantIds = {};
   LEGACY_BUSINESS_SHEET_NAMES_.forEach(function(sheetName) {
     var sheet = registry && registry.getSheetByName(sheetName);
     if (!sheet || sheet.getLastRow() <= 1) return;
     var columnCount = typeof sheet.getLastColumn === 'function'
       ? sheet.getLastColumn() : SHEET_DEFINITIONS[sheetName].length;
     var headers = sheet.getRange(1, 1, 1, columnCount).getValues()[0];
+    var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, columnCount).getValues();
+    if (sheetName === '参加者') {
+      participantRows = { headers: headers, rows: rows };
+      return;
+    }
     var eventIdColumn = headers.indexOf('eventId');
     if (eventIdColumn === -1) legacyMigrationRequired_();
-    var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, columnCount).getValues();
+    var participantIdColumn = sheetName === '报名项目'
+      ? headers.indexOf('participantId') : -1;
+    if (sheetName === '报名项目' && participantIdColumn === -1) legacyMigrationRequired_();
     rows.forEach(function(row) {
       var hasData = row.some(function(value) {
         return value !== null && value !== undefined && String(value).trim() !== '';
@@ -254,8 +263,28 @@ function collectLegacyBusinessEventIds_(registry) {
       var eventId = normalizeRoutingValue_(row[eventIdColumn]);
       if (!eventId) legacyMigrationRequired_();
       eventIds[eventId] = true;
+      if (participantIdColumn !== -1) {
+        var participantId = normalizeRoutingValue_(row[participantIdColumn]);
+        if (participantId) registrationParticipantIds[participantId] = true;
+      }
     });
   });
+  if (participantRows) {
+    var participantIdColumn = participantRows.headers.indexOf('participantId');
+    if (participantIdColumn === -1) legacyMigrationRequired_();
+    var participantIds = {};
+    participantRows.rows.forEach(function(row) {
+      var hasData = row.some(function(value) {
+        return value !== null && value !== undefined && String(value).trim() !== '';
+      });
+      if (!hasData) return;
+      var participantId = normalizeRoutingValue_(row[participantIdColumn]);
+      if (!participantId || participantIds[participantId] || !registrationParticipantIds[participantId]) {
+        legacyMigrationRequired_();
+      }
+      participantIds[participantId] = true;
+    });
+  }
   return Object.keys(eventIds);
 }
 

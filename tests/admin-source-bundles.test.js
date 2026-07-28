@@ -262,7 +262,7 @@ test("the paste-ready staff bundle contains every HTML template referenced by bu
       .replace(/\r\n/g, "\n")
       .trimEnd();
     assert.equal(
-      sections.get(templatePath),
+      sections.get(templatePath).replace(/\r\n/g, "\n"),
       trackedTemplate,
       `${templateName}.html in the paste-ready bundle is stale`
     );

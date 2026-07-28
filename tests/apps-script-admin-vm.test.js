@@ -827,16 +827,147 @@ test("setupSystem requires every legacy event to have one reachable validated ca
     "参加者": new FakeSheet("参加者", [{
       participantId: "legacy-person-a", name: "Legacy Person", phone: "", email: ""
     }]),
-    "报名项目": new FakeSheet("报名项目", [{
-      registrationId: "legacy-registration-a", eventId: "legacy-a", participantId: "legacy-person-a",
-      ticketNumber: "", status: "active", sessionIds: "[]", seatChoices: "[]", answers: "{}"
-    }])
+    "报名项目": new FakeSheet("报名项目", [
+      {
+        registrationId: "legacy-registration-a", eventId: "legacy-a", participantId: "legacy-person-a",
+        ticketNumber: "", status: "active", sessionIds: '["legacy-session-1"]', seatChoices: "[]", answers: "{}"
+      },
+      {
+        registrationId: "legacy-registration-a", eventId: "legacy-a", participantId: "legacy-person-a",
+        ticketNumber: "", status: "active", sessionIds: '["legacy-session-2"]', seatChoices: "[]", answers: "{}"
+      }
+    ])
   };
   const fullyMappedContext = await setupContext(fullyMappedSheets, [], {
     "migrated-a": migratedActivitySpreadsheet("migrated-a", "legacy-a"),
     "migrated-b": migratedActivitySpreadsheet("migrated-b", "legacy-b")
   });
   assert.equal(fullyMappedContext.setupSystem(), "registry-id");
+
+  const blankRegistrationParticipantIdSheets = {
+    "活动": new FakeSheet("活动", [{ eventId: "legacy-a", title: "Legacy A" }]),
+    "活动目录": new FakeSheet("活动目录", [catalogRow("legacy-a", "migrated-a")]),
+    "报名项目": new FakeSheet("报名项目", [{
+      registrationId: "legacy-registration-a", eventId: "legacy-a", participantId: "",
+      ticketNumber: "", status: "active", sessionIds: "[]", seatChoices: "[]", answers: "{}"
+    }])
+  };
+  const blankRegistrationParticipantIdInserts = [];
+  const blankRegistrationParticipantIdContext = await setupContext(
+    blankRegistrationParticipantIdSheets,
+    blankRegistrationParticipantIdInserts,
+    { "migrated-a": migratedActivitySpreadsheet("migrated-a", "legacy-a") }
+  );
+  assertPreflightRejected(
+    blankRegistrationParticipantIdContext,
+    blankRegistrationParticipantIdSheets,
+    blankRegistrationParticipantIdInserts
+  );
+
+  const blankRegistrationIdSheets = {
+    "活动": new FakeSheet("活动", [{ eventId: "legacy-a", title: "Legacy A" }]),
+    "活动目录": new FakeSheet("活动目录", [catalogRow("legacy-a", "migrated-a")]),
+    "报名项目": new FakeSheet("报名项目", [{
+      registrationId: "", eventId: "legacy-a", participantId: "missing-person",
+      ticketNumber: "", status: "active", sessionIds: "[]", seatChoices: "[]", answers: "{}"
+    }])
+  };
+  const blankRegistrationIdInserts = [];
+  const blankRegistrationIdContext = await setupContext(
+    blankRegistrationIdSheets,
+    blankRegistrationIdInserts,
+    { "migrated-a": migratedActivitySpreadsheet("migrated-a", "legacy-a") }
+  );
+  assertPreflightRejected(blankRegistrationIdContext, blankRegistrationIdSheets, blankRegistrationIdInserts);
+
+  const missingRegistrationParticipantSheets = {
+    "活动": new FakeSheet("活动", [{ eventId: "legacy-a", title: "Legacy A" }]),
+    "活动目录": new FakeSheet("活动目录", [catalogRow("legacy-a", "migrated-a")]),
+    "报名项目": new FakeSheet("报名项目", [{
+      registrationId: "legacy-registration-a", eventId: "legacy-a", participantId: "missing-person",
+      ticketNumber: "", status: "active", sessionIds: "[]", seatChoices: "[]", answers: "{}"
+    }])
+  };
+  const missingRegistrationParticipantInserts = [];
+  const missingRegistrationParticipantContext = await setupContext(
+    missingRegistrationParticipantSheets,
+    missingRegistrationParticipantInserts,
+    { "migrated-a": migratedActivitySpreadsheet("migrated-a", "legacy-a") }
+  );
+  assertPreflightRejected(
+    missingRegistrationParticipantContext,
+    missingRegistrationParticipantSheets,
+    missingRegistrationParticipantInserts
+  );
+
+  const reusedRegistrationIdSheets = {
+    "活动": new FakeSheet("活动", [
+      { eventId: "legacy-a", title: "Legacy A" },
+      { eventId: "legacy-b", title: "Legacy B" }
+    ]),
+    "活动目录": new FakeSheet("活动目录", [
+      catalogRow("legacy-a", "migrated-a"),
+      catalogRow("legacy-b", "migrated-b")
+    ]),
+    "参加者": new FakeSheet("参加者", [
+      { participantId: "person-a", name: "A", phone: "", email: "" },
+      { participantId: "person-b", name: "B", phone: "", email: "" }
+    ]),
+    "报名项目": new FakeSheet("报名项目", [
+      {
+        registrationId: "reused-registration", eventId: "legacy-a", participantId: "person-a",
+        ticketNumber: "", status: "active", sessionIds: "[]", seatChoices: "[]", answers: "{}"
+      },
+      {
+        registrationId: "reused-registration", eventId: "legacy-b", participantId: "person-b",
+        ticketNumber: "", status: "active", sessionIds: "[]", seatChoices: "[]", answers: "{}"
+      }
+    ])
+  };
+  const reusedRegistrationIdInserts = [];
+  const reusedRegistrationIdContext = await setupContext(
+    reusedRegistrationIdSheets,
+    reusedRegistrationIdInserts,
+    {
+      "migrated-a": migratedActivitySpreadsheet("migrated-a", "legacy-a"),
+      "migrated-b": migratedActivitySpreadsheet("migrated-b", "legacy-b")
+    }
+  );
+  assertPreflightRejected(reusedRegistrationIdContext, reusedRegistrationIdSheets, reusedRegistrationIdInserts);
+
+  const reusedParticipantIdSheets = {
+    "活动": new FakeSheet("活动", [
+      { eventId: "legacy-a", title: "Legacy A" },
+      { eventId: "legacy-b", title: "Legacy B" }
+    ]),
+    "活动目录": new FakeSheet("活动目录", [
+      catalogRow("legacy-a", "migrated-a"),
+      catalogRow("legacy-b", "migrated-b")
+    ]),
+    "参加者": new FakeSheet("参加者", [{
+      participantId: "reused-person", name: "Reused", phone: "", email: ""
+    }]),
+    "报名项目": new FakeSheet("报名项目", [
+      {
+        registrationId: "legacy-registration-a", eventId: "legacy-a", participantId: "reused-person",
+        ticketNumber: "", status: "active", sessionIds: "[]", seatChoices: "[]", answers: "{}"
+      },
+      {
+        registrationId: "legacy-registration-b", eventId: "legacy-b", participantId: "reused-person",
+        ticketNumber: "", status: "active", sessionIds: "[]", seatChoices: "[]", answers: "{}"
+      }
+    ])
+  };
+  const reusedParticipantIdInserts = [];
+  const reusedParticipantIdContext = await setupContext(
+    reusedParticipantIdSheets,
+    reusedParticipantIdInserts,
+    {
+      "migrated-a": migratedActivitySpreadsheet("migrated-a", "legacy-a"),
+      "migrated-b": migratedActivitySpreadsheet("migrated-b", "legacy-b")
+    }
+  );
+  assertPreflightRejected(reusedParticipantIdContext, reusedParticipantIdSheets, reusedParticipantIdInserts);
 
   const orphanParticipantSheets = {
     "参加者": new FakeSheet("参加者", [{

@@ -27,10 +27,12 @@ Before initialization or activation, `setupSystem()` and a candidate registry
 check every nonempty legacy business row with an `eventId`, and every distinct
 ID must map exactly once through the normal catalog validator to a
 non-registry activity Sheet with the exact event schema and matching activity
-row. `参加者` rows are proven through unique nonblank `participantId` values
-referenced by legacy `报名项目` rows; any other populated legacy tab without an
-explicit `eventId` relationship fails closed. Missing, partial, duplicate,
-self-mapped, unreachable, or mismatched mappings fail with
+row. `参加者` rows and legacy `报名项目` rows must have exactly matching,
+unique `participantId` relationships; each participant and registration
+resolves to one event, while repeated rows of the same triple remain valid for
+multiple sessions. Any other populated legacy tab without an explicit
+`eventId` relationship fails closed. Missing, partial, duplicate, self-mapped,
+unreachable, or mismatched mappings fail with
 `LEGACY_MIGRATION_REQUIRED` before adding or changing a catalog or ticket
 index and before moving or deleting any data. Back up the legacy Sheet and
 complete a separately reviewed migration before removing or changing any old

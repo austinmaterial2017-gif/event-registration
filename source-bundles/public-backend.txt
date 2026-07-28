@@ -256,6 +256,8 @@ function collectLegacyBusinessEventIds_(registry) {
   var eventIds = {};
   var participantRows = null;
   var registrationParticipantIds = {};
+  var registrationRoutes = {};
+  var participantRoutes = {};
   LEGACY_BUSINESS_SHEET_NAMES_.forEach(function(sheetName) {
     var sheet = registry && registry.getSheetByName(sheetName);
     if (!sheet || sheet.getLastRow() <= 1) return;
@@ -271,7 +273,10 @@ function collectLegacyBusinessEventIds_(registry) {
     if (eventIdColumn === -1) legacyMigrationRequired_();
     var participantIdColumn = sheetName === '报名项目'
       ? headers.indexOf('participantId') : -1;
-    if (sheetName === '报名项目' && participantIdColumn === -1) legacyMigrationRequired_();
+    var registrationIdColumn = sheetName === '报名项目'
+      ? headers.indexOf('registrationId') : -1;
+    if (sheetName === '报名项目' &&
+        (participantIdColumn === -1 || registrationIdColumn === -1)) legacyMigrationRequired_();
     rows.forEach(function(row) {
       var hasData = row.some(function(value) {
         return value !== null && value !== undefined && String(value).trim() !== '';
@@ -282,7 +287,21 @@ function collectLegacyBusinessEventIds_(registry) {
       eventIds[eventId] = true;
       if (participantIdColumn !== -1) {
         var participantId = normalizeRoutingValue_(row[participantIdColumn]);
-        if (participantId) registrationParticipantIds[participantId] = true;
+        var registrationId = normalizeRoutingValue_(row[registrationIdColumn]);
+        if (!participantId || !registrationId) legacyMigrationRequired_();
+        var registrationRoute = registrationRoutes[registrationId];
+        if (registrationRoute &&
+            (registrationRoute.eventId !== eventId || registrationRoute.participantId !== participantId)) {
+          legacyMigrationRequired_();
+        }
+        var participantRoute = participantRoutes[participantId];
+        if (participantRoute &&
+            (participantRoute.eventId !== eventId || participantRoute.registrationId !== registrationId)) {
+          legacyMigrationRequired_();
+        }
+        registrationRoutes[registrationId] = { eventId: eventId, participantId: participantId };
+        participantRoutes[participantId] = { eventId: eventId, registrationId: registrationId };
+        registrationParticipantIds[participantId] = true;
       }
     });
   });
@@ -301,6 +320,11 @@ function collectLegacyBusinessEventIds_(registry) {
       }
       participantIds[participantId] = true;
     });
+    Object.keys(registrationParticipantIds).forEach(function(participantId) {
+      if (!participantIds[participantId]) legacyMigrationRequired_();
+    });
+  } else if (Object.keys(registrationParticipantIds).length) {
+    legacyMigrationRequired_();
   }
   return Object.keys(eventIds);
 }

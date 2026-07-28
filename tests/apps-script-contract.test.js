@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 const root = new URL("../apps-script/", import.meta.url);
 const sheetDefinitions = {
   "系统设置": ["key", "value", "updatedAt"],
+  "活动草稿": ["draftId", "payload", "createdBy", "createdAt", "updatedAt", "finalizedEventId"],
   "活动目录": ["eventId", "spreadsheetId", "sheetName", "title", "description", "status", "opensAt", "closesAt", "location", "selectionMode", "minChoices", "maxChoices", "seatMode", "seatZones", "createdAt", "updatedAt"],
   "票券索引": ["ticketNumber", "tokenDigest", "eventId", "registrationId", "status", "createdAt", "updatedAt"],
   "活动": ["eventId", "title", "description", "status", "opensAt", "closesAt", "location", "selectionMode", "minChoices", "maxChoices", "seatMode", "seatZones", "createdAt", "updatedAt"],

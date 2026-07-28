@@ -3,6 +3,7 @@ var ADMIN_SETTINGS = 'ADMIN_SETTINGS';
 
 var STAFF_SHEET_DEFINITIONS = {
   '系统设置': ['key', 'value', 'updatedAt'],
+  '活动草稿': ['draftId', 'payload', 'createdBy', 'createdAt', 'updatedAt', 'finalizedEventId'],
   '活动目录': ['eventId', 'spreadsheetId', 'sheetName', 'title', 'description', 'status', 'opensAt', 'closesAt', 'location', 'selectionMode', 'minChoices', 'maxChoices', 'seatMode', 'seatZones', 'createdAt', 'updatedAt'],
   '票券索引': ['ticketNumber', 'tokenDigest', 'eventId', 'registrationId', 'status', 'createdAt', 'updatedAt'],
   '活动': ['eventId', 'title', 'description', 'status', 'opensAt', 'closesAt', 'location', 'selectionMode', 'minChoices', 'maxChoices', 'seatMode', 'seatZones', 'createdAt', 'updatedAt'],
@@ -15,7 +16,7 @@ var STAFF_SHEET_DEFINITIONS = {
   '操作记录': ['auditId', 'action', 'entityType', 'entityId', 'actor', 'details', 'createdAt']
 };
 
-var REGISTRY_SHEET_NAMES_ = ['系统设置', '活动目录', '票券索引', '操作记录'];
+var REGISTRY_SHEET_NAMES_ = ['系统设置', '活动草稿', '活动目录', '票券索引', '操作记录'];
 var EVENT_SHEET_NAMES_ = [
   '活动', '场次', '座位', '报名问题', '参加者',
   '报名项目', '签到记录', '操作记录'
@@ -39,6 +40,11 @@ function createActivitySpreadsheet_(eventId, title, actor) {
   var normalizedActor = typeof actor === 'string' ? actor.trim().toLowerCase() : '';
   if (!normalizedActor) adminError_('ADMIN_ACTION_DENIED');
   var spreadsheet = SpreadsheetApp.create(safeActivitySheetName_(title, eventId));
+  if (typeof ADMIN_TRANSACTION_ !== 'undefined' && ADMIN_TRANSACTION_) {
+    ADMIN_TRANSACTION_.createdSpreadsheetIds =
+      ADMIN_TRANSACTION_.createdSpreadsheetIds || [];
+    ADMIN_TRANSACTION_.createdSpreadsheetIds.push(spreadsheet.getId());
+  }
   initializeEventSpreadsheet_(spreadsheet);
   spreadsheet.addEditor(normalizedActor);
   return spreadsheet;

@@ -11,6 +11,7 @@ const sharedSecret = "production-integration-shared-secret-32";
 
 const headers = {
   "系统设置": ["key", "value", "updatedAt"],
+  "活动草稿": ["draftId", "payload", "createdBy", "createdAt", "updatedAt", "finalizedEventId"],
   "活动目录": ["eventId", "spreadsheetId", "sheetName", "title", "description", "status", "opensAt", "closesAt", "location", "selectionMode", "minChoices", "maxChoices", "seatMode", "seatZones", "createdAt", "updatedAt"],
   "票券索引": ["ticketNumber", "tokenDigest", "eventId", "registrationId", "status", "createdAt", "updatedAt"],
   "活动": ["eventId", "title", "description", "status", "opensAt", "closesAt", "location", "selectionMode", "minChoices", "maxChoices", "seatMode", "seatZones", "createdAt", "updatedAt"],
@@ -232,6 +233,7 @@ async function createSystem({ onWrite, failActivityCreationStage, extraSheetData
         updatedAt: "2026-08-16T08:00:00.000Z"
       }
     ],
+    "活动草稿": [],
     "活动目录": [{
       eventId: "event-1",
       spreadsheetId: "activity-sheet",
@@ -305,6 +307,7 @@ async function createSystem({ onWrite, failActivityCreationStage, extraSheetData
   );
   const createdSpreadsheets = [];
   const createdById = {};
+  const trashedFiles = [];
   let createdCount = 0;
   const publicContext = vm.createContext({
     console,
@@ -382,6 +385,13 @@ async function createSystem({ onWrite, failActivityCreationStage, extraSheetData
         createdSpreadsheets.push(spreadsheet);
         return spreadsheet;
       }
+    },
+    DriveApp: {
+      getFileById: (spreadsheetId) => ({
+        setTrashed: (trashed) => {
+          if (trashed) trashedFiles.push(spreadsheetId);
+        }
+      })
     },
     LockService: {
       getScriptLock: () => ({
@@ -482,6 +492,7 @@ async function createSystem({ onWrite, failActivityCreationStage, extraSheetData
     registrySheets,
     extraSpreadsheets,
     createdSpreadsheets,
+    trashedFiles,
     lockEvents,
     waiting,
     setArrivalHook: (hook) => { arrivalHook = hook; arrivalTriggered = false; },
@@ -583,7 +594,10 @@ async function runAdminUiThroughRealService(system) {
     "#admin-status", "#connection-status", "#event-list", "#session-list", "#seat-list",
     "#question-list", "#record-list", "#attendance-list", "#selected-activity",
     "#selected-activity-title", "#selected-activity-meta", "#selected-activity-sheet",
-    "#activity-empty-state", "#clear-search", "#test-sheet", "#switch-sheet", "#new-activity"
+    "#finalize-draft", "#delete-draft", "#delete-empty-event",
+    "#min-session-field", "#max-session-field", "#seat-zone-field",
+    "#activity-empty-state", "#clear-search", "#test-sheet", "#switch-sheet", "#new-activity",
+    "#save-event", "#save-session", "#save-seat-plan", "#save-question"
   ]) add(selector);
   const selector = add("#activity-selector", new UiElement("select"));
   const sections = ["#sessions", "#seats", "#questions", "#records", "#attendance"]
@@ -609,6 +623,7 @@ async function runAdminUiThroughRealService(system) {
     querySelector: (query) => elements.get(query) || null,
     querySelectorAll: (query) => {
       if (query === ".selected-required") return sections;
+      if (query === ".generated-required") return sections.slice(-2);
       if (query === 'nav a[href^="#"]') return navLinks;
       if (query === "#event-form [data-action]") return lifecycle;
       if (query === "#record-action-form [data-action]") return recordActions;
@@ -626,6 +641,10 @@ async function runAdminUiThroughRealService(system) {
       this.success(result);
     }
     getAdminDashboard(payload) { this.invoke("getAdminDashboard", payload); }
+    saveAdminDraft(payload) { this.invoke("saveAdminDraft", payload); }
+    finalizeAdminDraft(payload) { this.invoke("finalizeAdminDraft", payload); }
+    deleteAdminDraft(payload) { this.invoke("deleteAdminDraft", payload); }
+    deleteEmptyAdminEvent(payload) { this.invoke("deleteEmptyAdminEvent", payload); }
     saveAdminEvent(payload) { this.invoke("saveAdminEvent", payload); }
     saveAdminSeatPlan(payload) { this.invoke("saveAdminSeatPlan", payload); }
     adminRecordAction(payload) { this.invoke("adminRecordAction", payload); }
@@ -750,10 +769,12 @@ test("the real administrator UI forwards emitted payload objects through real ad
   Object.assign(ui.eventForm.elements.seatMode, { value: "none" });
   Object.assign(ui.eventForm.elements.seatHoldMinutes, { value: "5" });
   ui.eventForm.dispatch("submit");
-  const created = ui.forwarded.find((call) => call.method === "saveAdminEvent");
-  assert.ok(created);
-  assert.equal(Object.hasOwn(created.payload, "eventId"), false);
-  assert.equal(created.result.ok, true, JSON.stringify(created.result));
+  const savedDraft = ui.forwarded.find((call) => call.method === "saveAdminDraft");
+  assert.ok(savedDraft);
+  assert.equal(Object.hasOwn(savedDraft.payload, "eventId"), false);
+  assert.equal(savedDraft.result.ok, true, JSON.stringify(savedDraft.result));
+  assert.equal(system.createdSpreadsheets.length, 0);
+  assert.equal(rows(system.registrySheets["活动草稿"]).length, 1);
 
   ui.selector.value = "event-1";
   ui.selector.dispatch("change");
@@ -867,6 +888,7 @@ test("assembled administrator cancellation keeps the ticket index and public tic
 
 test("assembled advanced switching rejects an unmapped legacy candidate before activation", async () => {
   const legacyCandidate = fixture();
+  legacyCandidate["活动草稿"] = [];
   legacyCandidate["活动目录"] = [];
   legacyCandidate["票券索引"] = [];
   const system = await createSystem({
@@ -906,6 +928,11 @@ test("assembled creation failures leave the existing catalog unchanged", async (
       });
 
       assert.equal(result.ok, false, JSON.stringify(result));
+      assert.deepEqual(
+        system.trashedFiles,
+        stage === "create" ? [] : ["created-activity-1"],
+        `${stage} should clean up every newly created activity Sheet`
+      );
       assert.equal(JSON.stringify(rows(system.registrySheets["活动目录"])), before);
     });
   }

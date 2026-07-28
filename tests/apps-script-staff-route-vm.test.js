@@ -6,8 +6,12 @@ import { readdir, readFile } from "node:fs/promises";
 const staffScriptRoot = new URL("../staff-apps-script/", import.meta.url);
 const ADMIN_RPC_NAMES = [
   "adminRecordAction",
+  "deleteAdminDraft",
+  "deleteEmptyAdminEvent",
+  "finalizeAdminDraft",
   "getAdminDashboard",
   "getAdminSourceBundles",
+  "saveAdminDraft",
   "saveAdminEvent",
   "saveAdminQuestion",
   "saveAdminSeatPlan",
@@ -301,6 +305,10 @@ test("authorized staff and administrator RPCs delegate state work to the signed 
   assert.equal(context.getStaffTicketForCheckIn({ token: "ticket-token" }).ok, true);
   assert.equal(context.checkIn({ token: "ticket-token", sessionId: "session-1" }).ok, true);
   assert.equal(context.getAdminDashboard({ search: "Alice" }).ok, true);
+  assert.equal(context.saveAdminDraft({ event: { title: "Draft" } }).ok, true);
+  assert.equal(context.finalizeAdminDraft({ draftId: "draft-1", confirm: true }).ok, true);
+  assert.equal(context.deleteAdminDraft({ draftId: "draft-1", confirm: true }).ok, true);
+  assert.equal(context.deleteEmptyAdminEvent({ eventId: "event-1", confirm: true }).ok, true);
   assert.equal(context.saveAdminEvent({ eventId: "event-1", status: "closed" }).ok, true);
   assert.equal(context.saveAdminSession({ eventId: "event-1", sessionId: "session-1" }).ok, true);
   assert.equal(context.saveAdminSeatPlan({ eventId: "event-1", action: "generate" }).ok, true);
@@ -319,6 +327,10 @@ test("authorized staff and administrator RPCs delegate state work to the signed 
       "staff.getTicket",
       "staff.checkIn",
       "admin.getDashboard",
+      "admin.saveDraft",
+      "admin.finalizeDraft",
+      "admin.deleteDraft",
+      "admin.deleteEmptyEvent",
       "admin.saveEvent",
       "admin.saveSession",
       "admin.saveSeatPlan",

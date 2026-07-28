@@ -10,11 +10,16 @@ The registry Sheet remains permanent. Both projects keep
 `ACTIVE_SPREADSHEET_ID` pointed at that one private registry, which stores the
 shared settings, activity catalog, ticket index, and registry audit.
 
-Every new activity automatically receives its own private Google Sheet. The
-public backend creates and initializes it, grants the authenticated creating
-administrator editor access, and publishes the catalog entry only after
-preparation succeeds. The participant site never receives its Sheet ID or
-protected edit URL.
+Every new activity automatically receives its own private Google Sheet.
+However, it is created only after the administrator's final confirmation.
+Every new activity first persists as a private administrator draft in the
+registry. Ordinary draft saves do not create a Google Sheet. After the
+administrator finishes the activity, sessions, seats, and questions and
+explicitly confirms generation, the public backend creates and initializes
+one private Google Sheet, grants the authenticated creating administrator
+editor access, and publishes the catalog entry only after preparation
+succeeds. Generating the Sheet does not open registration. The participant
+site never receives its Sheet ID or protected edit URL.
 
 The first run after this upgrade requests one-time Google Drive authorization.
 Approve the new Drive scope in the public project when running `setupSystem()`
@@ -197,9 +202,11 @@ The route and every administrator action independently read the active Google
 Session and require membership in `ADMIN_EMAIL_ALLOWLIST`. Blank and
 unauthorized administrator sessions receive the same fixed denial page.
 
-Creating an activity from the ordinary administrator workflow requires only
-its activity details. It automatically creates its private Sheet and returns a
-protected edit link to the authorized administrator.
+Creating an activity from the ordinary administrator workflow first saves a
+private draft. The same administrator page stores sessions, seats, and
+questions in that draft. The final confirmation creates its private Sheet and
+returns a protected edit link to the authorized administrator. No per-activity
+Apps Script setup, deployment, or Sheet ID entry is required.
 
 The advanced-maintenance data-table panel can still test a submitted whole
 system target Sheet before a legacy switch. This is not the per-activity

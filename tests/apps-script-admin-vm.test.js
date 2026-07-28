@@ -10,6 +10,7 @@ const switchProbeSecret = "test-switch-probe-secret-with-32-bytes";
 
 const headers = {
   "系统设置": ["key", "value", "updatedAt"],
+  "活动草稿": ["draftId", "payload", "createdBy", "createdAt", "updatedAt", "finalizedEventId"],
   "活动目录": ["eventId", "spreadsheetId", "sheetName", "title", "description", "status", "opensAt", "closesAt", "location", "selectionMode", "minChoices", "maxChoices", "seatMode", "seatZones", "createdAt", "updatedAt"],
   "票券索引": ["ticketNumber", "tokenDigest", "eventId", "registrationId", "status", "createdAt", "updatedAt"],
   "活动": ["eventId", "title", "description", "status", "opensAt", "closesAt", "location", "selectionMode", "minChoices", "maxChoices", "seatMode", "seatZones", "createdAt", "updatedAt"],
@@ -114,6 +115,7 @@ class FakeSheet {
 function baseRows() {
   return {
     "系统设置": [],
+    "活动草稿": [],
     "活动目录": [],
     "票券索引": [],
     "活动": [{
@@ -298,6 +300,7 @@ async function createHarness(options = {}) {
     };
   });
   const createdSpreadsheets = [];
+  const trashedFiles = [];
   let createCount = 0;
   const locks = [];
   let lockDepth = 0;
@@ -370,6 +373,13 @@ async function createHarness(options = {}) {
         return spreadsheet;
       }
     },
+    DriveApp: {
+      getFileById: (spreadsheetId) => ({
+        setTrashed: (trashed) => {
+          if (trashed) trashedFiles.push(spreadsheetId);
+        }
+      })
+    },
     LockService: {
       getScriptLock: () => ({
         waitLock: () => {
@@ -402,6 +412,10 @@ async function createHarness(options = {}) {
     .find((name) => context.STAFF_SHEET_DEFINITIONS[name].includes("checkInId"));
   const handlers = {
     "admin.getDashboard": (payload, actor) => context.getAdminDashboard_(payload, actor),
+    "admin.saveDraft": (payload, actor) => context.saveAdminDraft_(payload, actor),
+    "admin.finalizeDraft": (payload, actor) => context.finalizeAdminDraft_(payload, actor),
+    "admin.deleteDraft": (payload, actor) => context.deleteAdminDraft_(payload, actor),
+    "admin.deleteEmptyEvent": (payload, actor) => context.deleteEmptyAdminEvent_(payload, actor),
     "admin.saveEvent": (payload, actor) => context.saveAdminEvent_(payload, actor),
     "admin.saveSession": (payload, actor) => context.saveAdminSession_(payload, actor),
     "admin.saveSeatPlan": (payload, actor) => context.saveAdminSeatPlan_(payload, actor),
@@ -469,6 +483,7 @@ async function createHarness(options = {}) {
     sourceSheets,
     targetSheets,
     createdSpreadsheets,
+    trashedFiles,
     locks,
     setNow: (value) => { serverNow = value; }
   };
@@ -651,6 +666,7 @@ test("registry and event initializers keep their private schemas separate", asyn
 
   context.setupSystem();
   assert.deepEqual(Array.from(sheets["活动目录"].rows[0]), headers["活动目录"]);
+  assert.deepEqual(Array.from(sheets["活动草稿"].rows[0]), headers["活动草稿"]);
   assert.deepEqual(Array.from(sheets["票券索引"].rows[0]), headers["票券索引"]);
   assert.equal(sheets["活动"], undefined);
 
@@ -1247,6 +1263,102 @@ test("new activities create distinct initialized private Sheets and publish only
     first.data.sheetUrl,
     `https://docs.google.com/spreadsheets/d/${encodeURIComponent(catalog.at(-2).spreadsheetId)}/edit`
   );
+});
+
+test("activity drafts persist without a Sheet and finalization creates exactly one draft activity", async () => {
+  const harness = await createHarness({
+    sessionEmail: "admin@example.com",
+    seedAdminRouting: false
+  });
+  const saved = harness.context.saveAdminDraft({
+    event: {
+      title: "Drafted education forum",
+      status: "draft",
+      selectionMode: "none",
+      seatMode: "none"
+    },
+    sessions: [],
+    seatPlan: { mode: "none", zones: [] },
+    questions: []
+  });
+
+  assert.equal(saved.ok, true, JSON.stringify(saved));
+  assert.match(saved.data.draftId, /^generated-/);
+  assert.equal(harness.createdSpreadsheets.length, 0);
+  assert.equal(records(harness.sourceSheets["活动目录"]).length, 0);
+  assert.equal(records(harness.sourceSheets["活动草稿"]).length, 1);
+
+  const generated = harness.context.finalizeAdminDraft({
+    draftId: saved.data.draftId,
+    confirm: true
+  });
+  assert.equal(generated.ok, true, JSON.stringify(generated));
+  assert.equal(generated.data.status, "draft");
+  assert.equal(harness.createdSpreadsheets.length, 1);
+  assert.equal(records(harness.sourceSheets["活动目录"]).length, 1);
+  assert.equal(
+    records(harness.createdSpreadsheets[0].sheets["活动"])[0].status,
+    "draft"
+  );
+
+  const repeated = harness.context.finalizeAdminDraft({
+    draftId: saved.data.draftId,
+    confirm: true
+  });
+  assert.equal(repeated.ok, true, JSON.stringify(repeated));
+  assert.equal(repeated.data.alreadyFinalized, true);
+  assert.equal(harness.createdSpreadsheets.length, 1);
+});
+
+test("an ungenerated activity draft can be deleted without touching activity Sheets", async () => {
+  const harness = await createHarness({ seedAdminRouting: false });
+  const saved = harness.context.saveAdminDraft({
+    event: {
+      title: "Disposable draft",
+      status: "draft",
+      selectionMode: "none",
+      seatMode: "none"
+    },
+    sessions: [],
+    seatPlan: { mode: "none", zones: [] },
+    questions: []
+  });
+  assert.equal(saved.ok, true, JSON.stringify(saved));
+
+  const deleted = harness.context.deleteAdminDraft({
+    draftId: saved.data.draftId,
+    confirm: true
+  });
+  assert.equal(deleted.ok, true, JSON.stringify(deleted));
+  assert.equal(records(harness.sourceSheets["活动草稿"]).length, 0);
+  assert.equal(harness.createdSpreadsheets.length, 0);
+});
+
+test("an empty generated activity can be trashed but activity history blocks deletion", async () => {
+  const emptyHarness = await createHarness({ seedAdminRouting: false });
+  const created = emptyHarness.context.saveAdminEvent({
+    title: "Empty generated event",
+    status: "draft"
+  });
+  assert.equal(created.ok, true, JSON.stringify(created));
+  const eventId = created.data.eventId;
+  const deleted = emptyHarness.context.deleteEmptyAdminEvent({
+    eventId,
+    confirm: true
+  });
+  assert.equal(deleted.ok, true, JSON.stringify(deleted));
+  assert.equal(records(emptyHarness.sourceSheets["活动目录"]).length, 0);
+  assert.deepEqual(emptyHarness.trashedFiles, ["created-activity-1"]);
+
+  const historyHarness = await createHarness();
+  const denied = historyHarness.context.deleteEmptyAdminEvent({
+    eventId: "event-1",
+    confirm: true
+  });
+  assert.equal(denied.ok, false);
+  assert.equal(denied.code, "CONFLICT");
+  assert.equal(records(historyHarness.sourceSheets["活动目录"]).length, 1);
+  assert.deepEqual(historyHarness.trashedFiles, []);
 });
 
 test("failed activity preparation never publishes a catalog entry or changes existing entries", async (t) => {

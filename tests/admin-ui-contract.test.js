@@ -61,7 +61,9 @@ test("administrator client uses only explicit RPCs, safe DOM rendering, confirma
   const script = await readFile(scriptUrl, "utf8");
 
   for (const rpc of [
-    "getAdminDashboard", "saveAdminEvent", "saveAdminSession", "saveAdminSeatPlan",
+    "getAdminDashboard", "saveAdminDraft", "finalizeAdminDraft", "deleteAdminDraft",
+    "deleteEmptyAdminEvent",
+    "saveAdminEvent", "saveAdminSession", "saveAdminSeatPlan",
     "saveAdminQuestion", "adminRecordAction", "testAdminSheetConnection",
     "switchAdminSheet", "getAdminSourceBundles"
   ]) {

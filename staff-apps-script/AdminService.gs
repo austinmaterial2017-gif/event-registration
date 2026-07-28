@@ -16,6 +16,46 @@ function getAdminDashboard(payload) {
   });
 }
 
+/** Saves a private activity draft without creating an activity spreadsheet. */
+function saveAdminDraft(payload) {
+  return runAdminService_(function() {
+    var actor = requireAuthorizedAdminSession_();
+    var result = invokeInternalBackend_('admin.saveDraft', payload || {}, actor);
+    if (!result.ok) adminError_(result.code);
+    return result.data;
+  });
+}
+
+/** Creates one private activity spreadsheet from a confirmed draft. */
+function finalizeAdminDraft(payload) {
+  return runAdminService_(function() {
+    var actor = requireAuthorizedAdminSession_();
+    var result = invokeInternalBackend_('admin.finalizeDraft', payload || {}, actor);
+    if (!result.ok) adminError_(result.code);
+    return result.data;
+  });
+}
+
+/** Deletes one ungenerated private activity draft. */
+function deleteAdminDraft(payload) {
+  return runAdminService_(function() {
+    var actor = requireAuthorizedAdminSession_();
+    var result = invokeInternalBackend_('admin.deleteDraft', payload || {}, actor);
+    if (!result.ok) adminError_(result.code);
+    return result.data;
+  });
+}
+
+/** Deletes one generated activity only when it has no participant history. */
+function deleteEmptyAdminEvent(payload) {
+  return runAdminService_(function() {
+    var actor = requireAuthorizedAdminSession_();
+    var result = invokeInternalBackend_('admin.deleteEmptyEvent', payload || {}, actor);
+    if (!result.ok) adminError_(result.code);
+    return result.data;
+  });
+}
+
 /** Creates or updates one event without deleting its related history. */
 function saveAdminEvent(payload) {
   return runAdminService_(function() {
@@ -168,6 +208,342 @@ var ADMIN_QUESTION_TYPES_ = {
   text: true, textarea: true, number: true, tel: true, email: true,
   date: true, radio: true, checkbox: true, select: true, boolean: true
 };
+var ADMIN_DRAFT_MAX_JSON_LENGTH_ = 45000;
+
+function ensureActivityDraftRegistry_(registry) {
+  var sheet = registry.getSheetByName('活动草稿');
+  if (!sheet && typeof registry.insertSheet === 'function') {
+    sheet = registry.insertSheet('活动草稿');
+  }
+  if (!sheet) adminError_('SHEET_CONNECTION_FAILED');
+  var headers = STAFF_SHEET_DEFINITIONS['活动草稿'];
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    return;
+  }
+  var actual = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
+  if (!headers.every(function(header, index) { return actual[index] === header; })) {
+    adminError_('INTEGRITY_ERROR');
+  }
+}
+
+function validateActivityDraftDocument_(value) {
+  var request = requireAdminObject_(value);
+  var event = requireAdminObject_(request.event);
+  if (Object.prototype.hasOwnProperty.call(event, 'eventId') ||
+      Object.prototype.hasOwnProperty.call(event, 'spreadsheetId') ||
+      Object.prototype.hasOwnProperty.call(event, 'sheetUrl')) {
+    adminError_('INVALID_REQUEST');
+  }
+  var title = adminTextField_(event, 'title', '', '');
+  if (!title) adminError_('INVALID_REQUEST');
+  var selectionMode = String(adminField_(event, 'selectionMode', '', 'none')).toLowerCase();
+  var seatMode = String(adminField_(event, 'seatMode', '', 'none')).toLowerCase();
+  if (!ADMIN_SELECTION_MODES_[selectionMode] || !ADMIN_SEAT_MODES_[seatMode]) {
+    adminError_('INVALID_REQUEST');
+  }
+  var sessions = Array.isArray(request.sessions) ? request.sessions : [];
+  var questions = Array.isArray(request.questions) ? request.questions : [];
+  var seatPlan = request.seatPlan && typeof request.seatPlan === 'object' &&
+      !Array.isArray(request.seatPlan) ? request.seatPlan : { mode: seatMode, zones: [] };
+  sessions.forEach(requireAdminObject_);
+  questions.forEach(requireAdminObject_);
+  var zones = Array.isArray(seatPlan.zones) ? seatPlan.zones : [];
+  zones.forEach(requireAdminObject_);
+  var document = {
+    event: {
+      title: title,
+      description: adminTextField_(event, 'description', '', ''),
+      status: 'draft',
+      opensAt: adminDateField_(adminField_(event, 'opensAt', '', '')),
+      closesAt: adminDateField_(adminField_(event, 'closesAt', '', '')),
+      location: adminTextField_(event, 'location', '', ''),
+      selectionMode: selectionMode,
+      minChoices: adminNonNegativeInteger_(adminField_(event, 'minChoices', '', 0)),
+      maxChoices: adminNonNegativeInteger_(adminField_(event, 'maxChoices', '', 0)),
+      seatMode: seatMode,
+      seatZones: Array.isArray(event.seatZones) ? event.seatZones.slice() : [],
+      showOpeningCountdown: event.showOpeningCountdown === true,
+      showClosingCountdown: event.showClosingCountdown === true,
+      cancellationEnabled: event.cancellationEnabled === true,
+      seatExchangeEnabled: event.seatExchangeEnabled === true,
+      seatHoldsEnabled: event.seatHoldsEnabled === true,
+      seatHoldMinutes: adminPositiveInteger_(adminField_(event, 'seatHoldMinutes', '', 5))
+    },
+    sessions: sessions.map(function(session) {
+      var copy = {};
+      Object.keys(session).forEach(function(key) {
+        if (key !== 'eventId' && key !== 'spreadsheetId' && key !== 'sheetUrl') {
+          copy[key] = session[key];
+        }
+      });
+      return copy;
+    }),
+    seatPlan: {
+      mode: String(seatPlan.mode || seatMode).toLowerCase(),
+      sessionId: typeof seatPlan.sessionId === 'string' ? seatPlan.sessionId.trim() : '',
+      zones: zones.map(function(zone) {
+        return {
+          name: adminTextField_(zone, 'name', '', ''),
+          rows: adminNonNegativeInteger_(adminField_(zone, 'rows', '', 0)),
+          seatsPerRow: adminNonNegativeInteger_(
+            adminField_(zone, 'seatsPerRow', '', 0)
+          )
+        };
+      })
+    },
+    questions: questions.map(function(question) {
+      var copy = {};
+      Object.keys(question).forEach(function(key) {
+        if (key !== 'eventId' && key !== 'spreadsheetId' && key !== 'sheetUrl') {
+          copy[key] = question[key];
+        }
+      });
+      return copy;
+    })
+  };
+  if (document.event.maxChoices < document.event.minChoices ||
+      !ADMIN_SEAT_MODES_[document.seatPlan.mode]) {
+    adminError_('INVALID_REQUEST');
+  }
+  if (document.event.opensAt && document.event.closesAt &&
+      Date.parse(document.event.closesAt) <= Date.parse(document.event.opensAt)) {
+    adminError_('INVALID_REQUEST');
+  }
+  if (JSON.stringify(document).length > ADMIN_DRAFT_MAX_JSON_LENGTH_) {
+    adminError_('INVALID_REQUEST');
+  }
+  return document;
+}
+
+function readActivityDraft_(registry, draftId) {
+  var normalizedId = typeof draftId === 'string' ? draftId.trim() : '';
+  if (!normalizedId) adminError_('INVALID_REQUEST');
+  var matches = readAdminRows_(registry, '活动草稿').filter(function(row) {
+    return String(row.draftId || '').trim() === normalizedId;
+  });
+  if (matches.length > 1) adminError_('INTEGRITY_ERROR');
+  if (!matches.length) return null;
+  var parsed;
+  try {
+    parsed = JSON.parse(String(matches[0].payload || ''));
+  } catch (_ignored) {
+    adminError_('INTEGRITY_ERROR');
+  }
+  matches[0].document = validateActivityDraftDocument_(parsed);
+  return matches[0];
+}
+
+function draftNextStep_(document) {
+  if (document.event.selectionMode !== 'none' &&
+      document.event.selectionMode !== 'free' && !document.sessions.length) {
+    return 'sessions';
+  }
+  if (document.event.seatMode !== 'none' &&
+      (!document.seatPlan.zones || !document.seatPlan.zones.length)) {
+    return 'seats';
+  }
+  if (!document.questions.length) return 'questions';
+  return 'confirm';
+}
+
+function adminDraftProjection_(row) {
+  return {
+    draftId: String(row.draftId || ''),
+    draft: row.document,
+    nextStep: draftNextStep_(row.document),
+    createdAt: String(row.createdAt || ''),
+    updatedAt: String(row.updatedAt || ''),
+    finalizedEventId: String(row.finalizedEventId || '')
+  };
+}
+
+function saveAdminDraft_(payload, actor) {
+  var request = requireAdminObject_(payload);
+  var normalizedActor = typeof actor === 'string' ? actor.trim().toLowerCase() : '';
+  if (!normalizedActor) adminError_('ADMIN_ACTION_DENIED');
+  return withScriptLock_(function() {
+    var registry = getRootConfiguredSpreadsheet_();
+    ensureActivityDraftRegistry_(registry);
+    requireNoSwitchMaintenance_(registry);
+    var existing = request.draftId
+      ? readActivityDraft_(registry, request.draftId) : null;
+    if (request.draftId && !existing) adminError_('NOT_FOUND');
+    if (existing && existing.finalizedEventId) adminError_('CONFLICT');
+    var document = validateActivityDraftDocument_(request);
+    var now = new Date().toISOString();
+    var row = {
+      draftId: existing ? existing.draftId : Utilities.getUuid(),
+      payload: JSON.stringify(document),
+      createdBy: existing ? existing.createdBy : normalizedActor,
+      createdAt: existing ? existing.createdAt : now,
+      updatedAt: now,
+      finalizedEventId: existing ? existing.finalizedEventId : ''
+    };
+    writeAdminRow_(registry, '活动草稿', existing && existing.rowNumber, row);
+    row.document = document;
+    appendAdminAudit_(
+      registry,
+      existing ? 'UPDATE_ACTIVITY_DRAFT' : 'CREATE_ACTIVITY_DRAFT',
+      'activity_draft',
+      row.draftId,
+      normalizedActor,
+      { title: document.event.title }
+    );
+    return adminDraftProjection_(row);
+  });
+}
+
+function finalizeAdminDraft_(payload, actor) {
+  var request = requireAdminObject_(payload);
+  if (request.confirm !== true) adminError_('CONFIRMATION_REQUIRED');
+  var normalizedActor = typeof actor === 'string' ? actor.trim().toLowerCase() : '';
+  if (!normalizedActor) adminError_('ADMIN_ACTION_DENIED');
+  return withScriptLock_(function() {
+    var registry = getRootConfiguredSpreadsheet_();
+    ensureActivityDraftRegistry_(registry);
+    requireNoSwitchMaintenance_(registry);
+    var draft = readActivityDraft_(registry, request.draftId);
+    if (!draft) adminError_('NOT_FOUND');
+    if (draft.finalizedEventId) {
+      var existingSpreadsheet = getAdminEventSpreadsheet_(
+        registry, String(draft.finalizedEventId)
+      );
+      return {
+        draftId: draft.draftId,
+        eventId: String(draft.finalizedEventId),
+        sheetUrl: activitySheetUrl_(existingSpreadsheet),
+        status: 'draft',
+        alreadyFinalized: true
+      };
+    }
+    var document = draft.document;
+    var created = saveAdminEvent_(document.event, normalizedActor);
+    document.sessions.forEach(function(session) {
+      var sessionRequest = {};
+      Object.keys(session).forEach(function(key) { sessionRequest[key] = session[key]; });
+      sessionRequest.eventId = created.eventId;
+      saveAdminSession_(sessionRequest, normalizedActor);
+    });
+    if (document.event.seatMode !== 'none') {
+      saveAdminSeatPlan_({
+        eventId: created.eventId,
+        sessionId: document.seatPlan.sessionId,
+        action: 'generate',
+        mode: document.seatPlan.mode,
+        zones: document.seatPlan.zones
+      }, normalizedActor);
+    }
+    document.questions.forEach(function(question) {
+      var questionRequest = {};
+      Object.keys(question).forEach(function(key) {
+        questionRequest[key] = question[key];
+      });
+      questionRequest.eventId = created.eventId;
+      saveAdminQuestion_(questionRequest, normalizedActor);
+    });
+    draft.finalizedEventId = created.eventId;
+    draft.updatedAt = new Date().toISOString();
+    writeAdminRow_(registry, '活动草稿', draft.rowNumber, draft);
+    appendAdminAudit_(
+      registry,
+      'FINALIZE_ACTIVITY_DRAFT',
+      'activity_draft',
+      draft.draftId,
+      normalizedActor,
+      { eventId: created.eventId }
+    );
+    return {
+      draftId: draft.draftId,
+      eventId: created.eventId,
+      sheetUrl: created.sheetUrl,
+      status: 'draft',
+      alreadyFinalized: false
+    };
+  });
+}
+
+function deleteAdminDraft_(payload, actor) {
+  var request = requireAdminObject_(payload);
+  if (request.confirm !== true) adminError_('CONFIRMATION_REQUIRED');
+  var normalizedActor = typeof actor === 'string' ? actor.trim().toLowerCase() : '';
+  if (!normalizedActor) adminError_('ADMIN_ACTION_DENIED');
+  return withScriptLock_(function() {
+    var registry = getRootConfiguredSpreadsheet_();
+    ensureActivityDraftRegistry_(registry);
+    requireNoSwitchMaintenance_(registry);
+    var draft = readActivityDraft_(registry, request.draftId);
+    if (!draft) adminError_('NOT_FOUND');
+    if (draft.finalizedEventId) adminError_('CONFLICT');
+    getRequiredSheet_(registry, '活动草稿').deleteRow(draft.rowNumber);
+    appendAdminAudit_(
+      registry,
+      'DELETE_ACTIVITY_DRAFT',
+      'activity_draft',
+      draft.draftId,
+      normalizedActor,
+      { title: draft.document.event.title }
+    );
+    return { draftId: draft.draftId, deleted: true };
+  });
+}
+
+function deleteEmptyAdminEvent_(payload, actor) {
+  var request = requireAdminObject_(payload);
+  if (request.confirm !== true) adminError_('CONFIRMATION_REQUIRED');
+  if (typeof request.eventId !== 'string' || !request.eventId.trim()) {
+    adminError_('INVALID_REQUEST');
+  }
+  var normalizedActor = typeof actor === 'string' ? actor.trim().toLowerCase() : '';
+  if (!normalizedActor) adminError_('ADMIN_ACTION_DENIED');
+  return withScriptLock_(function() {
+    var registry = getRootConfiguredSpreadsheet_();
+    ensureActivityDraftRegistry_(registry);
+    requireNoSwitchMaintenance_(registry);
+    var eventId = request.eventId.trim();
+    var catalogMatches = readAdminRows_(registry, '活动目录').filter(function(row) {
+      return String(row.eventId || '').trim() === eventId;
+    });
+    if (catalogMatches.length !== 1) {
+      adminError_(catalogMatches.length ? 'INTEGRITY_ERROR' : 'NOT_FOUND');
+    }
+    var catalog = catalogMatches[0];
+    var spreadsheet = getAdminEventSpreadsheet_(registry, eventId);
+    var hasHistory =
+      readAdminRows_(spreadsheet, '参加者').length > 0 ||
+      readAdminRows_(spreadsheet, '报名项目').some(function(row) {
+        return String(row.eventId || '') === eventId;
+      }) ||
+      readAdminRows_(spreadsheet, '签到记录').some(function(row) {
+        return String(row.eventId || '') === eventId;
+      }) ||
+      readAdminRows_(registry, '票券索引').some(function(row) {
+        return String(row.eventId || '') === eventId;
+      });
+    if (hasHistory) adminError_('CONFLICT');
+    var catalogSheet = getRequiredSheet_(registry, '活动目录');
+    catalogSheet.deleteRow(catalog.rowNumber);
+    try {
+      DriveApp.getFileById(String(catalog.spreadsheetId)).setTrashed(true);
+    } catch (error) {
+      writeAdminRow_(registry, '活动目录', null, catalog);
+      throw error;
+    }
+    try {
+      appendAdminAudit_(
+        registry,
+        'DELETE_EMPTY_EVENT',
+        'event',
+        eventId,
+        normalizedActor,
+        { spreadsheetId: String(catalog.spreadsheetId) }
+      );
+    } catch (_ignored) {
+      // The deletion is already complete and recoverable from Drive trash.
+    }
+    return { eventId: eventId, deleted: true, trashed: true };
+  });
+}
 
 function getAdminDashboard_(payload) {
   var request = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
@@ -178,8 +554,21 @@ function getAdminDashboard_(payload) {
   }
   return withScriptLock_(function() {
     var registry = getRootConfiguredSpreadsheet_();
+    ensureActivityDraftRegistry_(registry);
     var settings = getAdminSettings_(registry);
     var catalogEntries = readAdminRows_(registry, '活动目录');
+    var drafts = readAdminRows_(registry, '活动草稿').filter(function(row) {
+      return !String(row.finalizedEventId || '').trim();
+    }).map(function(row) {
+      var parsed;
+      try {
+        parsed = JSON.parse(String(row.payload || ''));
+      } catch (_ignored) {
+        adminError_('INTEGRITY_ERROR');
+      }
+      row.document = validateActivityDraftDocument_(parsed);
+      return adminDraftProjection_(row);
+    });
     var events = catalogEntries.map(function(entry) {
       var validated = getEventCatalogEntry_(registry, entry.eventId);
       var projection = adminEventProjection_(validated, settings);
@@ -208,6 +597,16 @@ function getAdminDashboard_(payload) {
       ? readAdminRows_(spreadsheet, '签到记录').filter(function(record) {
         return String(record.eventId || '') === selectedEventId;
       }) : [];
+    var selectedCanDelete = Boolean(spreadsheet) &&
+      participants.length === 0 &&
+      registrations.length === 0 &&
+      attendance.length === 0 &&
+      !readAdminRows_(registry, '票券索引').some(function(route) {
+        return String(route.eventId || '') === selectedEventId;
+      });
+    events.forEach(function(event) {
+      event.canDelete = event.eventId === selectedEventId && selectedCanDelete;
+    });
     var participantById = {};
     participants.forEach(function(participant) {
       participantById[participant.participantId] = participant;
@@ -274,6 +673,7 @@ function getAdminDashboard_(payload) {
           registry.getName ? registry.getName() : 'Connected'
         )
       },
+      drafts: drafts,
       events: events,
       sessions: sessions.map(function(session) { return adminSessionProjection_(session, settings); }),
       seats: seats.map(adminSeatProjection_),

@@ -2,7 +2,19 @@
   (() => {
     "use strict";
 
-    const state = { dashboard: null, bundles: null, selectedEventId: "", search: "", dashboardRequestId: 0 };
+    const state = {
+      dashboard: null,
+      bundles: null,
+      selectedEventId: "",
+      selectedDraftId: "",
+      draftDocument: null,
+      draftNextStep: "",
+      search: "",
+      dashboardRequestId: 0,
+      eventSavePending: false,
+      eventSaveNotice: "",
+      actionNotice: ""
+    };
     const statusNode = document.querySelector("#admin-status");
 
     function setStatus(message, kind = "success") {
@@ -10,10 +22,11 @@
       statusNode.style.color = kind === "error" ? "var(--danger)" : "var(--green)";
     }
 
-    function adminRunner_(success, isCurrent = () => true) {
+    function adminRunner_(success, isCurrent = () => true, onSettled = () => {}) {
       return google.script.run
         .withSuccessHandler((result) => {
           if (!isCurrent()) return;
+          onSettled();
           if (!result || result.ok !== true) {
             setStatus(result && result.message ? result.message : "管理员功能不可用。", "error");
             return;
@@ -21,8 +34,48 @@
           success(result.data);
         })
         .withFailureHandler(() => {
-          if (isCurrent()) setStatus("管理员功能不可用。", "error");
+          if (!isCurrent()) return;
+          onSettled();
+          setStatus("管理员功能不可用。", "error");
         });
+    }
+
+    function setEventSavePending_(pending, activeButton) {
+      state.eventSavePending = pending;
+      const saveButton = document.querySelector("#save-event");
+      if (pending) {
+        state.eventSaveButton = activeButton || saveButton;
+        state.eventSaveButtonText = state.eventSaveButton.textContent;
+        state.eventSaveButton.textContent =
+          state.eventSaveButton === saveButton ? "正在保存…" : "处理中…";
+      } else if (state.eventSaveButton) {
+        state.eventSaveButton.textContent = state.eventSaveButtonText;
+        state.eventSaveButton = null;
+        state.eventSaveButtonText = "";
+      }
+      saveButton.disabled = pending;
+      document.querySelectorAll("#event-form [data-action]").forEach((button) => {
+        button.disabled = pending || !state.selectedEventId;
+      });
+    }
+
+    function runButtonAction_(button, pendingText, successText, invoke, onSuccess = () => {}) {
+      if (button.dataset.pending === "true") return;
+      const originalText = button.textContent;
+      button.dataset.pending = "true";
+      button.disabled = true;
+      button.textContent = pendingText;
+      const settle = () => {
+        delete button.dataset.pending;
+        button.disabled = false;
+        button.textContent = originalText;
+      };
+      const runner = adminRunner_((data) => {
+        onSuccess(data);
+        state.actionNotice = successText;
+        setStatus(successText);
+      }, undefined, settle);
+      invoke(runner);
     }
 
     function element(tag, text, className) {
@@ -68,57 +121,105 @@
       }
     }
 
+    function draftStepLabel_(step) {
+      return {
+        activity: "先填写并保存活动资料",
+        sessions: "建立讲座场次",
+        seats: "开放或生成座位",
+        questions: "建立报名问题",
+        confirm: "检查内容并确认生成数据表"
+      }[step] || "继续完成设置";
+    }
+
+    function updateConditionalEventFields_() {
+      const form = document.querySelector("#event-form");
+      const needsSessions = !["none", "free"].includes(form.elements.selectionMode.value);
+      const needsSeats = form.elements.seatMode.value !== "none";
+      document.querySelector("#min-session-field").hidden = !needsSessions;
+      document.querySelector("#max-session-field").hidden = !needsSessions;
+      document.querySelector("#seat-zone-field").hidden = !needsSeats;
+    }
+
     function syncSelectedEventFields() {
       ["#session-form", "#seat-form", "#question-form"].forEach((selector) => {
         const form = document.querySelector(selector);
         form.elements.eventId.value = state.selectedEventId;
       });
-      const hasSelection = Boolean(state.selectedEventId);
+      const hasSelection = Boolean(state.selectedEventId || state.selectedDraftId);
+      const hasGeneratedActivity = Boolean(state.selectedEventId);
       document.querySelectorAll(".selected-required").forEach((section) => {
         section.hidden = !hasSelection;
       });
+      document.querySelectorAll(".generated-required").forEach((section) => {
+        section.hidden = !hasGeneratedActivity;
+      });
       document.querySelectorAll("#event-form [data-action]").forEach((button) => {
-        button.disabled = !hasSelection;
+        button.disabled = !hasGeneratedActivity;
       });
       document.querySelectorAll('nav a[href^="#"]').forEach((link) => {
         const requiresActivity = link.getAttribute("href") !== "#events";
+        const requiresGeneratedActivity = ["#records", "#attendance"]
+          .includes(link.getAttribute("href"));
         if (requiresActivity) {
-          link.setAttribute("aria-disabled", String(!hasSelection));
-          if (!hasSelection) link.removeAttribute("aria-current");
+          const disabled = !hasSelection || (requiresGeneratedActivity && !hasGeneratedActivity);
+          link.setAttribute("aria-disabled", String(disabled));
+          if (disabled) link.removeAttribute("aria-current");
         }
       });
       document.querySelector("#activity-empty-state").hidden = hasSelection;
+      document.querySelector("#save-event").textContent =
+        hasGeneratedActivity ? "保存活动" : "保存草稿";
     }
 
-    function renderActivitySelector(events) {
+    function renderActivitySelector(events, drafts) {
       const selector = document.querySelector("#activity-selector");
       selector.replaceChildren();
       const placeholder = element("option", "选择活动", "");
       placeholder.value = "";
       selector.append(placeholder);
+      (drafts || []).forEach((item) => {
+        const option = element("option", `草稿：${item.draft.event.title || "未命名活动"}`);
+        option.value = `draft:${item.draftId}`;
+        selector.append(option);
+      });
       events.forEach((item) => {
         const option = element("option", item.title || "未命名活动");
         option.value = item.eventId;
         selector.append(option);
       });
-      selector.value = state.selectedEventId;
+      selector.value = state.selectedDraftId
+        ? `draft:${state.selectedDraftId}` : state.selectedEventId;
     }
 
-    function renderSelectedActivity(item) {
+    function renderSelectedActivity(item, isDraft = false) {
       const context = document.querySelector("#selected-activity");
       const title = document.querySelector("#selected-activity-title");
       const meta = document.querySelector("#selected-activity-meta");
       const sheetLink = document.querySelector("#selected-activity-sheet");
+      const finalizeButton = document.querySelector("#finalize-draft");
+      const deleteDraftButton = document.querySelector("#delete-draft");
+      const deleteEventButton = document.querySelector("#delete-empty-event");
       context.hidden = !item;
       if (!item) {
         sheetLink.hidden = true;
         sheetLink.removeAttribute("href");
+        finalizeButton.hidden = true;
+        deleteDraftButton.hidden = true;
+        deleteEventButton.hidden = true;
         return;
       }
-      title.textContent = item.title || "未命名活动";
-      meta.textContent = `${item.status || "draft"}${item.location ? ` · ${item.location}` : ""}`;
+      const event = isDraft ? item.draft.event : item;
+      title.textContent = isDraft
+        ? `正在设置：${event.title || "新活动草稿"}` : `正在设置：${event.title || "未命名活动"}`;
+      meta.textContent = isDraft
+        ? `尚未生成数据表 · 下一步：${draftStepLabel_(item.nextStep)}`
+        : `${event.status || "draft"}${event.location ? ` · ${event.location}` : ""}`;
+      finalizeButton.hidden = !isDraft;
+      finalizeButton.disabled = isDraft && item.nextStep !== "confirm";
+      deleteDraftButton.hidden = !isDraft;
+      deleteEventButton.hidden = isDraft || item.canDelete !== true;
       const sheetUrl = safeSheetUrl(item.sheetUrl);
-      sheetLink.hidden = !sheetUrl;
+      sheetLink.hidden = isDraft || !sheetUrl;
       if (sheetUrl) sheetLink.href = sheetUrl;
       else sheetLink.removeAttribute("href");
     }
@@ -131,8 +232,12 @@
     }
 
     function selectActivity(eventId) {
-      state.selectedEventId = String(eventId || "");
-      if (!state.selectedEventId) {
+      const selectedValue = String(eventId || "");
+      state.selectedDraftId = selectedValue.startsWith("draft:")
+        ? selectedValue.slice(6) : "";
+      state.selectedEventId = state.selectedDraftId ? "" : selectedValue;
+      state.draftDocument = null;
+      if (!state.selectedEventId && !state.selectedDraftId) {
         const eventForm = document.querySelector("#event-form");
         eventForm.reset();
         eventForm.elements.eventId.value = "";
@@ -144,12 +249,21 @@
 
     function startNewActivity() {
       state.selectedEventId = "";
+      state.selectedDraftId = "";
+      state.draftDocument = null;
+      state.draftNextStep = "";
       state.dashboardRequestId += 1;
       document.querySelector("#event-form").reset();
       document.querySelector("#event-form").elements.eventId.value = "";
       resetRelatedForms();
-      renderSelectedActivity(null);
+      renderSelectedActivity({
+        draftId: "",
+        draft: { event: { title: "" } },
+        nextStep: "activity"
+      }, true);
       document.querySelector("#activity-selector").value = "";
+      syncSelectedEventFields();
+      setStatus("正在建立新活动草稿（尚未生成数据表）。");
       document.querySelector("#event-form").querySelector("input[name=title]").focus();
     }
 
@@ -157,33 +271,48 @@
       data = data || {};
       state.dashboard = data;
       const events = Array.isArray(data.events) ? data.events : [];
+      const drafts = Array.isArray(data.drafts) ? data.drafts : [];
       if (!events.some((item) => item.eventId === state.selectedEventId)) state.selectedEventId = "";
+      if (!drafts.some((item) => item.draftId === state.selectedDraftId)) state.selectedDraftId = "";
       const selectedEvent = events.find((item) => item.eventId === state.selectedEventId) || null;
-      renderActivitySelector(events);
-      renderSelectedActivity(selectedEvent);
+      const selectedDraft = drafts.find((item) => item.draftId === state.selectedDraftId) || null;
+      if (selectedDraft) {
+        state.draftDocument = selectedDraft.draft;
+        state.draftNextStep = selectedDraft.nextStep;
+      }
+      renderActivitySelector(events, drafts);
+      renderSelectedActivity(selectedDraft || selectedEvent, Boolean(selectedDraft));
       syncSelectedEventFields();
       document.querySelector("#connection-status").textContent = data.connection && data.connection.connected
         ? `已连接：${data.connection.sheetName || "Google Sheet"}`
         : "未连接到数据表。";
-      replaceList("#event-list", events, (item) => {
-        const row = dataRow(item.title, item.status, [
-          item.location, `${item.selectionMode} · ${item.seatMode}`,
-          `场次选择 ${item.minChoices}–${item.maxChoices}`
+      replaceList("#event-list", drafts.concat(events), (item) => {
+        const isDraft = Boolean(item.draftId);
+        const event = isDraft ? item.draft.event : item;
+        const row = dataRow(event.title, isDraft ? "草稿" : event.status, [
+          event.location, `${event.selectionMode} · ${event.seatMode}`,
+          isDraft ? "尚未生成数据表" : `场次选择 ${event.minChoices}–${event.maxChoices}`
         ]);
-        const choose = editButton(item.eventId === state.selectedEventId ? "正在管理" : "管理此活动", () => selectActivity(item.eventId));
-        choose.setAttribute("aria-pressed", item.eventId === state.selectedEventId ? "true" : "false");
+        const selected = isDraft
+          ? item.draftId === state.selectedDraftId : item.eventId === state.selectedEventId;
+        const choose = editButton(selected ? "正在管理" : "管理此活动", () =>
+          selectActivity(isDraft ? `draft:${item.draftId}` : item.eventId));
+        choose.setAttribute("aria-pressed", selected ? "true" : "false");
         row.append(choose);
         return row;
       });
-      replaceList("#session-list", data.sessions, (item) => {
+      const visibleSessions = selectedDraft ? selectedDraft.draft.sessions : data.sessions;
+      const visibleQuestions = selectedDraft ? selectedDraft.draft.questions : data.questions;
+      replaceList("#session-list", visibleSessions, (item) => {
         const row = dataRow(item.title, item.status, [
           item.speaker, item.location, `${item.startsAt || "未定"} → ${item.endsAt || "未定"}`,
           `容量 ${item.capacity}${item.required ? " · 必选" : ""}${item.groupRule ? ` · ${item.groupRule}` : ""}`
         ]);
-        row.append(editButton("编辑场次", () => editAdminSession(item)));
+        row.append(editButton("编辑场次", () =>
+          selectedDraft ? editDraftSession_(item) : editAdminSession(item)));
         return row;
       });
-      replaceList("#seat-list", data.seats, (item) => {
+      replaceList("#seat-list", selectedDraft ? [] : data.seats, (item) => {
         const row = dataRow(item.label, item.status, [item.zone, item.sessionId]);
         const actions = element("div", null, "actions");
         ["reserve", "close", "reopen"].forEach((action) => {
@@ -191,18 +320,19 @@
           button.type = "button";
           button.className = "secondary";
           button.dataset.action = action;
-          button.addEventListener("click", () => saveSeatAction(action, item.seatId));
+          button.addEventListener("click", () => saveSeatAction(action, item.seatId, button));
           actions.append(button);
         });
         row.append(actions);
         return row;
       });
-      replaceList("#question-list", data.questions, (item) => {
+      replaceList("#question-list", visibleQuestions, (item) => {
         const row = dataRow(item.label, item.status, [
           `${item.type}${item.required ? " · 必填" : ""}`,
           `排序 ${item.sortOrder}${item.showOnTicket ? " · 票面显示" : ""}${item.duplicateIdentity ? " · 身份判断" : ""}`
         ]);
-        row.append(editButton("编辑问题", () => editAdminQuestion(item)));
+        row.append(editButton("编辑问题", () =>
+          selectedDraft ? editDraftQuestion_(item) : editAdminQuestion(item)));
         return row;
       });
       replaceList("#record-list", data.records, (item) =>
@@ -214,15 +344,44 @@
         dataRow(item.registrationId, item.status, [
           `场次 ${item.sessionId}`, item.checkedInAt, item.checkedInBy
         ]));
-      if (selectedEvent) fillEventEditor(selectedEvent);
-      setStatus(selectedEvent ? "当前活动数据已更新。" : "请选择一个活动，或先新建活动。");
+      if (selectedDraft) fillEventEditor(selectedDraft.draft.event);
+      else if (selectedEvent) fillEventEditor(selectedEvent);
+      updateConditionalEventFields_();
+      if ((selectedDraft || selectedEvent) && state.eventSaveNotice) {
+        setStatus(state.eventSaveNotice);
+        state.eventSaveNotice = "";
+        if (selectedDraft && state.draftNextStep) {
+          const target = {
+            sessions: "#sessions",
+            seats: "#seats",
+            questions: "#questions",
+            confirm: "#selected-activity"
+          }[state.draftNextStep] || "#selected-activity";
+          scrollToAdminSection_(target);
+        } else {
+          document.querySelector("#selected-activity").scrollIntoView({
+            behavior: window.matchMedia &&
+              window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+            block: "center"
+          });
+        }
+      } else if (state.actionNotice) {
+        setStatus(state.actionNotice);
+        state.actionNotice = "";
+      } else {
+        setStatus(selectedDraft
+          ? `草稿已读取，下一步请${draftStepLabel_(selectedDraft.nextStep)}。`
+          : selectedEvent ? "当前活动数据已更新。" : "请选择一个活动，或先新建活动。");
+      }
     }
 
     function loadDashboard(search = state.search) {
       state.search = search;
       const requestId = ++state.dashboardRequestId;
       const requestedEventId = state.selectedEventId;
-      const isCurrent = () => state.dashboardRequestId === requestId && state.selectedEventId === requestedEventId;
+      const requestedDraftId = state.selectedDraftId;
+      const isCurrent = () => state.dashboardRequestId === requestId &&
+        state.selectedEventId === requestedEventId && state.selectedDraftId === requestedDraftId;
       setStatus("正在读取管理数据…");
       const payload = { search };
       if (requestedEventId) payload.eventId = requestedEventId;
@@ -257,17 +416,17 @@
 
     function fillEventEditor(item) {
       const form = document.querySelector("#event-form");
-      form.elements.eventId.value = item.eventId;
-      form.elements.title.value = item.title;
-      form.elements.description.value = item.description;
-      form.elements.status.value = item.status;
+      form.elements.eventId.value = item.eventId || "";
+      form.elements.title.value = item.title || "";
+      form.elements.description.value = item.description || "";
+      form.elements.status.value = item.status || "draft";
       form.elements.opensAt.value = localDateInput(item.opensAt);
       form.elements.closesAt.value = localDateInput(item.closesAt);
-      form.elements.location.value = item.location;
-      form.elements.selectionMode.value = item.selectionMode;
-      form.elements.minChoices.value = item.minChoices;
-      form.elements.maxChoices.value = item.maxChoices;
-      form.elements.seatMode.value = item.seatMode;
+      form.elements.location.value = item.location || "";
+      form.elements.selectionMode.value = item.selectionMode || "none";
+      form.elements.minChoices.value = item.minChoices || 0;
+      form.elements.maxChoices.value = item.maxChoices || 0;
+      form.elements.seatMode.value = item.seatMode || "none";
       form.elements.seatZones.value = (item.seatZones || []).join("\n");
       form.elements.showOpeningCountdown.checked = item.showOpeningCountdown === true;
       form.elements.showClosingCountdown.checked = item.showClosingCountdown === true;
@@ -275,6 +434,7 @@
       form.elements.seatExchangeEnabled.checked = item.seatExchangeEnabled === true;
       form.elements.seatHoldsEnabled.checked = item.seatHoldsEnabled === true;
       form.elements.seatHoldMinutes.value = item.seatHoldMinutes || 5;
+      updateConditionalEventFields_();
     }
 
     function editAdminEvent(item) {
@@ -298,6 +458,14 @@
       focusEditor(form);
     }
 
+    function editDraftSession_(item) {
+      editAdminSession({
+        ...item,
+        eventId: "",
+        sessionId: item.draftKey || ""
+      });
+    }
+
     function editAdminQuestion(item) {
       const form = document.querySelector("#question-form");
       form.elements.questionId.value = item.questionId;
@@ -313,6 +481,14 @@
       form.elements.duplicateIdentity.checked = item.duplicateIdentity === true;
       form.elements.semanticRole.value = item.semanticRole || "";
       focusEditor(form);
+    }
+
+    function editDraftQuestion_(item) {
+      editAdminQuestion({
+        ...item,
+        eventId: "",
+        questionId: item.draftKey || ""
+      });
     }
 
     function eventPayload(action) {
@@ -339,13 +515,39 @@
       return payload;
     }
 
-    function saveEvent(action) {
+    function saveEvent(action, activeButton) {
+      if (state.eventSavePending) return;
       const payload = eventPayload(action);
       if (action && !payload.eventId) {
         setStatus("请先选择一个活动，或先保存新活动。", "error");
         return;
       }
       const isNewActivity = !payload.eventId;
+      if (isNewActivity && !action) {
+        delete payload.action;
+        payload.status = "draft";
+        const draftDocument = state.draftDocument || {
+          event: payload,
+          sessions: [],
+          seatPlan: { mode: payload.seatMode || "none", sessionId: "", zones: [] },
+          questions: []
+        };
+        draftDocument.event = payload;
+        setEventSavePending_(true, activeButton);
+        setStatus("正在保存活动草稿…");
+        const request = { ...draftDocument };
+        if (state.selectedDraftId) request.draftId = state.selectedDraftId;
+        adminRunner_((savedDraft) => {
+          state.selectedDraftId = savedDraft.draftId;
+          state.selectedEventId = "";
+          state.draftDocument = savedDraft.draft;
+          state.draftNextStep = savedDraft.nextStep;
+          state.eventSaveNotice =
+            `草稿保存成功，下一步请${draftStepLabel_(savedDraft.nextStep)}。`;
+          loadDashboard();
+        }, undefined, () => setEventSavePending_(false)).saveAdminDraft(request);
+        return;
+      }
       if (action === "reopen") {
         const count = state.dashboard && state.dashboard.records
           ? new Set(state.dashboard.records.filter((record) => record.eventId === payload.eventId)
@@ -353,24 +555,50 @@
         if (!window.confirm(`此活动已有 ${count} 个报名。确认重新开放？`)) return;
         payload.confirm = true;
       }
+      setEventSavePending_(true, activeButton);
       setStatus("正在保存活动…");
       adminRunner_((savedEvent) => {
         if (isNewActivity && savedEvent && savedEvent.eventId) state.selectedEventId = savedEvent.eventId;
+        state.eventSaveNotice = isNewActivity
+          ? "活动建立成功，已显示刚建立的活动。"
+          : "活动保存成功，已显示最新内容。";
         loadDashboard();
-      }).saveAdminEvent(payload);
+      }, undefined, () => setEventSavePending_(false)).saveAdminEvent(payload);
     }
 
     document.querySelector("#event-form").addEventListener("submit", (event) => {
       event.preventDefault();
-      saveEvent("");
+      saveEvent("", document.querySelector("#save-event"));
     });
     document.querySelectorAll("#event-form [data-action]").forEach((button) => {
-      button.addEventListener("click", () => saveEvent(button.dataset.action));
+      button.addEventListener("click", () => saveEvent(button.dataset.action, button));
     });
     document.querySelector("#activity-selector").addEventListener("change", (event) => {
       selectActivity(event.currentTarget.value);
     });
     document.querySelector("#new-activity").addEventListener("click", startNewActivity);
+    document.querySelector("#event-form").elements.selectionMode
+      .addEventListener("change", updateConditionalEventFields_);
+    document.querySelector("#event-form").elements.seatMode
+      .addEventListener("change", updateConditionalEventFields_);
+
+    function persistDraftDocument_(documentValue, button, pendingText, successText) {
+      const request = { ...documentValue, draftId: state.selectedDraftId };
+      runButtonAction_(
+        button,
+        pendingText,
+        successText,
+        (runner) => runner.saveAdminDraft(request),
+        (savedDraft) => {
+          state.selectedDraftId = savedDraft.draftId;
+          state.draftDocument = savedDraft.draft;
+          state.draftNextStep = savedDraft.nextStep;
+          state.eventSaveNotice =
+            `${successText} 下一步请${draftStepLabel_(savedDraft.nextStep)}。`;
+          loadDashboard();
+        }
+      );
+    }
 
     document.querySelector("#session-form").addEventListener("submit", (event) => {
       event.preventDefault();
@@ -384,8 +612,31 @@
         capacity: Number(values.capacity),
         required: checked(form, "required")
       };
-      setStatus("正在保存场次…");
-      adminRunner_(() => loadDashboard()).saveAdminSession(payload);
+      if (state.selectedDraftId) {
+        const draftKey = values.sessionId ||
+          `draft-session-${state.draftDocument.sessions.length + 1}`;
+        delete payload.eventId;
+        delete payload.sessionId;
+        payload.draftKey = draftKey;
+        const sessions = state.draftDocument.sessions.slice();
+        const existingIndex = sessions.findIndex((item) => item.draftKey === draftKey);
+        if (existingIndex === -1) sessions.push(payload);
+        else sessions[existingIndex] = payload;
+        persistDraftDocument_(
+          { ...state.draftDocument, sessions },
+          document.querySelector("#save-session"),
+          "正在保存场次草稿…",
+          "场次草稿保存成功。"
+        );
+        return;
+      }
+      runButtonAction_(
+        document.querySelector("#save-session"),
+        "正在保存场次…",
+        "场次保存成功。",
+        (runner) => runner.saveAdminSession(payload),
+        () => loadDashboard()
+      );
     });
 
     document.querySelector("#seat-form").addEventListener("submit", (event) => {
@@ -403,21 +654,44 @@
           seatsPerRow: Number(values.seatsPerRow)
         }]
       };
-      setStatus("正在保存座位方案…");
-      adminRunner_(() => loadDashboard()).saveAdminSeatPlan(payload);
+      if (state.selectedDraftId) {
+        persistDraftDocument_(
+          {
+            ...state.draftDocument,
+            seatPlan: {
+              mode,
+              sessionId: values.sessionId || "",
+              zones: payload.zones
+            }
+          },
+          document.querySelector("#save-seat-plan"),
+          "正在保存座位草稿…",
+          "座位方案草稿保存成功。"
+        );
+        return;
+      }
+      runButtonAction_(
+        document.querySelector("#save-seat-plan"),
+        "正在保存座位…",
+        "座位方案保存成功。",
+        (runner) => runner.saveAdminSeatPlan(payload),
+        () => loadDashboard()
+      );
     });
 
-    function saveSeatAction(action, seatId) {
+    function saveSeatAction(action, seatId, button) {
       if (!state.selectedEventId) {
         setStatus("请先选择一个活动，再更新座位。", "error");
         return;
       }
-      setStatus("正在更新座位…");
-      adminRunner_(() => loadDashboard()).saveAdminSeatPlan({
-        eventId: state.selectedEventId,
-        action,
-        seatId
-      });
+      const payload = { eventId: state.selectedEventId, action, seatId };
+      runButtonAction_(
+        button,
+        "处理中…",
+        "座位状态更新成功。",
+        (runner) => runner.saveAdminSeatPlan(payload),
+        () => loadDashboard()
+      );
     }
 
     document.querySelector("#question-form").addEventListener("submit", (event) => {
@@ -442,8 +716,98 @@
         duplicateIdentity: checked(form, "duplicateIdentity"),
         semanticRole: values.semanticRole
       };
-      setStatus("正在保存问题…");
-      adminRunner_(() => loadDashboard()).saveAdminQuestion(payload);
+      if (state.selectedDraftId) {
+        const draftKey = values.questionId ||
+          `draft-question-${state.draftDocument.questions.length + 1}`;
+        delete payload.eventId;
+        delete payload.questionId;
+        payload.draftKey = draftKey;
+        const questions = state.draftDocument.questions.slice();
+        const existingIndex = questions.findIndex((item) => item.draftKey === draftKey);
+        if (existingIndex === -1) questions.push(payload);
+        else questions[existingIndex] = payload;
+        persistDraftDocument_(
+          { ...state.draftDocument, questions },
+          document.querySelector("#save-question"),
+          "正在保存问题草稿…",
+          "问题草稿保存成功。"
+        );
+        return;
+      }
+      runButtonAction_(
+        document.querySelector("#save-question"),
+        "正在保存问题…",
+        "问题保存成功。",
+        (runner) => runner.saveAdminQuestion(payload),
+        () => loadDashboard()
+      );
+    });
+
+    document.querySelector("#finalize-draft").addEventListener("click", (event) => {
+      if (!state.selectedDraftId || state.draftNextStep !== "confirm") {
+        setStatus("请先完成系统提示的活动设置。", "error");
+        return;
+      }
+      if (!window.confirm(
+        "确认建立这个活动的数据表？建立后仍是草稿，不会自动开放报名。"
+      )) return;
+      runButtonAction_(
+        event.currentTarget,
+        "正在生成数据表…",
+        "数据表建立成功，活动仍是草稿。",
+        (runner) => runner.finalizeAdminDraft({
+          draftId: state.selectedDraftId,
+          confirm: true
+        }),
+        (created) => {
+          state.selectedEventId = created.eventId;
+          state.selectedDraftId = "";
+          state.draftDocument = null;
+          state.draftNextStep = "";
+          state.eventSaveNotice = "数据表建立成功；请检查后再开放报名。";
+          loadDashboard();
+        }
+      );
+    });
+
+    document.querySelector("#delete-draft").addEventListener("click", (event) => {
+      if (!state.selectedDraftId) return;
+      if (!window.confirm("确认删除这个未生成数据表的活动草稿？")) return;
+      runButtonAction_(
+        event.currentTarget,
+        "正在删除草稿…",
+        "草稿已删除。",
+        (runner) => runner.deleteAdminDraft({
+          draftId: state.selectedDraftId,
+          confirm: true
+        }),
+        () => {
+          state.selectedDraftId = "";
+          state.draftDocument = null;
+          state.draftNextStep = "";
+          loadDashboard();
+        }
+      );
+    });
+
+    document.querySelector("#delete-empty-event").addEventListener("click", (event) => {
+      if (!state.selectedEventId) return;
+      if (!window.confirm(
+        "确认删除这个没有报名、票券或签到记录的活动？数据表会移到 Google Drive 回收站。"
+      )) return;
+      runButtonAction_(
+        event.currentTarget,
+        "正在删除空活动…",
+        "空活动已移到回收站。",
+        (runner) => runner.deleteEmptyAdminEvent({
+          eventId: state.selectedEventId,
+          confirm: true
+        }),
+        () => {
+          state.selectedEventId = "";
+          loadDashboard();
+        }
+      );
     });
 
     document.querySelector("#record-search-form").addEventListener("submit", (event) => {
@@ -470,8 +834,13 @@
           seatId: values.seatId,
           confirm: true
         };
-        setStatus("正在更新报名记录…");
-        adminRunner_(() => loadDashboard()).adminRecordAction(payload);
+        runButtonAction_(
+          button,
+          "处理中…",
+          "报名记录更新成功。",
+          (runner) => runner.adminRecordAction(payload),
+          () => loadDashboard()
+        );
       });
     });
 

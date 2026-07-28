@@ -186,9 +186,9 @@
                     <option value="none">none 自由入座</option><option value="self">self 自行选座</option>
                     <option value="auto">auto 系统分配</option><option value="zone">zone 选择区域</option>
                   </select></label>
-                  <label>最少场次<input name="minChoices" type="number" min="0" step="1" value="0"></label>
-                  <label>最多场次<input name="maxChoices" type="number" min="0" step="1" value="0"></label>
-                  <label class="wide">座位区域（每行一个）<textarea name="seatZones"></textarea></label>
+                  <label id="min-session-field">最少场次<input name="minChoices" type="number" min="0" step="1" value="0"></label>
+                  <label id="max-session-field">最多场次<input name="maxChoices" type="number" min="0" step="1" value="0"></label>
+                  <label id="seat-zone-field" class="wide">座位区域（每行一个）<textarea name="seatZones"></textarea></label>
                 </div>
                 <div class="checks">
                   <label class="check"><input name="showOpeningCountdown" type="checkbox">显示开放倒数</label>
@@ -197,7 +197,7 @@
                   <label class="check"><input name="seatExchangeEnabled" type="checkbox">允许参加者换座</label>
                 </div>
                 <div class="actions">
-                  <button type="submit">保存活动</button>
+                  <button id="save-event" type="submit">保存草稿</button>
                   <button class="secondary" type="button" data-action="close">关闭为已结束</button>
                   <button class="secondary" type="button" data-action="reopen">重新开放</button>
                   <button class="danger" type="button" data-action="archive">归档</button>
@@ -210,7 +210,12 @@
 
           <section id="selected-activity" class="activity-context" aria-live="polite" hidden>
             <div><p class="eyebrow">Current activity</p><h2 id="selected-activity-title"></h2><p id="selected-activity-meta"></p></div>
-            <div class="actions"><a id="selected-activity-sheet" class="secondary" target="_blank" rel="noopener noreferrer" hidden>打开活动数据表</a></div>
+            <div class="actions">
+              <button id="finalize-draft" type="button" hidden>确认建立活动并生成数据表</button>
+              <button id="delete-draft" class="danger" type="button" hidden>删除草稿</button>
+              <button id="delete-empty-event" class="danger" type="button" hidden>删除空活动</button>
+              <a id="selected-activity-sheet" class="secondary" target="_blank" rel="noopener noreferrer" hidden>打开活动数据表</a>
+            </div>
           </section>
           <p id="activity-empty-state" class="empty-selection">请选择一个活动，或先新建活动。</p>
 
@@ -233,7 +238,7 @@
                   <label>分组规则<input name="groupRule"></label>
                 </div>
                 <label class="check"><input name="required" type="checkbox">这是必选场次</label>
-                <button type="submit">保存场次</button>
+                  <button id="save-session" type="submit">保存场次</button>
               </form>
               <div id="session-list" class="data-list" aria-label="场次列表"></div>
             </div>
@@ -254,7 +259,7 @@
                   <label>行数<input name="rows" type="number" min="0" step="1" value="1"></label>
                   <label>每行座位<input name="seatsPerRow" type="number" min="0" step="1" value="1"></label>
                 </div>
-                <button type="submit">生成／更新座位方案</button>
+                  <button id="save-seat-plan" type="submit">生成／更新座位方案</button>
                 <p class="warning">保留、关闭与重新开放只改变座位状态，不会删除座位行。</p>
               </form>
               <div id="seat-list" class="data-list" aria-label="座位列表"></div>
@@ -290,13 +295,13 @@
                   <label class="check"><input name="showOnTicket" type="checkbox">显示在电子票</label>
                   <label class="check"><input name="duplicateIdentity" type="checkbox">用于重复身份判断</label>
                 </div>
-                <button type="submit">保存问题</button>
+                  <button id="save-question" type="submit">保存问题</button>
               </form>
               <div id="question-list" class="data-list" aria-label="报名问题列表"></div>
             </div>
           </section>
 
-          <section id="records" class="panel selected-required">
+          <section id="records" class="panel selected-required generated-required">
             <div class="panel-head"><div><p class="eyebrow">History</p><h2>报名记录</h2><p>列表与搜索只显示脱敏资料；取消和调整座位保留全部历史。</p></div></div>
             <div class="panel-body">
               <form id="record-search-form" class="actions">
@@ -317,7 +322,7 @@
             </div>
           </section>
 
-          <section id="attendance" class="panel selected-required">
+          <section id="attendance" class="panel selected-required generated-required">
             <div class="panel-head"><div><p class="eyebrow">Door log</p><h2>签到记录</h2><p>按场次查看服务器时间签到历史。</p></div></div>
             <div class="panel-body"><div id="attendance-list" class="data-list" aria-label="签到记录"></div></div>
           </section>

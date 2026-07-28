@@ -40,6 +40,10 @@ var STAFF_SHEET_DEFINITIONS = SHEET_DEFINITIONS;
 ${activitySpreadsheetCore}
 var ADMIN_TRANSACTION_ = null;
 var ADMIN_MUTATION_ACTIONS_ = {
+  'admin.saveDraft': true,
+  'admin.finalizeDraft': true,
+  'admin.deleteDraft': true,
+  'admin.deleteEmptyEvent': true,
   'admin.saveEvent': true,
   'admin.saveSession': true,
   'admin.saveSeatPlan': true,
@@ -62,6 +66,10 @@ function executeInternalActionLocked_(action, payload, actor) {
       return internalStaffCheckInLocked_(payload, actor);
     },
     'admin.getDashboard': function() { return getAdminDashboard_(payload, actor); },
+    'admin.saveDraft': function() { return saveAdminDraft_(payload, actor); },
+    'admin.finalizeDraft': function() { return finalizeAdminDraft_(payload, actor); },
+    'admin.deleteDraft': function() { return deleteAdminDraft_(payload, actor); },
+    'admin.deleteEmptyEvent': function() { return deleteEmptyAdminEvent_(payload, actor); },
     'admin.saveEvent': function() { return saveAdminEvent_(payload, actor); },
     'admin.saveSession': function() { return saveAdminSession_(payload, actor); },
     'admin.saveSeatPlan': function() { return saveAdminSeatPlan_(payload, actor); },
@@ -133,7 +141,8 @@ function runAdminMutationTransaction_(registry, spreadsheet, action, callback) {
     action: action,
     entries: [],
     sheets: [],
-    seen: {}
+    seen: {},
+    createdSpreadsheetIds: []
   };
   try {
     return callback();
@@ -187,6 +196,16 @@ function rollbackAdminMutationTransaction_() {
           entry.rowNumber, 1, 1, entry.values.length
         ).setValues([entry.values]);
       }
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  for (var fileIndex = transaction.createdSpreadsheetIds.length - 1;
+    fileIndex >= 0; fileIndex -= 1) {
+    try {
+      DriveApp.getFileById(
+        transaction.createdSpreadsheetIds[fileIndex]
+      ).setTrashed(true);
     } catch (error) {
       failures.push(error);
     }

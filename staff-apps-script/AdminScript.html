@@ -618,6 +618,19 @@
       const nativeMessage = formValidityMessage_(form);
       if (nativeMessage) return nativeMessage;
       if (!String(values.label || "").trim()) return "请填写问题文字。";
+      const semanticRequirements = {
+        name: { types: ["text", "textarea"], label: "姓名栏", expected: "text 或 textarea" },
+        email: { types: ["email"], label: "电邮栏", expected: "email" },
+        phone: { types: ["tel"], label: "电话栏", expected: "tel" }
+      };
+      const semantic = semanticRequirements[values.semanticRole];
+      if (semantic && !semantic.types.includes(values.type)) {
+        return `资料用途“${semantic.label}”必须使用 ${semantic.expected} 字段类型。`;
+      }
+      if (checked(form, "duplicateIdentity") &&
+          (values.status !== "active" || !checked(form, "required"))) {
+        return "用于重复身份判断的问题必须设为“显示”并勾选“必填”。";
+      }
       const sortOrder = Number(values.sortOrder);
       if (!Number.isInteger(sortOrder) || sortOrder < 0) {
         return "问题排序必须是 0 或正整数。";
@@ -629,6 +642,17 @@
         return "这个问题类型需要至少一个选项（每行一个）。";
       }
       return "";
+    }
+
+    function syncQuestionCompatibility_() {
+      const form = document.querySelector("#question-form");
+      const roleTypes = { name: "text", email: "email", phone: "tel" };
+      const role = form.elements.semanticRole.value;
+      if (roleTypes[role]) form.elements.type.value = roleTypes[role];
+      if (form.elements.duplicateIdentity.checked) {
+        form.elements.required.checked = true;
+        form.elements.status.value = "active";
+      }
     }
 
     function seatPreviewModel_() {
@@ -1056,6 +1080,10 @@
         () => loadDashboard()
       );
     });
+    document.querySelector("#question-form").elements.semanticRole
+      .addEventListener("change", syncQuestionCompatibility_);
+    document.querySelector("#question-form").elements.duplicateIdentity
+      .addEventListener("change", syncQuestionCompatibility_);
 
     document.querySelector("#finalize-draft").addEventListener("click", (event) => {
       if (!state.selectedDraftId || state.draftNextStep !== "confirm") {

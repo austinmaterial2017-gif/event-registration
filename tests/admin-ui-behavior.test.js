@@ -490,6 +490,64 @@ test("session, seat, question, and record forms reject invalid fields with exact
   assert.equal(ui.elements.get("#admin-status").textContent, "请填写要处理的报名 ID。");
 });
 
+test("question form explains incompatible semantic roles before sending", async () => {
+  const ui = await createHarness();
+  ui.selector.value = "B";
+  ui.selector.dispatch("change");
+  ui.requests.at(-1).success({ ok: true, data: dashboard("B", "Activity B") });
+
+  ui.questionForm.elements.label.value = "电邮";
+  ui.questionForm.elements.type.value = "text";
+  ui.questionForm.elements.semanticRole.value = "email";
+  ui.questionForm.elements.sortOrder.value = "0";
+  ui.questionForm.elements.validation.value = "{}";
+  ui.questionForm.dispatch("submit");
+
+  assert.equal(ui.mutations.length, 0);
+  assert.equal(
+    ui.elements.get("#admin-status").textContent,
+    "资料用途“电邮栏”必须使用 email 字段类型。"
+  );
+});
+
+test("question form explains duplicate identity requirements before sending", async () => {
+  const ui = await createHarness();
+  ui.selector.value = "B";
+  ui.selector.dispatch("change");
+  ui.requests.at(-1).success({ ok: true, data: dashboard("B", "Activity B") });
+
+  ui.questionForm.elements.label.value = "姓名";
+  ui.questionForm.elements.type.value = "text";
+  ui.questionForm.elements.semanticRole.value = "name";
+  ui.questionForm.elements.status.value = "active";
+  ui.questionForm.elements.required.checked = false;
+  ui.questionForm.elements.duplicateIdentity.checked = true;
+  ui.questionForm.elements.sortOrder.value = "0";
+  ui.questionForm.elements.validation.value = "{}";
+  ui.questionForm.dispatch("submit");
+
+  assert.equal(ui.mutations.length, 0);
+  assert.equal(
+    ui.elements.get("#admin-status").textContent,
+    "用于重复身份判断的问题必须设为“显示”并勾选“必填”。"
+  );
+});
+
+test("question form automatically keeps semantic role and identity settings compatible", async () => {
+  const ui = await createHarness();
+
+  ui.questionForm.elements.semanticRole.value = "email";
+  ui.questionForm.elements.semanticRole.dispatch("change");
+  assert.equal(ui.questionForm.elements.type.value, "email");
+
+  ui.questionForm.elements.required.checked = false;
+  ui.questionForm.elements.status.value = "inactive";
+  ui.questionForm.elements.duplicateIdentity.checked = true;
+  ui.questionForm.elements.duplicateIdentity.dispatch("change");
+  assert.equal(ui.questionForm.elements.required.checked, true);
+  assert.equal(ui.questionForm.elements.status.value, "active");
+});
+
 test("seat preview updates from form fields, toggles locally, and never sends a mutation", async () => {
   const ui = await createHarness();
   ui.selector.value = "B";

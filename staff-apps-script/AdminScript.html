@@ -13,6 +13,7 @@
       dashboardRequestId: 0,
       eventSavePending: false,
       eventSaveNotice: "",
+      sessionSaveNotice: false,
       actionNotice: ""
     };
     const statusNode = document.querySelector("#admin-status");
@@ -224,8 +225,18 @@
       else sheetLink.removeAttribute("href");
     }
 
+    function resetSessionEditor_() {
+      const form = document.querySelector("#session-form");
+      form.reset();
+      form.elements.eventId.value = state.selectedEventId;
+      form.elements.sessionId.value = "";
+      document.querySelector("#session-editor-mode").textContent = "正在新增场次";
+      document.querySelector("#save-session").textContent = "保存新场次";
+    }
+
     function resetRelatedForms() {
-      ["#session-form", "#seat-form", "#question-form"].forEach((selector) => {
+      resetSessionEditor_();
+      ["#seat-form", "#question-form"].forEach((selector) => {
         document.querySelector(selector).reset();
       });
       syncSelectedEventFields();
@@ -365,6 +376,10 @@
             block: "center"
           });
         }
+      } else if (state.sessionSaveNotice) {
+        setStatus(`场次保存成功，目前已有 ${visibleSessions.length} 个场次。`);
+        state.sessionSaveNotice = false;
+        state.actionNotice = "";
       } else if (state.actionNotice) {
         setStatus(state.actionNotice);
         state.actionNotice = "";
@@ -455,6 +470,9 @@
       form.elements.required.checked = item.required === true;
       form.elements.groupRule.value = item.groupRule;
       form.elements.status.value = item.status;
+      document.querySelector("#session-editor-mode").textContent =
+        `正在编辑：${item.title || "未命名场次"}`;
+      document.querySelector("#save-session").textContent = "保存场次修改";
       focusEditor(form);
     }
 
@@ -582,7 +600,9 @@
     document.querySelector("#event-form").elements.seatMode
       .addEventListener("change", updateConditionalEventFields_);
 
-    function persistDraftDocument_(documentValue, button, pendingText, successText) {
+    function persistDraftDocument_(
+      documentValue, button, pendingText, successText, onSaved = () => {}
+    ) {
       const request = { ...documentValue, draftId: state.selectedDraftId };
       runButtonAction_(
         button,
@@ -595,6 +615,7 @@
           state.draftNextStep = savedDraft.nextStep;
           state.eventSaveNotice =
             `${successText} 下一步请${draftStepLabel_(savedDraft.nextStep)}。`;
+          onSaved(savedDraft);
           loadDashboard();
         }
       );
@@ -626,7 +647,12 @@
           { ...state.draftDocument, sessions },
           document.querySelector("#save-session"),
           "正在保存场次草稿…",
-          "场次草稿保存成功。"
+          "场次草稿保存成功。",
+          (savedDraft) => {
+            resetSessionEditor_();
+            state.eventSaveNotice =
+              `场次保存成功，目前已有 ${savedDraft.draft.sessions.length} 个场次。`;
+          }
         );
         return;
       }
@@ -635,8 +661,16 @@
         "正在保存场次…",
         "场次保存成功。",
         (runner) => runner.saveAdminSession(payload),
-        () => loadDashboard()
+        () => {
+          resetSessionEditor_();
+          state.sessionSaveNotice = true;
+          loadDashboard();
+        }
       );
+    });
+    document.querySelector("#new-session").addEventListener("click", () => {
+      resetSessionEditor_();
+      focusEditor(document.querySelector("#session-form"));
     });
 
     document.querySelector("#seat-form").addEventListener("submit", (event) => {

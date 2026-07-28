@@ -224,6 +224,10 @@
             <div class="panel-body split">
               <form id="session-form">
                 <input name="sessionId" type="hidden"><input name="eventId" type="hidden">
+                <div class="actions">
+                  <strong id="session-editor-mode">正在新增场次</strong>
+                  <button id="new-session" class="secondary" type="button">新增下一个场次</button>
+                </div>
                 <div class="fields">
                   <label>场次状态<select name="status">
                     <option value="draft">draft</option><option value="upcoming">upcoming</option><option value="open">open</option>
@@ -232,13 +236,13 @@
                   </select></label>
                   <label class="wide">标题<input name="title" required></label>
                   <label>讲师<input name="speaker"></label><label>地点<input name="location"></label>
-                  <label>开始时间<input name="startsAt" type="datetime-local"></label>
-                  <label>结束时间<input name="endsAt" type="datetime-local"></label>
+                  <label>场次开始时间（讲座当天）<input name="startsAt" type="datetime-local"></label>
+                  <label>场次结束时间（讲座当天）<input name="endsAt" type="datetime-local"></label>
                   <label>容量<input name="capacity" type="number" min="0" step="1" value="0"></label>
                   <label>分组规则<input name="groupRule"></label>
                 </div>
                 <label class="check"><input name="required" type="checkbox">这是必选场次</label>
-                  <button id="save-session" type="submit">保存场次</button>
+                  <button id="save-session" type="submit">保存新场次</button>
               </form>
               <div id="session-list" class="data-list" aria-label="场次列表"></div>
             </div>
@@ -286,7 +290,7 @@
                   </select></label>
                   <label class="wide">问题文字<input name="label" required></label>
                   <label class="wide">选项（每行一个）<textarea name="options"></textarea></label>
-                  <label class="wide">验证规则（JSON，例如 {"minLength":2}）<textarea name="validation">{}</textarea></label>
+                  <label class="wide">高级验证设置（通常不用填，请保留 {}）<textarea name="validation">{}</textarea></label>
                   <label>排序<input name="sortOrder" type="number" min="0" step="1" value="0"></label>
                   <label>显示状态<select name="status"><option value="active">显示</option><option value="inactive">隐藏</option></select></label>
                 </div>

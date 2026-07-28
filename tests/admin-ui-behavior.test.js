@@ -152,7 +152,7 @@ async function createHarness() {
   const recordSearch = add("#record-search-form", form(["search"]));
   const recordAction = add("#record-action-form", form(["registrationId", "seatId"]));
   const sheetForm = add("#sheet-form", form(["spreadsheetId"]));
-  for (const selector of ["#admin-status", "#connection-status", "#event-list", "#session-list", "#seat-list", "#question-list", "#record-list", "#attendance-list", "#selected-activity", "#selected-activity-title", "#selected-activity-meta", "#selected-activity-sheet", "#finalize-draft", "#delete-draft", "#delete-empty-event", "#min-session-field", "#max-session-field", "#seat-zone-field", "#activity-empty-state", "#clear-search", "#test-sheet", "#switch-sheet", "#new-activity", "#save-event", "#save-session", "#save-seat-plan", "#save-question"]) add(selector);
+  for (const selector of ["#admin-status", "#connection-status", "#event-list", "#session-list", "#seat-list", "#question-list", "#record-list", "#attendance-list", "#selected-activity", "#selected-activity-title", "#selected-activity-meta", "#selected-activity-sheet", "#finalize-draft", "#delete-draft", "#delete-empty-event", "#min-session-field", "#max-session-field", "#seat-zone-field", "#activity-empty-state", "#clear-search", "#test-sheet", "#switch-sheet", "#new-activity", "#new-session", "#session-editor-mode", "#save-event", "#save-session", "#save-seat-plan", "#save-question"]) add(selector);
   const selector = add("#activity-selector", new FakeElement("select"));
   const sections = ["#sessions", "#seats", "#questions", "#records", "#attendance"].map((id) => add(id));
   const navLinks = ["#events", "#sessions", "#seats", "#questions", "#records", "#attendance"].map((href) => {
@@ -408,6 +408,33 @@ test("session, seat-plan, and question saves show progress and ignore repeated c
   sessionSave.success({ ok: true, data: {} });
   assert.equal(ui.elements.get("#admin-status").textContent, "场次保存成功。");
   assert.equal(ui.elements.get("#save-session").disabled, false);
+});
+
+test("a successful session save clears editing state and reports the current session total", async () => {
+  const ui = await createHarness();
+  ui.selector.value = "B";
+  ui.selector.dispatch("change");
+  ui.requests.at(-1).success({ ok: true, data: dashboard("B", "Activity B") });
+  ui.sessionForm.elements.sessionId.value = "session-B";
+  ui.sessionForm.elements.title.value = "Updated session";
+
+  ui.sessionForm.dispatch("submit");
+  const sessionSave = ui.mutations.find((item) => item.kind === "session");
+  sessionSave.success({ ok: true, data: {} });
+  const refreshed = dashboard("B", "Activity B");
+  refreshed.sessions.push({
+    eventId: "B", sessionId: "session-B-2", title: "Session B2",
+    speaker: "Speaker 2", location: "Hall", startsAt: "", endsAt: "",
+    capacity: 10, required: false, groupRule: "", status: "open"
+  });
+  ui.requests.at(-1).success({ ok: true, data: refreshed });
+
+  assert.equal(ui.sessionForm.elements.eventId.value, "B");
+  assert.equal(ui.sessionForm.elements.sessionId.value, "");
+  assert.equal(ui.sessionForm.elements.title.value, "");
+  assert.equal(ui.elements.get("#session-editor-mode").textContent, "正在新增场次");
+  assert.equal(ui.elements.get("#save-session").textContent, "保存新场次");
+  assert.equal(ui.elements.get("#admin-status").textContent, "场次保存成功，目前已有 2 个场次。");
 });
 
 test("administrator UI omits an absent event ID and attaches the selected ID to seat and record actions", async () => {

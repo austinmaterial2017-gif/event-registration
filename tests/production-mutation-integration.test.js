@@ -597,7 +597,8 @@ async function runAdminUiThroughRealService(system) {
     "#finalize-draft", "#delete-draft", "#delete-empty-event",
     "#min-session-field", "#max-session-field", "#seat-zone-field",
     "#activity-empty-state", "#clear-search", "#test-sheet", "#switch-sheet", "#new-activity",
-    "#save-event", "#save-session", "#save-seat-plan", "#save-question"
+    "#save-event", "#save-session", "#save-seat-plan", "#save-question",
+    "#new-session", "#session-editor-mode"
   ]) add(selector);
   const selector = add("#activity-selector", new UiElement("select"));
   const sections = ["#sessions", "#seats", "#questions", "#records", "#attendance"]

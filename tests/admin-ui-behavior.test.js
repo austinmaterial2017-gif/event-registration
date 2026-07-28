@@ -21,6 +21,8 @@ class FakeElement {
     this.disabled = false;
     this.focusCount = 0;
     this.scrollCalls = [];
+    this.valid = true;
+    this.reportValidityCount = 0;
   }
 
   addEventListener(type, handler) {
@@ -41,6 +43,8 @@ class FakeElement {
   removeAttribute(name) { this.attributes.delete(name); }
   focus() { this.focusCount += 1; }
   scrollIntoView(options) { this.scrollCalls.push(options); }
+  checkValidity() { return this.valid; }
+  reportValidity() { this.reportValidityCount += 1; return this.valid; }
   reset() {
     for (const field of Object.values(this.elements)) {
       field.value = "";
@@ -146,6 +150,7 @@ async function createHarness() {
   const elements = new Map();
   const add = (selector, node = new FakeElement()) => (elements.set(selector, node), node);
   const eventForm = add("#event-form", form(["eventId", "title", "description", "status", "opensAt", "closesAt", "location", "selectionMode", "minChoices", "maxChoices", "seatMode", "seatMapLabel", "seatZones", "showOpeningCountdown", "showClosingCountdown", "cancellationEnabled", "seatExchangeEnabled", "seatHoldsEnabled", "seatHoldMinutes"]));
+  eventForm.elements.seatHoldMinutes.value = "5";
   const sessionForm = add("#session-form", form(["eventId", "sessionId", "title", "speaker", "startsAt", "endsAt", "location", "capacity", "required", "groupRule", "status"]));
   const seatForm = add("#seat-form", form(["eventId", "sessionId", "mode", "zoneName", "rows", "seatsPerRow"]));
   const questionForm = add("#question-form", form(["eventId", "questionId", "label", "type", "options", "validation", "sortOrder", "status", "required", "showOnTicket", "duplicateIdentity", "semanticRole"]));
@@ -300,6 +305,30 @@ test("an activity save ignores repeated clicks until the current request settles
 
   ui.eventForm.dispatch("submit");
   assert.equal(ui.mutations.length, 2);
+});
+
+test("an invalid activity edit explains the exact field and stale errors clear after editing", async () => {
+  const ui = await createHarness();
+  ui.selector.value = "B";
+  ui.selector.dispatch("change");
+  ui.requests.at(-1).success({ ok: true, data: dashboard("B", "Activity B") });
+
+  ui.eventForm.elements.minChoices.value = "4";
+  ui.eventForm.elements.maxChoices.value = "2";
+  ui.eventForm.dispatch("submit");
+
+  assert.equal(ui.mutations.length, 0);
+  assert.equal(
+    ui.elements.get("#admin-status").textContent,
+    "最多场次不能少于最少场次。"
+  );
+
+  ui.eventForm.elements.maxChoices.value = "5";
+  ui.eventForm.dispatch("input");
+  assert.equal(
+    ui.elements.get("#admin-status").textContent,
+    "内容已修改，请按“保存活动”确认。"
+  );
 });
 
 test("a successful activity draft save announces the next required setup section", async () => {

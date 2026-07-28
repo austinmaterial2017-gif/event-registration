@@ -20,6 +20,7 @@
 
     function setStatus(message, kind = "success") {
       statusNode.textContent = message;
+      statusNode.dataset.kind = kind;
       statusNode.style.color = kind === "error" ? "var(--danger)" : "var(--green)";
     }
 
@@ -271,6 +272,7 @@
       state.dashboardRequestId += 1;
       document.querySelector("#event-form").reset();
       document.querySelector("#event-form").elements.eventId.value = "";
+      document.querySelector("#event-form").elements.seatHoldMinutes.value = "5";
       resetRelatedForms();
       renderSelectedActivity({
         draftId: "",
@@ -539,9 +541,40 @@
       return payload;
     }
 
+    function validateEventPayload_(payload, form) {
+      if (typeof form.checkValidity === "function" && !form.checkValidity()) {
+        if (typeof form.reportValidity === "function") form.reportValidity();
+        return "请检查画面中标示的必填栏位或数字。";
+      }
+      if (!String(payload.title || "").trim()) return "请填写活动名称。";
+      if (payload.opensAt && payload.closesAt &&
+          Date.parse(payload.closesAt) <= Date.parse(payload.opensAt)) {
+        return "报名截止时间必须晚于报名开放时间。";
+      }
+      if (!Number.isInteger(payload.minChoices) || payload.minChoices < 0) {
+        return "最少场次必须是 0 或正整数。";
+      }
+      if (!Number.isInteger(payload.maxChoices) || payload.maxChoices < 0) {
+        return "最多场次必须是 0 或正整数。";
+      }
+      if (payload.maxChoices < payload.minChoices) {
+        return "最多场次不能少于最少场次。";
+      }
+      if (!Number.isInteger(payload.seatHoldMinutes) || payload.seatHoldMinutes < 1) {
+        return "锁位分钟数必须是 1 或以上的整数。";
+      }
+      return "";
+    }
+
     function saveEvent(action, activeButton) {
       if (state.eventSavePending) return;
+      const form = document.querySelector("#event-form");
       const payload = eventPayload(action);
+      const validationMessage = validateEventPayload_(payload, form);
+      if (validationMessage) {
+        setStatus(validationMessage, "error");
+        return;
+      }
       if (action && !payload.eventId) {
         setStatus("请先选择一个活动，或先保存新活动。", "error");
         return;
@@ -593,6 +626,11 @@
     document.querySelector("#event-form").addEventListener("submit", (event) => {
       event.preventDefault();
       saveEvent("", document.querySelector("#save-event"));
+    });
+    document.querySelector("#event-form").addEventListener("input", () => {
+      if (statusNode.dataset.kind === "error" && !state.eventSavePending) {
+        setStatus("内容已修改，请按“保存活动”确认。");
+      }
     });
     document.querySelectorAll("#event-form [data-action]").forEach((button) => {
       button.addEventListener("click", () => saveEvent(button.dataset.action, button));

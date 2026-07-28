@@ -418,10 +418,16 @@ test("draft and empty-event deletion require one confirmed pending action", asyn
 test("session, seat-plan, and question saves show progress and ignore repeated clicks", async () => {
   const ui = await createHarness();
 
+  ui.sessionForm.elements.title.value = "Valid session";
+  ui.sessionForm.elements.capacity.value = "0";
   ui.sessionForm.dispatch("submit");
   ui.sessionForm.dispatch("submit");
+  ui.seatForm.elements.mode.value = "none";
   ui.seatForm.dispatch("submit");
   ui.seatForm.dispatch("submit");
+  ui.questionForm.elements.label.value = "Name";
+  ui.questionForm.elements.type.value = "text";
+  ui.questionForm.elements.sortOrder.value = "0";
   ui.questionForm.elements.validation.value = "{}";
   ui.questionForm.dispatch("submit");
   ui.questionForm.dispatch("submit");
@@ -437,6 +443,37 @@ test("session, seat-plan, and question saves show progress and ignore repeated c
   sessionSave.success({ ok: true, data: {} });
   assert.equal(ui.elements.get("#admin-status").textContent, "场次保存成功。");
   assert.equal(ui.elements.get("#save-session").disabled, false);
+});
+
+test("session, seat, question, and record forms reject invalid fields with exact guidance", async () => {
+  const ui = await createHarness();
+  ui.selector.value = "B";
+  ui.selector.dispatch("change");
+  ui.requests.at(-1).success({ ok: true, data: dashboard("B", "Activity B") });
+
+  ui.sessionForm.elements.title.value = "";
+  ui.sessionForm.dispatch("submit");
+  assert.equal(ui.mutations.length, 0);
+  assert.equal(ui.elements.get("#admin-status").textContent, "请填写场次标题。");
+
+  ui.seatForm.elements.mode.value = "self";
+  ui.seatForm.elements.rows.value = "0";
+  ui.seatForm.elements.seatsPerRow.value = "5";
+  ui.seatForm.dispatch("submit");
+  assert.equal(ui.mutations.length, 0);
+  assert.equal(ui.elements.get("#admin-status").textContent, "座位行数必须是 1 或以上的整数。");
+
+  ui.questionForm.elements.label.value = "选择班级";
+  ui.questionForm.elements.type.value = "select";
+  ui.questionForm.elements.options.value = "";
+  ui.questionForm.elements.validation.value = "{}";
+  ui.questionForm.dispatch("submit");
+  assert.equal(ui.mutations.length, 0);
+  assert.equal(ui.elements.get("#admin-status").textContent, "这个问题类型需要至少一个选项（每行一个）。");
+
+  ui.recordActions[0].dispatch("click");
+  assert.equal(ui.mutations.length, 0);
+  assert.equal(ui.elements.get("#admin-status").textContent, "请填写要处理的报名 ID。");
 });
 
 test("a successful session save clears editing state and reports the current session total", async () => {

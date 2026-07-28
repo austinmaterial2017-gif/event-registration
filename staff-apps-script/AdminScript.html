@@ -566,6 +566,77 @@
       return "";
     }
 
+    function formValidityMessage_(form) {
+      if (typeof form.checkValidity === "function" && !form.checkValidity()) {
+        if (typeof form.reportValidity === "function") form.reportValidity();
+        return "请检查画面中标示的必填栏位或数字。";
+      }
+      return "";
+    }
+
+    function validateSessionValues_(values, form) {
+      const nativeMessage = formValidityMessage_(form);
+      if (nativeMessage) return nativeMessage;
+      if (!String(values.title || "").trim()) return "请填写场次标题。";
+      const capacity = Number(values.capacity);
+      if (!Number.isInteger(capacity) || capacity < 0) {
+        return "场次容量必须是 0 或正整数（0 代表不限人数）。";
+      }
+      if (Boolean(values.startsAt) !== Boolean(values.endsAt)) {
+        return "场次开始和结束时间必须一起填写。";
+      }
+      if (values.startsAt && values.endsAt &&
+          Date.parse(values.endsAt) <= Date.parse(values.startsAt)) {
+        return "场次结束时间必须晚于开始时间。";
+      }
+      return "";
+    }
+
+    function validateSeatValues_(values, form) {
+      const nativeMessage = formValidityMessage_(form);
+      if (nativeMessage) return nativeMessage;
+      if (values.mode === "none") return "";
+      const rows = Number(values.rows);
+      const seatsPerRow = Number(values.seatsPerRow);
+      if (!Number.isInteger(rows) || rows < 1) {
+        return "座位行数必须是 1 或以上的整数。";
+      }
+      if (!Number.isInteger(seatsPerRow) || seatsPerRow < 1) {
+        return "每行座位数必须是 1 或以上的整数。";
+      }
+      if (values.mode === "zone" && !String(values.zoneName || "").trim()) {
+        return "区域选座模式需要填写区域名称。";
+      }
+      return "";
+    }
+
+    function validateQuestionValues_(values, form, validation, options) {
+      const nativeMessage = formValidityMessage_(form);
+      if (nativeMessage) return nativeMessage;
+      if (!String(values.label || "").trim()) return "请填写问题文字。";
+      const sortOrder = Number(values.sortOrder);
+      if (!Number.isInteger(sortOrder) || sortOrder < 0) {
+        return "问题排序必须是 0 或正整数。";
+      }
+      if (!validation || typeof validation !== "object" || Array.isArray(validation)) {
+        return "高级验证设置必须是 JSON 对象，例如 {}。";
+      }
+      if (["select", "radio", "checkbox"].includes(values.type) && !options.length) {
+        return "这个问题类型需要至少一个选项（每行一个）。";
+      }
+      return "";
+    }
+
+    function bindEditedFeedback_(form, message) {
+      ["input", "change"].forEach((eventName) => {
+        form.addEventListener(eventName, () => {
+          if (statusNode.dataset.kind === "error" && !state.eventSavePending) {
+            setStatus(message);
+          }
+        });
+      });
+    }
+
     function saveEvent(action, activeButton) {
       if (state.eventSavePending) return;
       const form = document.querySelector("#event-form");
@@ -627,11 +698,10 @@
       event.preventDefault();
       saveEvent("", document.querySelector("#save-event"));
     });
-    document.querySelector("#event-form").addEventListener("input", () => {
-      if (statusNode.dataset.kind === "error" && !state.eventSavePending) {
-        setStatus("内容已修改，请按“保存活动”确认。");
-      }
-    });
+    bindEditedFeedback_(
+      document.querySelector("#event-form"),
+      "内容已修改，请按“保存活动”确认。"
+    );
     document.querySelectorAll("#event-form [data-action]").forEach((button) => {
       button.addEventListener("click", () => saveEvent(button.dataset.action, button));
     });
@@ -669,6 +739,11 @@
       event.preventDefault();
       const form = event.currentTarget;
       const values = formObject(form);
+      const validationMessage = validateSessionValues_(values, form);
+      if (validationMessage) {
+        setStatus(validationMessage, "error");
+        return;
+      }
       const payload = {
         ...values,
         sessionId: values.sessionId || undefined,
@@ -719,7 +794,13 @@
 
     document.querySelector("#seat-form").addEventListener("submit", (event) => {
       event.preventDefault();
-      const values = formObject(event.currentTarget);
+      const form = event.currentTarget;
+      const values = formObject(form);
+      const validationMessage = validateSeatValues_(values, form);
+      if (validationMessage) {
+        setStatus(validationMessage, "error");
+        return;
+      }
       const mode = values.mode;
       const payload = {
         eventId: values.eventId,
@@ -783,10 +864,19 @@
         setStatus("验证规则必须是有效 JSON。", "error");
         return;
       }
+      const options = values.options.split(/\r?\n/)
+        .map((value) => value.trim()).filter(Boolean);
+      const validationMessage = validateQuestionValues_(
+        values, form, validation, options
+      );
+      if (validationMessage) {
+        setStatus(validationMessage, "error");
+        return;
+      }
       const payload = {
         ...values,
         questionId: values.questionId || undefined,
-        options: values.options.split(/\r?\n/).map((value) => value.trim()).filter(Boolean),
+        options,
         validation,
         sortOrder: Number(values.sortOrder),
         required: checked(form, "required"),
@@ -904,6 +994,15 @@
         }
         const form = document.querySelector("#record-action-form");
         const values = formObject(form);
+        if (!String(values.registrationId || "").trim()) {
+          setStatus("请填写要处理的报名 ID。", "error");
+          return;
+        }
+        if (button.dataset.action === "adjust_seat" &&
+            !String(values.seatId || "").trim()) {
+          setStatus("调整座位时，请填写新的座位 ID。", "error");
+          return;
+        }
         if (!window.confirm("确认执行此操作并保留完整历史记录？")) return;
         const payload = {
           eventId: state.selectedEventId,
@@ -921,6 +1020,23 @@
         );
       });
     });
+
+    bindEditedFeedback_(
+      document.querySelector("#session-form"),
+      "场次内容已修改，请按保存确认。"
+    );
+    bindEditedFeedback_(
+      document.querySelector("#seat-form"),
+      "座位设置已修改，请按生成／更新确认。"
+    );
+    bindEditedFeedback_(
+      document.querySelector("#question-form"),
+      "问题内容已修改，请按保存确认。"
+    );
+    bindEditedFeedback_(
+      document.querySelector("#record-action-form"),
+      "报名处理资料已修改，请再次确认操作。"
+    );
 
     document.querySelector("#test-sheet").addEventListener("click", () => {
       const spreadsheetId = document.querySelector("#sheet-form").elements.spreadsheetId.value.trim();

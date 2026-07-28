@@ -2,7 +2,7 @@
   (() => {
     "use strict";
 
-    const state = { dashboard: null, bundles: null, selectedEventId: "", search: "" };
+    const state = { dashboard: null, bundles: null, selectedEventId: "", search: "", dashboardRequestId: 0 };
     const statusNode = document.querySelector("#admin-status");
 
     function setStatus(message, kind = "success") {
@@ -10,16 +10,19 @@
       statusNode.style.color = kind === "error" ? "var(--danger)" : "var(--green)";
     }
 
-    function adminRunner_(success) {
+    function adminRunner_(success, isCurrent = () => true) {
       return google.script.run
         .withSuccessHandler((result) => {
+          if (!isCurrent()) return;
           if (!result || result.ok !== true) {
             setStatus(result && result.message ? result.message : "管理员功能不可用。", "error");
             return;
           }
           success(result.data);
         })
-        .withFailureHandler(() => setStatus("管理员功能不可用。", "error"));
+        .withFailureHandler(() => {
+          if (isCurrent()) setStatus("管理员功能不可用。", "error");
+        });
     }
 
     function element(tag, text, className) {
@@ -74,6 +77,16 @@
       document.querySelectorAll(".selected-required").forEach((section) => {
         section.hidden = !hasSelection;
       });
+      document.querySelectorAll("#event-form [data-action]").forEach((button) => {
+        button.disabled = !hasSelection;
+      });
+      document.querySelectorAll('nav a[href^="#"]').forEach((link) => {
+        const requiresActivity = link.getAttribute("href") !== "#events";
+        if (requiresActivity) {
+          link.setAttribute("aria-disabled", String(!hasSelection));
+          if (!hasSelection) link.removeAttribute("aria-current");
+        }
+      });
       document.querySelector("#activity-empty-state").hidden = hasSelection;
     }
 
@@ -119,12 +132,19 @@
 
     function selectActivity(eventId) {
       state.selectedEventId = String(eventId || "");
+      if (!state.selectedEventId) {
+        const eventForm = document.querySelector("#event-form");
+        eventForm.reset();
+        eventForm.elements.eventId.value = "";
+        renderSelectedActivity(null);
+      }
       resetRelatedForms();
       loadDashboard();
     }
 
     function startNewActivity() {
       state.selectedEventId = "";
+      state.dashboardRequestId += 1;
       document.querySelector("#event-form").reset();
       document.querySelector("#event-form").elements.eventId.value = "";
       resetRelatedForms();
@@ -200,8 +220,11 @@
 
     function loadDashboard(search = state.search) {
       state.search = search;
+      const requestId = ++state.dashboardRequestId;
+      const requestedEventId = state.selectedEventId;
+      const isCurrent = () => state.dashboardRequestId === requestId && state.selectedEventId === requestedEventId;
       setStatus("正在读取管理数据…");
-      adminRunner_(renderDashboard).getAdminDashboard({ eventId: state.selectedEventId || undefined, search });
+      adminRunner_(renderDashboard, isCurrent).getAdminDashboard({ eventId: requestedEventId || undefined, search });
     }
 
     function formObject(form) {
@@ -313,6 +336,10 @@
 
     function saveEvent(action) {
       const payload = eventPayload(action);
+      if (action && !payload.eventId) {
+        setStatus("请先选择一个活动，或先保存新活动。", "error");
+        return;
+      }
       const isNewActivity = !payload.eventId;
       if (action === "reopen") {
         const count = state.dashboard && state.dashboard.records
@@ -480,6 +507,11 @@
     function scrollToAdminSection_(targetId) {
       const target = document.querySelector(targetId);
       if (!target) return;
+      if (target.hidden) {
+        setStatus("请先选择一个活动，再管理该部分。", "error");
+        document.querySelector("#activity-selector").focus();
+        return;
+      }
       if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
         target.scrollIntoView({ behavior: "auto", block: "start" });
       } else {

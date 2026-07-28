@@ -41,6 +41,8 @@
       nav { display: grid; gap: 7px; }
       nav a { padding: 9px 11px; border-left: 2px solid transparent; color: var(--muted); text-decoration: none; }
       nav a:hover, nav a[aria-current="page"] { color: var(--ivory); border-color: var(--magenta); background: rgba(255, 79, 163, .07); }
+      nav a[aria-current="page"] { font-weight: 800; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 4px; }
+      nav a[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
       .workspace { min-width: 0; padding: 34px clamp(18px, 4vw, 54px) 64px; }
       .masthead { display: grid; gap: 22px; margin: 0 auto 28px; max-width: 1420px; }
       .masthead h1 { max-width: 850px; margin: 4px 0 0; font: 650 clamp(34px, 5vw, 68px)/.98 "Iowan Old Style", "Noto Serif SC", Georgia, serif; letter-spacing: -.035em; }

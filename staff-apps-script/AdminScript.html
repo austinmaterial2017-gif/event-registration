@@ -15,7 +15,8 @@
       eventSaveNotice: "",
       sessionSaveNotice: false,
       actionNotice: "",
-      previewSelectedSeatId: ""
+      previewSelectedSeatId: "",
+      previewUsesDraftLayout: false
     };
     const statusNode = document.querySelector("#admin-status");
 
@@ -289,6 +290,7 @@
     function renderDashboard(data) {
       data = data || {};
       state.dashboard = data;
+      state.previewUsesDraftLayout = false;
       const events = Array.isArray(data.events) ? data.events : [];
       const drafts = Array.isArray(data.drafts) ? data.drafts : [];
       if (!events.some((item) => item.eventId === state.selectedEventId)) state.selectedEventId = "";
@@ -652,7 +654,7 @@
           String(seat.sessionId || "") === selectedSessionId)
         : [];
       const zoneMap = new Map();
-      if (savedSeats.length) {
+      if (savedSeats.length && !state.previewUsesDraftLayout) {
         savedSeats.forEach((seat) => {
           const zoneName = String(seat.zone || values.zoneName || "座位区");
           if (!zoneMap.has(zoneName)) zoneMap.set(zoneName, []);
@@ -705,9 +707,12 @@
 
     function renderSeatPreview_() {
       const model = seatPreviewModel_();
-      document.querySelector("#seat-preview-stage").textContent = model.stageLabel;
-      document.querySelector("#seat-preview-message").textContent = model.message;
+      const stage = document.querySelector("#seat-preview-stage");
+      const message = document.querySelector("#seat-preview-message");
       const floor = document.querySelector("#seat-preview-floor");
+      if (!stage || !message || !floor) return;
+      stage.textContent = model.stageLabel;
+      message.textContent = model.message;
       floor.replaceChildren();
       model.zones.forEach((zoneModel) => {
         const zone = element("section", null, "seat-preview-zone");
@@ -953,11 +958,13 @@
     ["input", "change"].forEach((eventName) => {
       document.querySelector("#seat-form").addEventListener(eventName, () => {
         state.previewSelectedSeatId = "";
+        state.previewUsesDraftLayout = true;
         renderSeatPreview_();
       });
     });
 
-    document.querySelector("#expand-seat-preview").addEventListener("click", (event) => {
+    const expandSeatPreviewButton = document.querySelector("#expand-seat-preview");
+    if (expandSeatPreviewButton) expandSeatPreviewButton.addEventListener("click", (event) => {
       const preview = document.querySelector("#seat-preview");
       const expanded = !preview.classList.contains("is-expanded");
       preview.classList.toggle("is-expanded", expanded);
@@ -965,7 +972,7 @@
       event.currentTarget.setAttribute("aria-expanded", String(expanded));
       event.currentTarget.textContent = expanded ? "关闭放大预览" : "放大预览";
     });
-    document.addEventListener("keydown", (event) => {
+    if (typeof document.addEventListener === "function") document.addEventListener("keydown", (event) => {
       if (event.key !== "Escape") return;
       const preview = document.querySelector("#seat-preview");
       if (!preview.classList.contains("is-expanded")) return;

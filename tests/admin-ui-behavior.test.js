@@ -495,7 +495,6 @@ test("seat preview updates from form fields, toggles locally, and never sends a 
   ui.selector.value = "B";
   ui.selector.dispatch("change");
   const data = dashboard("B", "Activity B");
-  data.seats = [];
   ui.requests.at(-1).success({ ok: true, data });
 
   ui.eventForm.elements.seatMapLabel.value = "WHITE BOARD";

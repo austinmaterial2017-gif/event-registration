@@ -25,6 +25,7 @@ const publicFiles = [
 const staffFiles = [
   "staff-apps-script/appsscript.json",
   "staff-apps-script/Repository.gs",
+  "staff-apps-script/InternalClient.gs",
   "staff-apps-script/AttendanceService.gs",
   "staff-apps-script/AdminService.gs",
   "staff-apps-script/Code.gs",

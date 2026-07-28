@@ -24,6 +24,7 @@ const publicFiles = [
 const staffFiles = [
   "staff-apps-script/appsscript.json",
   "staff-apps-script/Repository.gs",
+  "staff-apps-script/InternalClient.gs",
   "staff-apps-script/AttendanceService.gs",
   "staff-apps-script/AdminService.gs",
   "staff-apps-script/Code.gs",
@@ -267,4 +268,17 @@ test("the paste-ready staff bundle contains every HTML template referenced by bu
       `${templateName}.html in the paste-ready bundle is stale`
     );
   }
+});
+
+test("the paste-ready staff bundle contains the internal backend client used by staff and admin services", async () => {
+  const staffBundle = await readFile(new URL("../source-bundles/staff-admin.txt", import.meta.url), "utf8");
+  const sections = bundleSections(staffBundle);
+  const internalClient = sections.get("staff-apps-script/InternalClient.gs") || "";
+
+  assert.equal(
+    sections.has("staff-apps-script/InternalClient.gs"),
+    true,
+    "staff deployment bundle is missing InternalClient.gs"
+  );
+  assert.match(internalClient, /function\s+invokeInternalBackend_\s*\(/);
 });

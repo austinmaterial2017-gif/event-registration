@@ -1,4 +1,4 @@
-import { verifyTicket } from "./api.js";
+import { verifyTicket } from "./api.js?v=20260728-stable";
 
 const STATUS_LABELS = {
   active: "凭证有效",

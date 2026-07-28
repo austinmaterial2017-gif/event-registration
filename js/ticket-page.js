@@ -1,6 +1,6 @@
 import {
   cancelRegistration, exchangeSeat, lookupTicket, updateRegistrationSessions
-} from "./api.js";
+} from "./api.js?v=20260728-stable";
 import { renderQrSvg } from "./qr.js";
 import { consumeStoredTicketResult } from "./registration-success.js";
 import { PUBLIC_BASE_URL } from "./config.js";

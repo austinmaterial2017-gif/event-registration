@@ -1,5 +1,5 @@
-import { createRegistration, getEvent } from "./api.js";
-import { createSeatHold, releaseSeatHold } from "./api.js";
+import { createRegistration, getEvent } from "./api.js?v=20260728-stable";
+import { createSeatHold, releaseSeatHold } from "./api.js?v=20260728-stable";
 import { applyRegistrationGate, getFieldControlSpec, getSeatModeState, validateRegistrationDraft } from "./registration-flow.js";
 import { transitionToTicket } from "./registration-success.js";
 

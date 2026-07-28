@@ -275,6 +275,8 @@
       document.querySelector("#event-form").reset();
       document.querySelector("#event-form").elements.eventId.value = "";
       document.querySelector("#event-form").elements.seatHoldMinutes.value = "5";
+      document.querySelector("#event-form").elements.registrationTimeLimitMinutes.value = "5";
+      document.querySelector("#event-form").elements.checkInMode.value = "session";
       resetRelatedForms();
       renderSelectedActivity({
         draftId: "",
@@ -461,6 +463,9 @@
       form.elements.seatExchangeEnabled.checked = item.seatExchangeEnabled === true;
       form.elements.seatHoldsEnabled.checked = item.seatHoldsEnabled === true;
       form.elements.seatHoldMinutes.value = item.seatHoldMinutes || 5;
+      form.elements.registrationTimeLimitMinutes.value =
+        item.registrationTimeLimitMinutes ?? 5;
+      form.elements.checkInMode.value = item.checkInMode || "session";
       updateConditionalEventFields_();
     }
 
@@ -539,7 +544,9 @@
         cancellationEnabled: checked(form, "cancellationEnabled"),
         seatExchangeEnabled: checked(form, "seatExchangeEnabled"),
         seatHoldsEnabled: checked(form, "seatHoldsEnabled"),
-        seatHoldMinutes: Number(values.seatHoldMinutes)
+        seatHoldMinutes: Number(values.seatHoldMinutes),
+        registrationTimeLimitMinutes: Number(values.registrationTimeLimitMinutes),
+        checkInMode: values.checkInMode
       };
       if (eventId) payload.eventId = eventId;
       return payload;
@@ -566,6 +573,13 @@
       }
       if (!Number.isInteger(payload.seatHoldMinutes) || payload.seatHoldMinutes < 1) {
         return "锁位分钟数必须是 1 或以上的整数。";
+      }
+      if (!Number.isInteger(payload.registrationTimeLimitMinutes) ||
+          payload.registrationTimeLimitMinutes < 0) {
+        return "报名操作倒计时必须是 0 或正整数。";
+      }
+      if (!["session", "event", "none"].includes(payload.checkInMode)) {
+        return "请选择有效的签到方式。";
       }
       return "";
     }

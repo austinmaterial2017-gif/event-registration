@@ -227,7 +227,13 @@ function publicEventSummary_(event, policy) {
     showClosingCountdown: policy.showClosingCountdown === true,
     cancellationEnabled: policy.cancellationEnabled === true,
     exchangeEnabled: policy.seatExchangeEnabled === true,
-    seatHoldsEnabled: policy.seatHoldsEnabled === true
+    seatHoldsEnabled: policy.seatHoldsEnabled === true,
+    registrationTimeLimitMinutes: publicNonNegativeNumber_(
+      policy.registrationTimeLimitMinutes, 5
+    ),
+    checkInMode: ['session', 'event', 'none'].indexOf(
+      String(policy.checkInMode || 'session').toLowerCase()
+    ) === -1 ? 'session' : String(policy.checkInMode || 'session').toLowerCase()
   };
 }
 

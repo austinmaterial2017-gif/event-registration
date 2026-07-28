@@ -269,7 +269,11 @@ function validateActivityDraftDocument_(value) {
       cancellationEnabled: event.cancellationEnabled === true,
       seatExchangeEnabled: event.seatExchangeEnabled === true,
       seatHoldsEnabled: event.seatHoldsEnabled === true,
-      seatHoldMinutes: adminPositiveInteger_(adminField_(event, 'seatHoldMinutes', '', 5))
+      seatHoldMinutes: adminPositiveInteger_(adminField_(event, 'seatHoldMinutes', '', 5)),
+      registrationTimeLimitMinutes: adminNonNegativeInteger_(
+        adminField_(event, 'registrationTimeLimitMinutes', '', 5)
+      ),
+      checkInMode: adminCheckInMode_(adminField_(event, 'checkInMode', '', 'session'))
     },
     sessions: sessions.map(function(session) {
       var copy = {};
@@ -796,6 +800,14 @@ function saveAdminEvent_(payload, actor) {
     }
     if (Object.prototype.hasOwnProperty.call(request, 'seatHoldMinutes')) {
       policy.seatHoldMinutes = adminPositiveInteger_(request.seatHoldMinutes);
+    }
+    if (Object.prototype.hasOwnProperty.call(request, 'registrationTimeLimitMinutes')) {
+      policy.registrationTimeLimitMinutes = adminNonNegativeInteger_(
+        request.registrationTimeLimitMinutes
+      );
+    }
+    if (Object.prototype.hasOwnProperty.call(request, 'checkInMode')) {
+      policy.checkInMode = adminCheckInMode_(request.checkInMode);
     }
     var result = adminEventProjection_(row, settings);
     if (isNewEvent) {
@@ -1646,6 +1658,14 @@ function adminPositiveInteger_(value) {
   return number;
 }
 
+function adminCheckInMode_(value) {
+  var normalized = String(value || '').toLowerCase();
+  if (normalized !== 'session' && normalized !== 'event' && normalized !== 'none') {
+    adminError_('INVALID_REQUEST');
+  }
+  return normalized;
+}
+
 function adminTruthy_(value) {
   return value === true || value === 1 || String(value).toLowerCase() === 'true' || String(value) === '1';
 }
@@ -1694,6 +1714,11 @@ function adminEventProjection_(event, settings) {
     seatExchangeEnabled: policy.seatExchangeEnabled === true,
     seatHoldsEnabled: policy.seatHoldsEnabled === true,
     seatHoldMinutes: adminPositiveInteger_(policy.seatHoldMinutes || 5),
+    registrationTimeLimitMinutes: adminNonNegativeInteger_(
+      policy.registrationTimeLimitMinutes === undefined
+        ? 5 : policy.registrationTimeLimitMinutes
+    ),
+    checkInMode: adminCheckInMode_(policy.checkInMode || 'session'),
     createdAt: String(event.createdAt || ''),
     updatedAt: String(event.updatedAt || '')
   };

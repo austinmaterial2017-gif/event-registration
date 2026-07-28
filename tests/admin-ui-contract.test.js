@@ -36,6 +36,7 @@ test("administrator markup is a responsive labelled control room for every requi
   for (const fieldName of [
     "opensAt", "closesAt", "location", "selectionMode", "minChoices", "maxChoices",
     "showOpeningCountdown", "showClosingCountdown", "cancellationEnabled", "seatExchangeEnabled",
+    "registrationTimeLimitMinutes", "checkInMode",
     "speaker", "startsAt", "endsAt", "capacity", "required", "groupRule",
     "showOnTicket", "duplicateIdentity", "validation", "sortOrder"
   ]) {
@@ -52,6 +53,9 @@ test("administrator markup is a responsive labelled control room for every requi
   assert.match(admin, /重新开放.*现有报名人数/);
   assert.match(admin, /旧数据.*保留/);
   assert.match(admin, /不会自动迁移/);
+  assert.match(admin, /相同文字代表同一组/);
+  assert.match(admin, /科学讲师 A.*科学.*科学讲师 B.*科学/s);
+  assert.match(admin, /BI 讲师 A.*BI 讲师 B.*“BI”/s);
   assert.match(admin, /data-copy-bundle="publicBackend"/);
   assert.match(admin, /data-copy-bundle="staffAdmin"/);
   assert.match(admin, /AdminScript/);

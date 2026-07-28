@@ -217,6 +217,14 @@
                 <div class="fields">
                   <label>锁位分钟数<input name="seatHoldMinutes" type="number" min="1" step="1" value="5"></label>
                   <label class="check"><input name="seatHoldsEnabled" type="checkbox">选座时暂时锁位</label>
+                  <label>报名操作倒计时（分钟；0 = 不限时）
+                    <input name="registrationTimeLimitMinutes" type="number" min="0" step="1" value="5">
+                  </label>
+                  <label>签到方式<select name="checkInMode">
+                    <option value="session">每个场次分别签到</option>
+                    <option value="event">整个活动只签到一次</option>
+                    <option value="none">不需要签到</option>
+                  </select></label>
                 </div>
                 <div class="fields">
                   <label class="wide">活动名称<input name="title" required maxlength="200"></label>
@@ -292,7 +300,10 @@
                   <label>场次开始时间（讲座当天）<input name="startsAt" type="datetime-local"></label>
                   <label>场次结束时间（讲座当天）<input name="endsAt" type="datetime-local"></label>
                   <label>容量（0 = 不限人数）<input name="capacity" type="number" min="0" step="1" value="0"></label>
-                  <label>分组规则<input name="groupRule"></label>
+                  <label class="wide">分组规则（选填）
+                    <input name="groupRule" placeholder="例如：科学">
+                    <small>相同文字代表同一组，参加者最多选该组 1 场；没有限制请留空。例如：科学讲师 A 填“科学”、科学讲师 B 也填“科学”；BI 讲师 A 和 BI 讲师 B 都填“BI”。</small>
+                  </label>
                 </div>
                 <label class="check"><input name="required" type="checkbox">这是必选场次</label>
                   <button id="save-session" type="submit">保存新场次</button>

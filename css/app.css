@@ -32,6 +32,19 @@ button, input, textarea, select { font:inherit; } button { cursor:pointer; }
 .countdown, .notice { margin:0 0 18px; padding:13px 16px; color:var(--wine-deep); background:#ffe2a9; border-radius:14px; }.notice { color:var(--ink); }
 .form-card { padding:22px; margin:16px 0; }.card-title { display:flex; align-items:baseline; gap:12px; margin-bottom:9px; }.helper { margin:0 0 16px; color:var(--muted); font-size:.9rem; }.choice-grid { display:grid; gap:10px; border:0; padding:0; margin:0; }
 .choice, .seat-choice { border:1px solid var(--line); border-radius:15px; padding:13px; display:flex; align-items:flex-start; gap:10px; background:rgba(255,241,200,.48); }.choice:focus-within, .seat-choice:focus-within { outline:2px solid var(--wine); outline-offset:2px; }.choice input, .seat-choice input { margin-top:4px; accent-color:var(--wine); }.choice strong { display:block; }.choice small { display:block; color:var(--muted); margin-top:3px; }
+.seat-map { overflow:auto; padding:14px; border:1px solid var(--line); border-radius:18px; background:linear-gradient(180deg,rgba(18,14,22,.98),rgba(30,22,33,.97)); color:#fff7df; }
+.seat-map-stage { min-width:260px; margin:0 auto 16px; padding:10px 24px; border-radius:6px; background:#fffaf0; color:#1b1420; text-align:center; font-weight:800; letter-spacing:.08em; box-shadow:0 8px 24px rgba(255,250,240,.18); }
+.seat-map-legend { display:flex; flex-wrap:wrap; gap:8px 14px; margin-bottom:16px; font-size:.78rem; color:#d9cad9; }
+.seat-map-key::before { content:""; display:inline-block; width:11px; height:11px; margin-right:6px; border-radius:3px; vertical-align:-1px; background:#443b4d; }
+.seat-map-key.is-selected::before { background:#26d6b5; }.seat-map-key.is-unavailable::before { background:#756d79; opacity:.55; }
+.seat-map-floor { display:flex; align-items:start; justify-content:center; gap:8px; min-width:max-content; padding:22px 6px 12px; background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px); background-size:28px 28px; }
+.seat-map-zone { display:grid; gap:8px; min-width:58px; }.seat-map-zone-name { color:#cdbdce; text-align:center; font-size:.76rem; }
+.seat-map-grid { display:grid; grid-auto-rows:54px; grid-auto-columns:54px; gap:7px; align-items:stretch; }
+.seat-map .seat-choice { min-width:0; min-height:0; padding:0; align-items:stretch; border-radius:11px; background:#443b4d; border-color:#62566c; overflow:hidden; }
+.seat-map .seat-choice input { position:absolute; opacity:0; pointer-events:none; }
+.seat-map .seat-choice span { display:grid; place-items:center; width:100%; height:100%; padding:4px; font-weight:800; font-size:.78rem; text-align:center; }
+.seat-map .seat-choice:has(input:checked) { background:#26d6b5; color:#10251f; border-color:#55f2d4; box-shadow:0 0 0 2px rgba(38,214,181,.24); }
+.seat-map .seat-choice.is-unavailable { background:#3c3740; color:#8f8792; border-color:#4a444d; cursor:not-allowed; opacity:.58; }
 .question-stack { display:grid; gap:18px; }.question label, .question legend { display:block; font-weight:750; margin-bottom:7px; }.required-mark { color:var(--wine); }.optional-mark { color:var(--muted); font-weight:400; font-size:.82rem; }.question input:not([type="radio"]):not([type="checkbox"]), .question textarea, .question select { width:100%; min-height:45px; padding:10px 12px; border:1px solid var(--line); border-radius:12px; background:var(--cream); color:var(--ink); }.question textarea { min-height:100px; resize:vertical; }.inline-options { display:grid; gap:8px; }.inline-options label { font-weight:400; margin:0; display:flex; gap:9px; align-items:center; }.inline-options input { accent-color:var(--wine); }
 .error-summary { border:1px solid var(--danger); border-radius:14px; background:#ffd7c5; color:var(--wine-deep); padding:14px 17px; margin:0 0 16px; }.error-summary ul { margin:6px 0 0; padding-left:21px; }.confirmation { background:linear-gradient(130deg, #ffe0a7, var(--apricot)); }.confirmation p { color:var(--muted); }.confirmation .primary-button { width:100%; }
 .review-details { display:grid; gap:11px; margin:18px 0; }.review-details dl { margin:0; border-top:1px solid rgba(101,4,11,.16); padding-top:10px; }.review-details dt { color:var(--wine); font-size:.82rem; font-weight:800; }.review-details dd { margin:3px 0 0; color:var(--ink); }.review-actions { display:grid; gap:10px; }.success-card { text-align:center; padding:45px 22px; }.success-card h2 { font-size:2rem; }.success-card p { color:var(--muted); } footer { padding:26px 0 36px; color:var(--muted); font-size:.8rem; }
@@ -88,6 +101,76 @@ button, input, textarea, select { font:inherit; } button { cursor:pointer; }
 .ticket-display-fields dd {
   margin: 0.25rem 0 0;
   font-weight: 700;
+}
+
+.ticket-session-management {
+  display: grid;
+  gap: 1rem;
+  margin: 1rem 1.5rem;
+  padding: 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: 1.25rem;
+  background: rgba(255, 241, 200, 0.55);
+}
+
+.ticket-management-head h3,
+.ticket-management-head p {
+  margin: 0.2rem 0;
+}
+
+.ticket-management-head > p:last-child,
+.ticket-management-reason {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.ticket-management-sessions {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.ticket-management-session {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.9rem;
+  border: 1px solid rgba(101, 4, 11, 0.18);
+  border-radius: 0.9rem;
+  background: rgba(255, 213, 139, 0.55);
+}
+
+.ticket-management-session > label:first-child {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+}
+
+.ticket-management-session input {
+  margin-top: 0.3rem;
+  accent-color: var(--wine);
+}
+
+.ticket-management-session select {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 0.35rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  background: var(--cream);
+  color: var(--ink);
+}
+
+.secondary-button:disabled,
+button:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+@media (max-width: 560px) {
+  .ticket-session-management {
+    margin-inline: 1rem;
+    padding: 1rem;
+  }
 }
 
 .ticket-actions {

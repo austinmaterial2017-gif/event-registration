@@ -145,7 +145,7 @@ test("registration writes use pending batches, activate last, and expose recover
 
 test("ticket lookup, cancellation, and exchange preserve privacy and historical records", async () => {
   const ticket = await source("TicketService.gs");
-  for (const name of ["lookupTicket", "cancelRegistration", "exchangeSeat"]) {
+  for (const name of ["lookupTicket", "cancelRegistration", "exchangeSeat", "updateRegistrationSessions"]) {
     assert.match(ticket, new RegExp(`function\\s+${name}\\s*\\(\\s*payload\\s*\\)`));
   }
   assert.match(ticket, /verificationValue/);

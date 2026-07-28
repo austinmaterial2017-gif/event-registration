@@ -43,6 +43,7 @@ var PUBLIC_ROUTES = {
   'verifyTicket': function(payload) { return verifyTicket(payload); },
   'cancelRegistration': function(payload) { return cancelRegistration(payload); },
   'exchangeSeat': function(payload) { return exchangeSeat(payload); },
+  'updateRegistrationSessions': function(payload) { return updateRegistrationSessions(payload); },
   'probeSheetSwitch': function(payload) { return probeSheetSwitch(payload); },
   'internalRequest': function(payload) { return handleInternalRequest_(payload); }
 };

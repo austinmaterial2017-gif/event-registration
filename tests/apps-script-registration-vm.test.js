@@ -347,6 +347,50 @@ test("owner ticket lookup resolves Sheet B from the private index without readin
   assert.deepEqual(harness.routedEventIds, ["event-b"]);
 });
 
+test("a verified ticket owner can add and remove sessions without creating another ticket", async () => {
+  const harness = await createHarness();
+  const created = harness.context.createRegistration(registrationPayload({ sessionIds: ["s1"] }));
+  assert.equal(created.ok, true, JSON.stringify(created));
+  const originalToken = created.data.token;
+  const routeSheet = sheetWithHeader({ sheets: harness.registrySheets }, "tokenDigest");
+  const originalRoute = sheetObjects(routeSheet)[0];
+
+  const added = harness.context.updateRegistrationSessions({
+    ticketNumber: created.data.ticketNumber,
+    verificationValue: "alice@example.com",
+    sessionIds: ["s1", "s2"],
+    seatChoices: []
+  });
+
+  assert.equal(added.ok, true, JSON.stringify(added));
+  assert.deepEqual(
+    Array.from(added.data.sessions, (session) => session.sessionId).sort(),
+    ["s1", "s2"]
+  );
+  assert.equal(added.data.registrationId, created.data.registrationId);
+  assert.equal(added.data.ticketNumber, created.data.ticketNumber);
+  assert.equal(added.data.token, originalToken);
+  assert.equal(sheetObjects(routeSheet).length, 1);
+  assert.deepEqual(sheetObjects(routeSheet)[0], originalRoute);
+
+  const removed = harness.context.updateRegistrationSessions({
+    ticketNumber: created.data.ticketNumber,
+    verificationValue: "alice@example.com",
+    sessionIds: ["s2"],
+    seatChoices: []
+  });
+
+  assert.equal(removed.ok, true, JSON.stringify(removed));
+  assert.deepEqual(Array.from(removed.data.sessions, (session) => session.sessionId), ["s2"]);
+  const records = sheetObjects(sheetWithHeader(harness, "sessionIds"));
+  const activeSessionIds = records
+    .filter((record) => record.status === "active")
+    .flatMap((record) => JSON.parse(record.sessionIds));
+  assert.deepEqual(activeSessionIds, ["s2"]);
+  assert.ok(records.some((record) =>
+    record.status === "cancelled" && JSON.parse(record.sessionIds).includes("s1")));
+});
+
 test("ticket route publication failure compensates the activity registration and restores its seat", async () => {
   const eventRows = rowsForEvent("event-a", "Activity A");
   eventRows["活动"][0].seatMode = "self";

@@ -196,6 +196,131 @@ function exchangeSeat(payload) {
   });
 }
 
+/**
+ * Updates the sessions attached to one verified ticket.
+ * The complete locked transaction is implemented by the ticket service.
+ * @param {Object} payload
+ * @return {Object} ApiResult<Ticket>
+ */
+function updateRegistrationSessions(payload) {
+  return runTicketService_(function() {
+    return withScriptLock(function() {
+      var registry = getRegistrySpreadsheet_();
+      requireNoSwitchMaintenance_(registry);
+      var route = requireTicketNumberRoute_(registry, payload);
+      requireActiveTicketRoute_(route);
+      var spreadsheet = getEventSpreadsheet_(registry, route.eventId);
+      var recoveryFailures = recoverPendingTransactions_(spreadsheet);
+      if (recoveryFailures.length) ticketError_('INTEGRITY_ERROR');
+      cleanupStaleTicketSeats_(spreadsheet);
+      var registrationSheetName = ticketSheetNameByHeader_('sessionIds');
+      var registrations = readRows(spreadsheet, registrationSheetName);
+      var match = requireVerifiedTicket_(spreadsheet, registry, payload, registrations, route);
+      var now = new Date();
+      var event = requireOpenEvent_(spreadsheet, match.event.eventId, now);
+      var sessionSheetName = ticketSheetNameByHeaders_(['sessionId', 'speaker', 'capacity']);
+      var sessions = readRows(spreadsheet, sessionSheetName).filter(function(session) {
+        var status = String(session.status || '').toLowerCase();
+        return session.eventId === event.eventId && (status === 'active' || status === 'open');
+      });
+      var selectedSessions = validateSessionSelection_(
+        event, sessions, payload && payload.sessionIds, match.policy
+      );
+      validateSessionCapacity_(selectedSessions, registrations.filter(function(record) {
+        return record.registrationId !== match.registrationId;
+      }));
+      validateSessionConflicts_(selectedSessions);
+
+      var targetById = {};
+      selectedSessions.forEach(function(session) { targetById[session.sessionId] = true; });
+      var currentById = {};
+      match.records.forEach(function(record) {
+        if (!REGISTRATION_ACTIVE_STATUSES[String(record.status || '').toLowerCase()]) return;
+        parseStringArray_(record.sessionIds).forEach(function(sessionId) {
+          currentById[sessionId] = record;
+        });
+      });
+      var addedIds = Object.keys(targetById).filter(function(sessionId) { return !currentById[sessionId]; });
+      var removedIds = Object.keys(currentById).filter(function(sessionId) { return !targetById[sessionId]; });
+      if (!addedIds.length && !removedIds.length) return ticketProjectionFromRecords_(match);
+
+      var rowSnapshots = snapshotTicketRows_(spreadsheet, registrationSheetName, match.records);
+      var appendedRows = [];
+      var auditSnapshot = null;
+      try {
+        var updatedAt = now.toISOString();
+        updateTicketRegistrationRows_(spreadsheet, match.records, function(record) {
+          var recordIds = parseStringArray_(record.sessionIds);
+          if (recordIds.some(function(sessionId) { return removedIds.indexOf(sessionId) !== -1; })) {
+            record.status = 'cancelled';
+            record.updatedAt = updatedAt;
+          }
+          return record;
+        });
+        addedIds.forEach(function(sessionId) {
+          var historical = match.records.filter(function(record) {
+            return String(record.status || '').toLowerCase() === 'cancelled' &&
+              parseStringArray_(record.sessionIds).indexOf(sessionId) !== -1;
+          })[0];
+          if (historical) {
+            historical.status = 'active';
+            historical.updatedAt = updatedAt;
+            var historicalValues = normalizeRow_(registrationSheetName, historical);
+            getRequiredSheet_(spreadsheet, registrationSheetName)
+              .getRange(historical.rowNumber, 1, 1, historicalValues.length)
+              .setValues([historicalValues]);
+            return;
+          }
+          var source = match.records[0];
+          var newRecord = {
+            registrationId: match.registrationId,
+            eventId: match.event.eventId,
+            participantId: source.participantId,
+            ticketNumber: match.ticketNumber,
+            status: 'active',
+            sessionIds: JSON.stringify([sessionId]),
+            seatChoices: JSON.stringify([]),
+            answers: source.answers,
+            createdAt: updatedAt,
+            updatedAt: updatedAt
+          };
+          var sheet = getRequiredSheet_(spreadsheet, registrationSheetName);
+          var rowNumber = sheet.getLastRow() + 1;
+          var values = normalizeRow_(registrationSheetName, newRecord);
+          sheet.getRange(rowNumber, 1, 1, values.length).setValues([values]);
+          appendedRows.push({ sheet: sheet, row: rowNumber });
+        });
+        auditSnapshot = appendTicketAudit_(spreadsheet, 'UPDATE_REGISTRATION_SESSIONS', match.registrationId, {
+          addedSessionIds: addedIds,
+          removedSessionIds: removedIds
+        });
+        var refreshedRegistrations = readRows(spreadsheet, registrationSheetName);
+        var refreshed = requireVerifiedTicket_(
+          spreadsheet, registry, payload, refreshedRegistrations, route
+        );
+        return ticketProjectionFromRecords_(refreshed);
+      } catch (error) {
+        var restoreFailures = restoreTicketSnapshots_(rowSnapshots);
+        appendedRows.reverse().forEach(function(appended) {
+          try {
+            appended.sheet.deleteRow(appended.row);
+          } catch (deleteError) {
+            restoreFailures.push(deleteError);
+          }
+        });
+        var auditRollbackFailure = rollbackTicketAudit_(auditSnapshot);
+        if (auditRollbackFailure) restoreFailures.push(auditRollbackFailure);
+        if (restoreFailures.length) {
+          raiseTicketIntegrityError_(
+            spreadsheet, match.registrationId, 'UPDATE_REGISTRATION_SESSIONS', restoreFailures
+          );
+        }
+        throw error;
+      }
+    });
+  });
+}
+
 function runTicketService_(callback) {
   try {
     return { ok: true, data: callback() };
@@ -324,9 +449,14 @@ function ticketRegistrationRouteStatus_(records) {
   })) {
     return 'cancelled';
   }
-  if (records.every(function(record) {
+  var hasActive = records.some(function(record) {
     return REGISTRATION_ACTIVE_STATUSES[String(record.status || '').toLowerCase()];
-  })) {
+  });
+  var allKnown = records.every(function(record) {
+    var status = String(record.status || '').toLowerCase();
+    return REGISTRATION_ACTIVE_STATUSES[status] || status === 'cancelled';
+  });
+  if (hasActive && allKnown) {
     return 'active';
   }
   ticketError_('INTEGRITY_ERROR');
@@ -409,6 +539,7 @@ function cleanupStaleTicketSeats_(spreadsheet) {
 function collectTicketSessions_(spreadsheet, records, eventId) {
   var selected = {};
   records.forEach(function(record) {
+    if (!REGISTRATION_ACTIVE_STATUSES[String(record.status || '').toLowerCase()]) return;
     parseStringArray_(record.sessionIds).forEach(function(sessionId) { selected[sessionId] = true; });
   });
   return readRows(spreadsheet, '场次').filter(function(session) {
@@ -693,5 +824,16 @@ function ticketSheetNameByHeader_(header) {
       SHEET_DEFINITIONS[name].indexOf(header) !== -1;
   });
   if (names.length !== 1) ticketError_('INTERNAL');
+  return names[0];
+}
+
+function ticketSheetNameByHeaders_(headers) {
+  var required = Array.isArray(headers) ? headers : [];
+  var names = Object.keys(SHEET_DEFINITIONS || {}).filter(function(name) {
+    return Array.isArray(SHEET_DEFINITIONS[name]) && required.every(function(header) {
+      return SHEET_DEFINITIONS[name].indexOf(header) !== -1;
+    });
+  });
+  if (!required.length || names.length !== 1) ticketError_('INTERNAL');
   return names[0];
 }

@@ -33,8 +33,8 @@ export function buildVerificationUrl(token, publicBaseUrl = PUBLIC_BASE_URL) {
   const base = new URL(publicBaseUrl);
   if (base.protocol !== "https:") throw new TypeError("Public base URL must use HTTPS.");
   if (!base.pathname.endsWith("/")) base.pathname += "/";
-  const verificationUrl = new URL("verify.html", base);
-  verificationUrl.searchParams.set("token", token);
+  const verificationUrl = new URL("v.html", base);
+  verificationUrl.searchParams.set("t", token);
   return verificationUrl.href;
 }
 
@@ -96,16 +96,14 @@ export function createTicketViewModel(ticket) {
     })).filter((option) => option.seatId && option.replacesSeatId),
     sessions,
     seatSummary: seats.map((seat) => String(seat.label || "")).filter(Boolean).join(" · "),
-    qrPayload: typeof ticket?.verifyUrl === "string" && /^https:\/\//.test(ticket.verifyUrl)
-      ? ticket.verifyUrl
-      : buildVerificationUrl(
-        ticket?.token,
-        PUBLIC_BASE_URL !== "PASTE_PUBLIC_BASE_URL_HERE"
-          ? PUBLIC_BASE_URL
-          : typeof globalThis.location?.href === "string"
-          ? new URL(".", globalThis.location.href).href
-          : "https://example.invalid/"
-      )
+    qrPayload: buildVerificationUrl(
+      ticket?.token,
+      PUBLIC_BASE_URL !== "PASTE_PUBLIC_BASE_URL_HERE"
+        ? PUBLIC_BASE_URL
+        : typeof globalThis.location?.href === "string"
+        ? new URL(".", globalThis.location.href).href
+        : "https://example.invalid/"
+    )
   };
 }
 

@@ -130,6 +130,16 @@ export function buildSeatMapGroups(seats) {
     }));
 }
 
+export function formatSeatChoiceLabels(event, seatChoices) {
+  const labelsById = new Map(
+    normalizedPublicSeats(event).map((seat) => [seat.id, seat.label || seat.id])
+  );
+  return (Array.isArray(seatChoices) ? seatChoices : [])
+    .map((choice) => labelsById.get(String(choice)) || String(choice))
+    .filter(Boolean)
+    .join("、");
+}
+
 function selectedSeatGroups(event) {
   const seats = normalizedPublicSeats(event);
   const shared = seats.filter((seat) => !seat.sessionId);
@@ -374,7 +384,7 @@ function showErrors(messages) {
 function showReview(event, request) {
   const details = document.querySelector("#review-details"); details.replaceChildren();
   const sessionNames = request.sessionIds.map((id) => event.sessions.find((session) => session.id === id)?.title || id).join("、");
-  const rows = [["已选场次", sessionNames], ["座位", request.seatChoices.join("、") || getSeatModeState(event.seatMode).label], ...event.fields.map((field) => { const value = request.answers[field.id]; return [field.label, Array.isArray(value) ? value.join("、") : value === true ? "已同意" : value || "未填写"]; })];
+  const rows = [["已选场次", sessionNames], ["座位", formatSeatChoiceLabels(event, request.seatChoices) || getSeatModeState(event.seatMode).label], ...event.fields.map((field) => { const value = request.answers[field.id]; return [field.label, Array.isArray(value) ? value.join("、") : value === true ? "已同意" : value || "未填写"]; })];
   for (const [label, value] of rows) { const list = document.createElement("dl"); list.append(node("dt", "", label), node("dd", "", value)); details.append(list); }
   state.review = request; form.hidden = true; const card = document.querySelector("#review-card"); card.hidden = false; card.focus();
 }

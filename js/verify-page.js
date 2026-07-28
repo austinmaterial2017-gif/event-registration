@@ -39,6 +39,11 @@ export function createVerificationViewModel(ticket) {
   };
 }
 
+export function readVerificationToken(search = "") {
+  const parameters = new URLSearchParams(String(search || ""));
+  return (parameters.get("t") || parameters.get("token") || "").trim();
+}
+
 function element(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -80,7 +85,7 @@ function renderVerification(view) {
 async function initialiseVerificationPage() {
   const status = document.querySelector("#verification-message");
   if (!status) return;
-  const token = new URLSearchParams(window.location.search).get("token") || "";
+  const token = readVerificationToken(window.location.search);
   if (!token) {
     status.textContent = "二维码缺少有效凭证资料。";
     return;

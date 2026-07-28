@@ -97,3 +97,16 @@ test("public package checker rejects adversarial private URLs and identifiers in
     );
   }
 });
+
+test("the participant-package handoff documents that activity Sheets stay automatic and private", async () => {
+  const readme = await readFile(join(root, "README.md"), "utf8");
+  assert.equal(
+    readme.includes("每个新活动都会自动建立一份独立、私有的 Google Sheet"),
+    true
+  );
+  assert.equal(
+    readme.includes("以后新增活动不需要建立、修改或重新部署 Apps Script"),
+    true
+  );
+  assert.match(readme, /GitHub Pages \*\*仅\*\*发布本仓库的 `public\/` 目录/);
+});

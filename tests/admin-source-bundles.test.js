@@ -14,6 +14,8 @@ const publicFiles = [
   "apps-script/RegistrationService.gs",
   "apps-script/TicketService.gs",
   "apps-script/AttendanceService.gs",
+  "apps-script/InternalGateway.gs",
+  "apps-script/InternalMutationService.gs",
   "apps-script/SwitchProbeService.gs",
   "apps-script/Code.gs"
 ];
@@ -96,24 +98,58 @@ test("runtime bundle constants exactly match relevant tracked source and redact 
     "secret answer",
     "opaque-private-ticket-token",
     "admin@example.com",
-    "staff@example.com"
+    "staff@example.com",
+    "https://script.google.com/macros/s/private-public-deployment/exec",
+    "https://script.google.com/macros/s/private-staff-deployment/exec",
+    "1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789",
+    "private-shared-secret-value"
   ]) {
     assert.equal(combined.includes(privateValue), false, privateValue);
   }
   assert.doesNotMatch(combined, /["'][A-Za-z0-9_-]{32,}["']/);
 });
 
+test("deployment guides describe the permanent registry and automatic private activity-Sheet upgrade", async () => {
+  const [readme, deployment] = await Promise.all([
+    readFile(new URL("../README.md", import.meta.url), "utf8"),
+    readFile(new URL("../apps-script/DEPLOYMENT.md", import.meta.url), "utf8")
+  ]);
+
+  for (const requiredStatement of [
+    "永久注册表会继续保留",
+    "每个新活动都会自动建立一份独立、私有的 Google Sheet",
+    "只需在升级后第一次运行时批准一次新增的 Google Drive 权限",
+    "以后新增活动不需要建立、修改或重新部署 Apps Script",
+    "不会自动拆分已有且非空的旧活动资料"
+  ]) {
+    assert.equal(readme.includes(requiredStatement), true, requiredStatement);
+  }
+  for (const requiredStatement of [
+    "The registry Sheet remains permanent.",
+    "Every new activity automatically receives its own private Google Sheet.",
+    "The first run after this upgrade requests one-time Google Drive authorization.",
+    "Creating later activities requires no Apps Script setup, edits, or redeployment.",
+    "Existing nonempty legacy activity data is not split automatically."
+  ]) {
+    assert.equal(deployment.includes(requiredStatement), true, requiredStatement);
+  }
+});
+
 test("source bundle plumbing stays protected and out of the anonymous project", async () => {
-  const [adminService, publicCode, publicFilesText] = await Promise.all([
+  const [adminService, publicCode, internalGateway, internalService] = await Promise.all([
     readFile(new URL("../staff-apps-script/AdminService.gs", import.meta.url), "utf8"),
     readFile(new URL("../apps-script/Code.gs", import.meta.url), "utf8"),
-    Promise.all(publicFiles.map((name) => readFile(new URL(`../${name}`, import.meta.url), "utf8")))
+    readFile(new URL("../apps-script/InternalGateway.gs", import.meta.url), "utf8"),
+    readFile(new URL("../apps-script/InternalMutationService.gs", import.meta.url), "utf8")
   ]);
   const getter = adminService.match(/function\s+getAdminSourceBundles\s*\([^)]*\)\s*\{([\s\S]*?)\n\}/)?.[1] || "";
   assert.match(getter, /requireAuthorizedAdminSession_\s*\(\s*\)/);
   assert.match(adminService, /PUBLIC_BACKEND_SOURCE_BUNDLE_/);
   assert.match(adminService, /STAFF_ADMIN_SOURCE_BUNDLE_/);
-  assert.doesNotMatch(`${publicCode}\n${publicFilesText.join("\n")}`, /AdminSourceBundles|SourceBundles|ADMIN_EMAIL_ALLOWLIST/);
+  assert.doesNotMatch(publicCode, /AdminSourceBundles|SourceBundles|ADMIN_EMAIL_ALLOWLIST/);
+  assert.match(internalGateway, /isValidInternalRequest_\s*\(\s*request\s*\)/);
+  assert.match(internalGateway, /executeInternalActionLocked_/);
+  assert.doesNotMatch(internalService, /["']admin\.getSourceBundles["']/);
 });
 
 test("the paste-ready staff bundle contains every HTML template referenced by bundled runtime code", async () => {

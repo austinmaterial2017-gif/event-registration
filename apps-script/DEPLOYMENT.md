@@ -4,6 +4,49 @@ Deploy **two separate Apps Script projects**. Do not create two deployments
 from one project or one manifest: the public and staff projects intentionally
 have different execution identities and access policies.
 
+## Per-activity Sheet model
+
+The registry Sheet remains permanent. Both projects keep
+`ACTIVE_SPREADSHEET_ID` pointed at that one private registry, which stores the
+shared settings, activity catalog, ticket index, and registry audit.
+
+Every new activity automatically receives its own private Google Sheet. The
+public backend creates and initializes it, grants the authenticated creating
+administrator editor access, and publishes the catalog entry only after
+preparation succeeds. The participant site never receives its Sheet ID or
+protected edit URL.
+
+The first run after this upgrade requests one-time Google Drive authorization.
+Approve the new Drive scope in the public project when running `setupSystem()`
+after replacing the public source.
+Creating later activities requires no Apps Script setup, edits, or redeployment.
+It also requires no Sheet ID entry.
+
+Existing nonempty legacy activity data is not split automatically.
+`setupSystem()` preserves those rows but does not copy, repartition, or add
+them to the new activity catalog. Back up the legacy Sheet and complete a
+separately reviewed migration before removing or changing any old data.
+
+## One-time upgrade order
+
+1. Back up the permanent registry and keep both existing deployment URLs in
+   the protected deployment record.
+2. Replace the existing public project's files with the generated
+   `source-bundles/public-backend.txt`, save, run `setupSystem()`, and approve
+   the new Drive scope once.
+3. Deploy a new version of that same public project. Keep the official public
+   `/exec` URL in the protected record and participant configuration.
+4. Replace the existing staff project's files with
+   `source-bundles/staff-admin.txt`, confirm its Script Properties still refer
+   to the permanent registry and upgraded public backend, and deploy a new
+   version of that same staff project.
+5. From the protected administrator page, create two test activities and
+   confirm distinct private Sheet links before testing public registration,
+   QR verification, and one check-in for each activity.
+
+Do not create a new Apps Script project for each activity. After this upgrade,
+normal activity creation is entirely automatic.
+
 ## Public project: `apps-script/`
 
 Create an Apps Script project from the files under `apps-script/`.
@@ -11,13 +54,16 @@ Create an Apps Script project from the files under `apps-script/`.
 - Manifest: `USER_DEPLOYING` and `ANYONE_ANONYMOUS`
 - Execute as: the deployer
 - Access: anyone, including anonymous visitors
-- Purpose: public registration API, owner ticket lookup, and read-only ticket
-  verification
+- Purpose: public registration API, owner ticket lookup, read-only ticket
+  verification, and the signed internal mutation gateway used by the
+  authenticated staff project
 - GitHub config: place only this project's `/exec` URL in
   `public/js/config.js`
 
-This project contains no staff page, staff allowlist, Session identity lookup,
-or attendance mutation function.
+This project contains no staff page, staff allowlist, or Session identity
+lookup. Its internal mutation gateway accepts only timestamped, signed,
+nonce-protected requests from the staff project; no internal action is exposed
+as a participant API operation.
 
 The public project requires these Script Properties:
 
@@ -43,8 +89,8 @@ Create a different Apps Script project from the files under
 
 The staff project requires these Script Properties:
 
-- `ACTIVE_SPREADSHEET_ID`: the same private spreadsheet configured for the
-  public project
+- `ACTIVE_SPREADSHEET_ID`: the same permanent private registry configured for
+  the public project; never point it at an activity Sheet
 - `ATTENDANCE_STAFF_ALLOWLIST`: JSON array of normalized staff Google-account
   emails
 - `ADMIN_EMAIL_ALLOWLIST`: a separate JSON array of normalized administrator
@@ -62,9 +108,12 @@ Example allowlist:
 ["staff@example.com", "door-team-02@example.com"]
 ```
 
-Staff accounts must be in the allowlist **and** must be granted the necessary
-Sheet access to the private spreadsheet. This is required because the staff
-Web App executes as the user accessing it, not as the deployer.
+Staff accounts must be in the relevant allowlist. Staff and administrator
+actions are signed by this authenticated project and executed by the public
+backend against the registry-selected activity Sheet. The administrator who
+creates an activity is automatically granted editor access to its Sheet;
+other people need explicit sharing only when they must open that Sheet
+directly.
 
 Administrator-controlled attendance, event, session, countdown, cancellation,
 exchange, ticket-field, and duplicate-identity policies are stored as JSON in
@@ -103,9 +152,14 @@ The route and every administrator action independently read the active Google
 Session and require membership in `ADMIN_EMAIL_ALLOWLIST`. Blank and
 unauthorized administrator sessions receive the same fixed denial page.
 
-The administrator's data-table panel shows connection status and can test a
-submitted target Sheet before a switch. Switching requires explicit
-confirmation and a two-phase preflight:
+Creating an activity from the ordinary administrator workflow requires only
+its activity details. It automatically creates its private Sheet and returns a
+protected edit link to the authorized administrator.
+
+The advanced-maintenance data-table panel can still test a submitted whole
+system target Sheet before a legacy switch. This is not the per-activity
+creation path. Switching requires explicit confirmation and a two-phase
+preflight:
 
 1. The staff project validates the target schema, creates a short-lived random
    nonce in the permanent registry, and enables registry maintenance.
@@ -126,13 +180,14 @@ Sheet as their permanent Script Property root; the active pointer and
 in the previous Sheet. Migration is not automatic, and the switch does not
 initialize, copy, migrate, or delete business rows.
 
-Every switch target must already contain the exact initialized data schema and
-must be shared with:
+Every legacy switch target must already contain the exact initialized data
+schema and must be shared with:
 
-- the public Apps Script deployer account, because the anonymous Web App
-  executes as that deployer; and
-- every staff or administrator account that needs to use the authenticated
-  Web App, because it executes as the accessing user.
+- the public Apps Script deployer account, because registry and activity data
+  operations execute in the signed public backend; and
+- any administrator who must open that target Sheet directly in Google
+  Sheets. Authenticated staff operations themselves do not require direct
+  Sheet sharing.
 
 ## Source bundles and two-project setup
 
@@ -143,10 +198,10 @@ source bundles:
    `USER_DEPLOYING` / `ANYONE_ANONYMOUS`.
 2. Copy the staff source, create a separate `staff-apps-script/` project, and
    deploy it as `USER_ACCESSING` / `ANYONE` with sign-in required.
-3. Set Script Properties manually in each project. Both projects must
-   initially point `ACTIVE_SPREADSHEET_ID` at the same initialized private
-   Sheet and retain it as their stable root. Later confirmed administrator
-   switches are propagated through the shared pointer. Configure the same
+3. Set Script Properties manually in each project. Both projects must point
+   `ACTIVE_SPREADSHEET_ID` at the same initialized private registry and retain
+   it as their stable root. Never use an automatically created activity Sheet
+   as this property. Configure the same
    `SWITCH_PROBE_SHARED_SECRET` and `INTERNAL_API_SHARED_SECRET` in both
    projects, set `PUBLIC_BASE_URL` in the public project, and set
    `PUBLIC_BACKEND_URL` in the staff project. The generated source contains
@@ -155,12 +210,16 @@ source bundles:
 4. Verify the public project's `setupSystem()` seeded the registry's
    authoritative `ADMIN_SETTINGS` row, then use the protected administrator
    project to configure the required policies.
-5. Grant the public deployer and each required staff or administrator account
-   access to the registry and every candidate data Sheet.
+5. Keep the registry private. The public deployer must retain access. The
+   creating administrator is automatically added to each new activity Sheet;
+   share direct Sheet access with additional people only when required.
 
 The source bundles are generated during development from the tracked files.
-Run `node scripts/build-admin-source-bundles.mjs` after changing bundled Apps
-Script or administrator HTML files, then deploy the updated source snapshots.
+Run `node scripts/build-internal-mutation-service.mjs` first, then
+`node scripts/build-admin-source-bundles.mjs` after changing bundled Apps
+Script or administrator HTML files. Deploy both updated snapshots for this
+one-time upgrade. Future activities use the deployed code and require no new
+Apps Script project or version.
 
 ## URL handling
 

@@ -465,6 +465,96 @@ test("session, seat-plan, and question saves show progress and ignore repeated c
   assert.equal(ui.elements.get("#save-session").disabled, false);
 });
 
+test("a draft question can be deleted once and the remaining draft is persisted", async () => {
+  const ui = await createHarness();
+  const data = draftDashboard("D", "Question draft");
+  data.drafts[0].draft.questions = [
+    {
+      draftKey: "draft-question-1",
+      label: "电话号码",
+      type: "tel",
+      options: [],
+      validation: {},
+      sortOrder: 1,
+      status: "active",
+      required: true,
+      showOnTicket: false,
+      duplicateIdentity: true,
+      semanticRole: "phone"
+    },
+    {
+      draftKey: "draft-question-2",
+      label: "交通",
+      type: "text",
+      options: [],
+      validation: {},
+      sortOrder: 2,
+      status: "active",
+      required: false,
+      showOnTicket: false,
+      duplicateIdentity: false,
+      semanticRole: ""
+    }
+  ];
+  ui.selector.value = "draft:D";
+  ui.selector.dispatch("change");
+  ui.requests.at(-1).success({ ok: true, data });
+
+  const firstRow = ui.elements.get("#question-list").children[0];
+  const deleteButton = firstRow.children.at(-1).children
+    .find((button) => button.textContent === "删除问题");
+  deleteButton.dispatch("click");
+  deleteButton.dispatch("click");
+
+  assert.equal(ui.mutations.filter((item) => item.kind === "draft").length, 1);
+  assert.equal(deleteButton.disabled, true);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(ui.mutations.at(-1).payload.questions)),
+    [data.drafts[0].draft.questions[1]]
+  );
+});
+
+test("a generated question is hidden instead of deleting its registration history", async () => {
+  const ui = await createHarness();
+  const data = dashboard("B", "Generated activity");
+  data.questions = [{
+    eventId: "B",
+    questionId: "question-B",
+    label: "电话号码",
+    type: "tel",
+    options: [],
+    validation: {},
+    sortOrder: 1,
+    status: "active",
+    required: true,
+    showOnTicket: false,
+    duplicateIdentity: true,
+    semanticRole: "phone"
+  }];
+  ui.selector.value = "B";
+  ui.selector.dispatch("change");
+  ui.requests.at(-1).success({ ok: true, data });
+
+  const questionRow = ui.elements.get("#question-list").children[0];
+  const hideButton = questionRow.children.at(-1).children
+    .find((button) => button.textContent === "隐藏问题");
+  hideButton.dispatch("click");
+  hideButton.dispatch("click");
+
+  assert.equal(ui.mutations.filter((item) => item.kind === "question").length, 1);
+  assert.equal(hideButton.disabled, true);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(ui.mutations.at(-1).payload)),
+    {
+      eventId: "B",
+      questionId: "question-B",
+      action: "hide",
+      duplicateIdentity: false,
+      showOnTicket: false
+    }
+  );
+});
+
 test("session, seat, question, and record forms reject invalid fields with exact guidance", async () => {
   const ui = await createHarness();
   ui.selector.value = "B";

@@ -355,8 +355,23 @@
           `${item.type}${item.required ? " · 必填" : ""}`,
           `排序 ${item.sortOrder}${item.showOnTicket ? " · 票面显示" : ""}${item.duplicateIdentity ? " · 身份判断" : ""}`
         ]);
-        row.append(editButton("编辑问题", () =>
+        const actions = element("div", null, "actions");
+        actions.append(editButton("编辑问题", () =>
           selectedDraft ? editDraftQuestion_(item) : editAdminQuestion(item)));
+        if (selectedDraft) {
+          const deleteButton = editButton("删除问题", () =>
+            deleteDraftQuestion_(item, deleteButton));
+          deleteButton.className = "secondary danger";
+          actions.append(deleteButton);
+        } else {
+          const isActive = String(item.status || "").toLowerCase() === "active";
+          const visibilityButton = editButton(
+            isActive ? "隐藏问题" : "重新显示",
+            () => setQuestionVisibility_(item, visibilityButton, isActive)
+          );
+          actions.append(visibilityButton);
+        }
+        row.append(actions);
         return row;
       });
       replaceList("#record-list", data.records, (item) =>
@@ -1039,6 +1054,45 @@
         "处理中…",
         "座位状态更新成功。",
         (runner) => runner.saveAdminSeatPlan(payload),
+        () => loadDashboard()
+      );
+    }
+
+    function deleteDraftQuestion_(item, button) {
+      if (!state.selectedDraftId || button.dataset.pending === "true") return;
+      if (!window.confirm(`确认删除问题“${item.label || "未命名问题"}”？删除后无法恢复。`)) {
+        return;
+      }
+      const questions = state.draftDocument.questions.filter((question) =>
+        question.draftKey !== item.draftKey);
+      persistDraftDocument_(
+        { ...state.draftDocument, questions },
+        button,
+        "正在删除问题…",
+        "问题已删除。"
+      );
+    }
+
+    function setQuestionVisibility_(item, button, isActive) {
+      if (!state.selectedEventId || button.dataset.pending === "true") return;
+      const action = isActive ? "hide" : "show";
+      if (isActive && !window.confirm(
+        `确认隐藏问题“${item.label || "未命名问题"}”？参与者将不再看到它，旧报名记录会保留。`
+      )) return;
+      const payload = {
+        eventId: state.selectedEventId,
+        questionId: item.questionId,
+        action
+      };
+      if (isActive) {
+        payload.duplicateIdentity = false;
+        payload.showOnTicket = false;
+      }
+      runButtonAction_(
+        button,
+        isActive ? "正在隐藏…" : "正在重新显示…",
+        isActive ? "问题已隐藏，旧报名记录仍保留。" : "问题已重新显示。",
+        (runner) => runner.saveAdminQuestion(payload),
         () => loadDashboard()
       );
     }

@@ -523,6 +523,9 @@ function validateActivityDraftDocument_(value) {
       registrationTimeLimitMinutes: adminNonNegativeInteger_(
         adminField_(event, 'registrationTimeLimitMinutes', '', 5)
       ),
+      totalCapacity: adminNonNegativeInteger_(
+        adminField_(event, 'totalCapacity', '', 0)
+      ),
       checkInMode: adminCheckInMode_(adminField_(event, 'checkInMode', '', 'session'))
     },
     sessions: sessions.map(function(session) {
@@ -1055,6 +1058,9 @@ function saveAdminEvent_(payload, actor) {
       policy.registrationTimeLimitMinutes = adminNonNegativeInteger_(
         request.registrationTimeLimitMinutes
       );
+    }
+    if (Object.prototype.hasOwnProperty.call(request, 'totalCapacity')) {
+      policy.totalCapacity = adminNonNegativeInteger_(request.totalCapacity);
     }
     if (Object.prototype.hasOwnProperty.call(request, 'checkInMode')) {
       policy.checkInMode = adminCheckInMode_(request.checkInMode);
@@ -1967,6 +1973,9 @@ function adminEventProjection_(event, settings) {
     registrationTimeLimitMinutes: adminNonNegativeInteger_(
       policy.registrationTimeLimitMinutes === undefined
         ? 5 : policy.registrationTimeLimitMinutes
+    ),
+    totalCapacity: adminNonNegativeInteger_(
+      policy.totalCapacity === undefined ? 0 : policy.totalCapacity
     ),
     checkInMode: adminCheckInMode_(policy.checkInMode || 'session'),
     createdAt: String(event.createdAt || ''),

@@ -264,6 +264,79 @@ function sheetWithHeader(harness, header) {
   return Object.values(harness.sheets).find((sheet) => headers[sheet.name].includes(header));
 }
 
+test("event total capacity rejects only new active registrations after the unique limit is reached", async () => {
+  const settings = {
+    registration: {
+      identityFields: ["email"],
+      verificationField: "email",
+      events: { "event-1": { totalCapacity: 1 } }
+    }
+  };
+  const harness = await createHarness({ settings });
+
+  const first = harness.context.createRegistration(registrationPayload());
+  const second = harness.context.createRegistration(registrationPayload({
+    answers: { name: "Bob", email: "bob@example.com" }
+  }));
+
+  assert.equal(first.ok, true, JSON.stringify(first));
+  assert.equal(second.code, "EVENT_CAPACITY_FULL");
+  assert.equal(sheetObjects(sheetWithHeader(harness, "registrationId")).length, 1);
+});
+
+test("event total capacity counts unique active registrations and zero remains unlimited", async () => {
+  const sharedRegistration = {
+    registrationId: "existing-1",
+    eventId: "event-1",
+    participantId: "participant-1",
+    ticketNumber: "EVT-EXISTING",
+    status: "active",
+    seatChoices: "[]",
+    answers: JSON.stringify({ values: { email: "existing@example.com" } }),
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z"
+  };
+  const rows = baseRows({
+    registrations: [
+      { ...sharedRegistration, sessionIds: '["s1"]' },
+      { ...sharedRegistration, sessionIds: '["s2"]' },
+      {
+        ...sharedRegistration,
+        registrationId: "cancelled-1",
+        participantId: "participant-2",
+        ticketNumber: "EVT-CANCELLED",
+        status: "cancelled",
+        sessionIds: '["s1"]',
+        answers: JSON.stringify({ values: { email: "cancelled@example.com" } })
+      }
+    ]
+  });
+  const limited = await createHarness({
+    rows,
+    settings: {
+      registration: {
+        identityFields: ["email"],
+        events: { "event-1": { totalCapacity: 2 } }
+      }
+    }
+  });
+  const accepted = limited.context.createRegistration(registrationPayload());
+  assert.equal(accepted.ok, true, JSON.stringify(accepted));
+
+  const unlimited = await createHarness({
+    settings: {
+      registration: {
+        identityFields: ["email"],
+        events: { "event-1": { totalCapacity: 0 } }
+      }
+    }
+  });
+  assert.equal(unlimited.context.createRegistration(registrationPayload()).ok, true);
+  assert.equal(unlimited.context.createRegistration(registrationPayload({
+    answers: { name: "Bob", email: "bob@example.com" }
+  })).ok, true);
+});
+
 function rowsForEvent(eventId, title) {
   const rows = baseRows({
     event: { eventId, title, selectionMode: "single", minChoices: 1, maxChoices: 1 },

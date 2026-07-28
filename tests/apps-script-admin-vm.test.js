@@ -1816,18 +1816,26 @@ test("administrator policy persists seat holds, semantic field roles, and normal
     seatHoldsEnabled: true,
     seatHoldMinutes: 3,
     registrationTimeLimitMinutes: 5,
+    totalCapacity: 80,
     checkInMode: "event"
   });
   assert.equal(event.ok, true, JSON.stringify(event));
   assert.equal(event.data.seatHoldsEnabled, true);
   assert.equal(event.data.seatHoldMinutes, 3);
   assert.equal(event.data.registrationTimeLimitMinutes, 5);
+  assert.equal(event.data.totalCapacity, 80);
   assert.equal(event.data.checkInMode, "event");
 
   for (const invalidLimit of [-1, 1.5]) {
     assert.equal(harness.context.saveAdminEvent({
       eventId: "event-1",
       registrationTimeLimitMinutes: invalidLimit
+    }).code, "INVALID_REQUEST");
+  }
+  for (const invalidCapacity of [-1, 1.5]) {
+    assert.equal(harness.context.saveAdminEvent({
+      eventId: "event-1",
+      totalCapacity: invalidCapacity
     }).code, "INVALID_REQUEST");
   }
   assert.equal(harness.context.saveAdminEvent({

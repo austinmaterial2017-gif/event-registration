@@ -232,6 +232,7 @@ function publicEventSummary_(event, policy) {
     registrationTimeLimitMinutes: publicNonNegativeNumber_(
       policy.registrationTimeLimitMinutes, 5
     ),
+    totalCapacity: publicNonNegativeNumber_(policy.totalCapacity, 0),
     checkInMode: ['session', 'event', 'none'].indexOf(
       String(policy.checkInMode || 'session').toLowerCase()
     ) === -1 ? 'session' : String(policy.checkInMode || 'session').toLowerCase()

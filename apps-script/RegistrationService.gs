@@ -30,6 +30,7 @@ function createRegistration(payload) {
       var answers = validateDynamicAnswers_(questions, request.answers);
       var selectedSessions = validateSessionSelection_(event, sessions, request.sessionIds, policy);
 
+      validateEventCapacity_(event.eventId, policy, registrations);
       validateSessionCapacity_(selectedSessions, registrations);
       validateDuplicateIdentity_(policy.identityFields, answers, registrations, event.eventId);
       validateSessionConflicts_(selectedSessions);
@@ -252,6 +253,7 @@ function registrationFailure_(code) {
     EVENT_NOT_FOUND: '未找到该活动。',
     INVALID_REQUEST: '提交信息无效，请检查后重试。',
     REGISTRATION_CLOSED: '报名已截止。',
+    EVENT_CAPACITY_FULL: '活动总名额已满。',
     REGISTRATION_FULL: '报名名额已满。',
     REGISTRATION_NOT_OPEN: '报名尚未开放。',
     DUPLICATE_REGISTRATION: '相同身份信息已报名。',
@@ -446,6 +448,19 @@ function registrationGroupRule_(value) {
   return { id: id, min: min, max: max };
 }
 
+function validateEventCapacity_(eventId, policy, registrations) {
+  var capacity = policy && policy.totalCapacity;
+  if (!capacity) return;
+  var counted = {};
+  registrations.forEach(function(registration) {
+    if (registration.eventId !== eventId) return;
+    if (!REGISTRATION_ACTIVE_STATUSES[String(registration.status || '').toLowerCase()]) return;
+    var registrationId = String(registration.registrationId || '').trim();
+    if (registrationId) counted[registrationId] = true;
+  });
+  if (Object.keys(counted).length >= capacity) registrationError_('EVENT_CAPACITY_FULL');
+}
+
 function validateSessionCapacity_(selectedSessions, registrations) {
   selectedSessions.forEach(function(session) {
     var capacity = registrationNumber_(session.capacity, 0);
@@ -591,6 +606,9 @@ function getRegistrationPolicy_(settings, eventId) {
     seatHoldsEnabled: eventSettings.seatHoldsEnabled === true || registration.seatHoldsEnabled === true,
     seatExchangeEnabled: eventSettings.seatExchangeEnabled === true,
     cancellationEnabled: eventSettings.cancellationEnabled === true,
+    totalCapacity: registrationConstraintInteger_(
+      eventSettings.totalCapacity === undefined ? 0 : eventSettings.totalCapacity
+    ),
     seatHoldMinutes: registrationPositiveNumber_(
       eventSettings.seatHoldMinutes !== undefined
         ? eventSettings.seatHoldMinutes : registration.seatHoldMinutes,

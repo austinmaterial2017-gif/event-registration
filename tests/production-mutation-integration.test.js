@@ -575,7 +575,7 @@ async function runAdminUiThroughRealService(system) {
     "selectionMode", "minChoices", "maxChoices", "seatMode", "seatMapLabel", "seatZones",
     "showOpeningCountdown", "showClosingCountdown", "cancellationEnabled",
     "seatExchangeEnabled", "seatHoldsEnabled", "seatHoldMinutes",
-    "registrationTimeLimitMinutes", "checkInMode"
+    "registrationTimeLimitMinutes", "totalCapacity", "checkInMode"
   ]));
   const seatForm = add("#seat-form", uiForm([
     "eventId", "sessionId", "mode", "zoneName", "rows", "seatsPerRow"
@@ -771,6 +771,7 @@ test("the real administrator UI forwards emitted payload objects through real ad
   Object.assign(ui.eventForm.elements.seatMode, { value: "none" });
   Object.assign(ui.eventForm.elements.seatHoldMinutes, { value: "5" });
   Object.assign(ui.eventForm.elements.registrationTimeLimitMinutes, { value: "5" });
+  Object.assign(ui.eventForm.elements.totalCapacity, { value: "0" });
   Object.assign(ui.eventForm.elements.checkInMode, { value: "session" });
   ui.eventForm.dispatch("submit");
   const savedDraft = ui.forwarded.find((call) => call.method === "saveAdminDraft");

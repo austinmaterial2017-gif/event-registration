@@ -276,6 +276,7 @@
       document.querySelector("#event-form").elements.eventId.value = "";
       document.querySelector("#event-form").elements.seatHoldMinutes.value = "5";
       document.querySelector("#event-form").elements.registrationTimeLimitMinutes.value = "5";
+      document.querySelector("#event-form").elements.totalCapacity.value = "0";
       document.querySelector("#event-form").elements.checkInMode.value = "session";
       resetRelatedForms();
       renderSelectedActivity({
@@ -465,6 +466,7 @@
       form.elements.seatHoldMinutes.value = item.seatHoldMinutes || 5;
       form.elements.registrationTimeLimitMinutes.value =
         item.registrationTimeLimitMinutes ?? 5;
+      form.elements.totalCapacity.value = item.totalCapacity ?? 0;
       form.elements.checkInMode.value = item.checkInMode || "session";
       updateConditionalEventFields_();
     }
@@ -546,6 +548,7 @@
         seatHoldsEnabled: checked(form, "seatHoldsEnabled"),
         seatHoldMinutes: Number(values.seatHoldMinutes),
         registrationTimeLimitMinutes: Number(values.registrationTimeLimitMinutes),
+        totalCapacity: Number(values.totalCapacity),
         checkInMode: values.checkInMode
       };
       if (eventId) payload.eventId = eventId;
@@ -577,6 +580,9 @@
       if (!Number.isInteger(payload.registrationTimeLimitMinutes) ||
           payload.registrationTimeLimitMinutes < 0) {
         return "报名操作倒计时必须是 0 或正整数。";
+      }
+      if (!Number.isInteger(payload.totalCapacity) || payload.totalCapacity < 0) {
+        return "活动总容量必须是 0 或正整数。";
       }
       if (!["session", "event", "none"].includes(payload.checkInMode)) {
         return "请选择有效的签到方式。";

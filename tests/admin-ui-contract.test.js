@@ -36,7 +36,7 @@ test("administrator markup is a responsive labelled control room for every requi
   for (const fieldName of [
     "opensAt", "closesAt", "location", "selectionMode", "minChoices", "maxChoices",
     "showOpeningCountdown", "showClosingCountdown", "cancellationEnabled", "seatExchangeEnabled",
-    "registrationTimeLimitMinutes", "checkInMode",
+    "registrationTimeLimitMinutes", "totalCapacity", "checkInMode",
     "speaker", "startsAt", "endsAt", "capacity", "required", "groupRule",
     "showOnTicket", "duplicateIdentity", "validation", "sortOrder"
   ]) {
@@ -136,6 +136,7 @@ test("administrator capacity controls explain and display zero as unlimited", as
   ]);
 
   assert.match(admin, /容量（0\s*=\s*不限人数）/);
+  assert.match(admin, /name=["']totalCapacity["']/);
   assert.match(script, /function\s+sessionCapacityLabel_\s*\(/);
   assert.match(script, /不限人数/);
 });

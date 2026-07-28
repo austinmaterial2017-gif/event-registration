@@ -111,6 +111,7 @@ function dashboard(eventId, title, sheetUrl = "https://docs.google.com/spreadshe
     seatHoldsEnabled: false,
     seatHoldMinutes: 5,
     registrationTimeLimitMinutes: 5,
+    totalCapacity: 0,
     checkInMode: "session",
     sheetUrl
   };
@@ -163,9 +164,10 @@ function draftDashboard(draftId, title, nextStep = "questions") {
 async function createHarness() {
   const elements = new Map();
   const add = (selector, node = new FakeElement()) => (elements.set(selector, node), node);
-  const eventForm = add("#event-form", form(["eventId", "title", "description", "status", "opensAt", "closesAt", "location", "selectionMode", "minChoices", "maxChoices", "seatMode", "seatMapLabel", "seatZones", "showOpeningCountdown", "showClosingCountdown", "cancellationEnabled", "seatExchangeEnabled", "seatHoldsEnabled", "seatHoldMinutes", "registrationTimeLimitMinutes", "checkInMode"]));
+  const eventForm = add("#event-form", form(["eventId", "title", "description", "status", "opensAt", "closesAt", "location", "selectionMode", "minChoices", "maxChoices", "seatMode", "seatMapLabel", "seatZones", "showOpeningCountdown", "showClosingCountdown", "cancellationEnabled", "seatExchangeEnabled", "seatHoldsEnabled", "seatHoldMinutes", "registrationTimeLimitMinutes", "totalCapacity", "checkInMode"]));
   eventForm.elements.seatHoldMinutes.value = "5";
   eventForm.elements.registrationTimeLimitMinutes.value = "5";
+  eventForm.elements.totalCapacity.value = "0";
   eventForm.elements.checkInMode.value = "session";
   const sessionForm = add("#session-form", form(["eventId", "sessionId", "title", "speaker", "startsAt", "endsAt", "location", "capacity", "required", "groupRule", "status"]));
   const seatForm = add("#seat-form", form(["eventId", "sessionId", "mode", "zoneName", "rows", "seatsPerRow"]));

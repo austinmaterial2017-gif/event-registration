@@ -11,6 +11,7 @@ test("public pages use the 现代X好未来 brand and approved palette", async (
       "public/register.html",
       "public/ticket.html",
       "public/verify.html",
+      "public/v.html",
       "public/404.html",
     ].map(read),
   );

@@ -99,7 +99,8 @@ test("participant HTML cache-busts each updated entry module", async () => {
     ["index.html", "index-page.js"],
     ["register.html", "register-page.js"],
     ["ticket.html", "ticket-page.js"],
-    ["verify.html", "verify-page.js"]
+    ["verify.html", "verify-page.js"],
+    ["v.html", "verify-page.js"]
   ];
   for (const [page, moduleName] of pages) {
     const source = await readFile(new URL(page, root), "utf8");

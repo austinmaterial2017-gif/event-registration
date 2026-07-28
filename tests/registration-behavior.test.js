@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { getActivityCountdown, getVisibleActivities } from "../public/js/event-list-flow.js";
 import { applyRegistrationGate, getFieldControlSpec, getRegistrationAvailability, getSeatModeState, validateRegistrationDraft } from "../public/js/registration-flow.js";
-import { buildSeatMapGroups, createSeatHoldOwner } from "../public/js/register-page.js";
+import { buildSeatMapGroups, createSeatHoldOwner, formatSeatChoiceLabels } from "../public/js/register-page.js";
 
 const serverNow = Date.parse("2026-07-26T10:00:00+08:00");
 
@@ -97,6 +97,19 @@ test("seat map groups irregular rows without exposing unavailable seat owners", 
     ["B", [["b1", 1, 1, true], ["b3", 3, 1, false]]],
     ["C", [["c1", 1, 1, true], ["c2", 1, 2, true]]]
   ]);
+});
+
+test("registration review shows human seat labels instead of internal seat ids", () => {
+  const event = {
+    seats: [
+      { id: "7f6c7075-internal-id", label: "A区-1-2", zone: "A区" },
+      { id: "another-internal-id", label: "A区-1-3", zone: "A区" }
+    ]
+  };
+  assert.equal(
+    formatSeatChoiceLabels(event, ["7f6c7075-internal-id"]),
+    "A区-1-2"
+  );
 });
 
 test("public markup retains the semantic participant regions and six ordered stages", async () => {

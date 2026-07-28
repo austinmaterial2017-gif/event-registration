@@ -60,7 +60,7 @@
         if (!text || text.length > 2048) return "";
         try {
           const parsed = new URL(text, window.location.href);
-          const queryToken = parsed.searchParams.get("token");
+          const queryToken = parsed.searchParams.get("t") || parsed.searchParams.get("token");
           if (queryToken && queryToken.trim().length <= 512) return queryToken.trim();
         } catch (_ignored) {
           // A camera/scanner may provide the opaque token directly.
@@ -140,7 +140,7 @@
       });
 
       const initialParameters = new URLSearchParams(window.location.search);
-      const initialScan = initialParameters.get("token") || initialParameters.get("scan") || "";
+      const initialScan = initialParameters.get("t") || initialParameters.get("token") || initialParameters.get("scan") || "";
       if (initialScan) lookupTicketForCheckIn(initialScan);
     </script>
   </body>

@@ -13,7 +13,7 @@ const approvedEndpoint = process.env.PUBLIC_APPS_SCRIPT_WEB_APP_URL || "";
 const attestedStaffEndpoint = process.env.STAFF_APPS_SCRIPT_WEB_APP_URL || "";
 const endpointPattern = /^https:\/\/script\.google\.com\/macros\/s\/[^/?#]+\/exec$/;
 const allowedFiles = new Set([
-  "404.html", "index.html", "register.html", "ticket.html", "verify.html",
+  "404.html", "index.html", "register.html", "ticket.html", "verify.html", "v.html",
   "assets/owl-mascot.svg",
   "css/app.css",
   "js/activity-countdown-view.js", "js/activity-ticket-view.js", "js/api.js", "js/config.js", "js/domain.js",

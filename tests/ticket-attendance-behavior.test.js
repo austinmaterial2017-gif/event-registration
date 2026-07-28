@@ -4,7 +4,7 @@ import {
   bindTicketActions, buildVerificationUrl, createTicketViewModel, renderTicketMarkup
 } from "../public/js/ticket-page.js";
 import { encodeQrMatrix } from "../public/js/qr.js";
-import { createVerificationViewModel } from "../public/js/verify-page.js";
+import { createVerificationViewModel, readVerificationToken } from "../public/js/verify-page.js";
 import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 
@@ -180,7 +180,7 @@ test("session update visibly enters one pending request and rerenders the confir
 
 test("QR payload is an absolute physical-camera URL containing only the opaque token", () => {
   const payload = buildVerificationUrl(ticket.token, "https://events.example.org/summer/");
-  assert.equal(payload, "https://events.example.org/summer/verify.html?token=opaque-token-123");
+  assert.equal(payload, "https://events.example.org/summer/v.html?t=opaque-token-123");
   assert.equal(new URL(payload).protocol, "https:");
   assert.equal(payload.includes(ticket.ticketNumber), false);
   assert.equal(payload.includes(ticket.participant.name), false);
@@ -190,6 +190,21 @@ test("QR payload is an absolute physical-camera URL containing only the opaque t
   assert.ok(matrix.length >= 21);
   assert.ok(matrix.every((row) => row.length === matrix.length && row.every((cell) => typeof cell === "boolean")));
   assert.deepEqual(matrix, encodeQrMatrix(payload));
+});
+
+test("a production-length token fits the bundled QR encoder and verification accepts old and short links", () => {
+  const token = "a".repeat(64);
+  const payload = buildVerificationUrl(
+    token,
+    "https://austinmaterial2017-gif.github.io/event-registration/"
+  );
+  assert.equal(
+    payload,
+    `https://austinmaterial2017-gif.github.io/event-registration/v.html?t=${token}`
+  );
+  assert.doesNotThrow(() => encodeQrMatrix(payload));
+  assert.equal(readVerificationToken(`?t=${token}`), token);
+  assert.equal(readVerificationToken(`?token=${token}`), token);
 });
 
 test("verification view offers separate sessions and never treats scanning as check-in", () => {
@@ -206,9 +221,10 @@ test("verification view offers separate sessions and never treats scanning as ch
 });
 
 test("public verification stays read-only, ticket mutations require owner verification, and staff check-in stays protected", async () => {
-  const [ticketHtml, verifyHtml, verifyPage, staffHtml] = await Promise.all([
+  const [ticketHtml, verifyHtml, shortVerifyHtml, verifyPage, staffHtml] = await Promise.all([
     readFile(new URL("../public/ticket.html", import.meta.url), "utf8"),
     readFile(new URL("../public/verify.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/v.html", import.meta.url), "utf8"),
     readFile(new URL("../public/js/verify-page.js", import.meta.url), "utf8"),
     readFile(new URL("../staff-apps-script/StaffCheckIn.html", import.meta.url), "utf8")
   ]);
@@ -221,6 +237,8 @@ test("public verification stays read-only, ticket mutations require owner verifi
   assert.match(ticketPage, /exchangeSeat/);
   assert.doesNotMatch(ticketPage, /\bcheckIn\b|google\.script\.run/);
   assert.doesNotMatch(verifyHtml, /staff-check-in-form|confirmCheckIn|staffIdentity/);
+  assert.doesNotMatch(shortVerifyHtml, /staff-check-in-form|confirmCheckIn|staffIdentity/);
+  assert.match(shortVerifyHtml, /js\/verify-page\.js\?v=20260728-stable/);
   assert.doesNotMatch(verifyPage, /\bcheckIn\b|google\.script\.run/);
   assert.match(staffHtml, /google\.script\.run/);
   assert.match(staffHtml, /confirmCheckIn/);
@@ -284,9 +302,15 @@ test("staff check-in accepts a raw token or scanned verification URL and auto-lo
 
   assert.equal(
     context.parseScannedTicketToken(
-      "https://events.example.org/summer/verify.html?token=scanned-token-456"
+      "https://events.example.org/summer/v.html?t=scanned-token-456"
     ),
     "scanned-token-456"
+  );
+  assert.equal(
+    context.parseScannedTicketToken(
+      "https://events.example.org/summer/verify.html?token=legacy-token-456"
+    ),
+    "legacy-token-456"
   );
   assert.equal(context.parseScannedTicketToken("raw-token-789"), "raw-token-789");
   assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ token: "query-token-123" }]);

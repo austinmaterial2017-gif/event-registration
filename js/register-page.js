@@ -2,6 +2,7 @@ import { createRegistration, getEvent } from "./api.js?v=20260728-stable";
 import { createSeatHold, releaseSeatHold } from "./api.js?v=20260728-stable";
 import { applyRegistrationGate, getFieldControlSpec, getSeatModeState, validateRegistrationDraft } from "./registration-flow.js";
 import { transitionToTicket } from "./registration-success.js";
+import { createRegistrationAttemptTimer } from "./registration-attempt-timer.js?v=20260728-timer";
 
 const form = typeof document === "undefined" ? null : document.querySelector("#registration-form");
 const state = {
@@ -14,7 +15,9 @@ const state = {
   holdTimer: null,
   review: null,
   event: null,
-  serverOffset: Number.NaN
+  serverOffset: Number.NaN,
+  attemptTimer: null,
+  expired: false
 };
 
 function node(tag, className, content) {
@@ -174,6 +177,44 @@ async function releaseGroupHold(event, groupId) {
     seatId: hold.seatId,
     holdOwner: state.holdOwner
   });
+}
+
+async function expireRegistrationAttempt() {
+  if (state.expired) return;
+  state.expired = true;
+  state.attemptTimer?.stop();
+  if (state.holdTimer) window.clearTimeout(state.holdTimer);
+  form.querySelectorAll("input, textarea, select, button")
+    .forEach((control) => { control.disabled = true; });
+  const groupIds = [...state.seatHolds.keys()];
+  await Promise.allSettled(groupIds.map((groupId) => releaseGroupHold(state.event, groupId)));
+  state.selectedSessions.clear();
+  state.seatChoices = [];
+  state.seatSelections.clear();
+  state.seatHolds.clear();
+  state.review = null;
+  form.reset();
+  document.querySelector("#review-card").hidden = true;
+  form.hidden = false;
+  window.location.assign("index.html?notice=registration-expired");
+}
+
+function startRegistrationAttemptTimer(serverNow) {
+  const container = document.querySelector("#registration-attempt-timer");
+  const time = document.querySelector("#registration-attempt-time");
+  const limitMinutes = Number(state.event.registrationTimeLimitMinutes ?? 5);
+  state.attemptTimer = createRegistrationAttemptTimer({
+    limitMinutes,
+    serverNow,
+    onTick: ({ label, urgent, disabled }) => {
+      container.hidden = disabled === true;
+      if (disabled) return;
+      time.textContent = label;
+      container.classList.toggle("is-urgent", urgent);
+    },
+    onExpire: () => { void expireRegistrationAttempt(); }
+  });
+  state.attemptTimer.start();
 }
 
 function scheduleSeatHoldCountdown(event) {
@@ -433,7 +474,8 @@ async function initialise() {
   });
   renderSeatOptionsV2(state.event);
   renderQuestions(state.event);
-  setRegistrationEnabled(state.event);
+  const availability = setRegistrationEnabled(state.event);
+  if (availability.canRegister) startRegistrationAttemptTimer(result.data.serverNow);
   form.addEventListener("submit", (submitEvent) => {
     submitEvent.preventDefault();
     const request = {
@@ -450,7 +492,7 @@ async function initialise() {
   document.querySelector("#edit-registration").addEventListener("click", () => { state.review = null; document.querySelector("#review-card").hidden = true; form.hidden = false; form.querySelector("input, textarea, select")?.focus(); });
   const finalSubmit = document.querySelector("#final-submit");
   finalSubmit.addEventListener("click", createFinalSubmitHandler({
-    getReview: () => state.review,
+    getReview: () => state.expired ? null : state.review,
     validateReview: (review) => validateReview(state.event, review),
     submitRegistration: createRegistration,
     showErrors,
@@ -459,7 +501,11 @@ async function initialise() {
       finalSubmit.disabled = submitting;
       finalSubmit.textContent = submitting ? "正在提交…" : "06 · 确认提交报名";
     },
-    transition: (result) => transitionToTicket(result)
+    transition: (result) => {
+      const transitioned = transitionToTicket(result);
+      if (transitioned) state.attemptTimer?.stop();
+      return transitioned;
+    }
   }));
 }
 

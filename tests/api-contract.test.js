@@ -93,6 +93,20 @@ test("participant entry modules cache-bust the production API client", async () 
   }
 });
 
+test("participant HTML cache-busts each updated entry module", async () => {
+  const root = new URL("../public/", import.meta.url);
+  const pages = [
+    ["index.html", "index-page.js"],
+    ["register.html", "register-page.js"],
+    ["ticket.html", "ticket-page.js"],
+    ["verify.html", "verify-page.js"]
+  ];
+  for (const [page, moduleName] of pages) {
+    const source = await readFile(new URL(page, root), "utf8");
+    assert.match(source, new RegExp(`src=["']js/${moduleName.replace(".", "\\.")}\\?v=20260728-stable["']`));
+  }
+});
+
 test("malformed JSON and non-success HTTP statuses are safe normalized failures", async () => {
   const malformed = createApiClient({ endpoint, fetchImpl: async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError("unexpected private detail"); } }) });
   const unavailable = createApiClient({ endpoint, fetchImpl: async () => jsonResponse({ message: "internal stack trace" }, 503) });

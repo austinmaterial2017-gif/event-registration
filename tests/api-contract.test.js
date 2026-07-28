@@ -96,15 +96,15 @@ test("participant entry modules cache-bust the production API client", async () 
 test("participant HTML cache-busts each updated entry module", async () => {
   const root = new URL("../public/", import.meta.url);
   const pages = [
-    ["index.html", "index-page.js"],
-    ["register.html", "register-page.js"],
-    ["ticket.html", "ticket-page.js"],
-    ["verify.html", "verify-page.js"],
-    ["v.html", "verify-page.js"]
+    ["index.html", "index-page.js", "20260728-stable"],
+    ["register.html", "register-page.js", "20260728-final"],
+    ["ticket.html", "ticket-page.js", "20260728-final"],
+    ["verify.html", "verify-page.js", "20260728-final"],
+    ["v.html", "verify-page.js", "20260728-final"]
   ];
-  for (const [page, moduleName] of pages) {
+  for (const [page, moduleName, version] of pages) {
     const source = await readFile(new URL(page, root), "utf8");
-    assert.match(source, new RegExp(`src=["']js/${moduleName.replace(".", "\\.")}\\?v=20260728-stable["']`));
+    assert.match(source, new RegExp(`src=["']js/${moduleName.replace(".", "\\.")}\\?v=${version}["']`));
   }
 });
 

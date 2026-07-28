@@ -238,7 +238,7 @@ test("public verification stays read-only, ticket mutations require owner verifi
   assert.doesNotMatch(ticketPage, /\bcheckIn\b|google\.script\.run/);
   assert.doesNotMatch(verifyHtml, /staff-check-in-form|confirmCheckIn|staffIdentity/);
   assert.doesNotMatch(shortVerifyHtml, /staff-check-in-form|confirmCheckIn|staffIdentity/);
-  assert.match(shortVerifyHtml, /js\/verify-page\.js\?v=20260728-stable/);
+  assert.match(shortVerifyHtml, /js\/verify-page\.js\?v=20260728-final/);
   assert.doesNotMatch(verifyPage, /\bcheckIn\b|google\.script\.run/);
   assert.match(staffHtml, /google\.script\.run/);
   assert.match(staffHtml, /confirmCheckIn/);

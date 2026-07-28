@@ -17,6 +17,14 @@ function node(tag, className, content) {
   return element;
 }
 
+function showPageNotice() {
+  const notice = document.querySelector("#page-notice");
+  if (!notice) return;
+  if (new URLSearchParams(window.location.search).get("notice") !== "registration-expired") return;
+  notice.textContent = "报名时间已结束，请重新进入。";
+  notice.hidden = false;
+}
+
 function refreshCountdownText() {
   const nextRefresh = refreshActivityCountdowns(countdownEntries, serverTimestamp());
   if (nextRefresh !== null) window.setTimeout(refreshCountdownText, Math.min(30_000, Math.max(250, nextRefresh)));
@@ -85,6 +93,7 @@ function renderActivities(activities) {
 }
 
 async function initialise() {
+  showPageNotice();
   const result = await listEvents();
   const list = document.querySelector("#activity-list");
   const status = document.querySelector("#activity-status");

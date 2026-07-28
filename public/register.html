@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>完成报名 · 现代X好未来</title>
-    <link rel="stylesheet" href="css/app.css?v=20260726-2">
+    <link rel="stylesheet" href="css/app.css?v=20260728-timer">
   </head>
   <body>
     <header class="site-header compact">
@@ -26,6 +26,11 @@
           <li><span>06</span>提交报名</li>
         </ol>
         <div id="countdown" class="countdown" aria-live="polite"></div>
+        <aside id="registration-attempt-timer" class="registration-attempt-timer" hidden aria-live="polite">
+          <span>完成报名剩余时间</span>
+          <strong id="registration-attempt-time">05:00</strong>
+          <small>请在时间结束前选好场次、座位并提交。</small>
+        </aside>
         <div id="error-summary" class="error-summary" role="alert" tabindex="-1" hidden></div>
         <form id="registration-form" novalidate>
           <section class="form-card" aria-labelledby="sessions-title">
@@ -59,6 +64,6 @@
         </section>
       </section>
     </main>
-    <script type="module" src="js/register-page.js?v=20260728-final"></script>
+    <script type="module" src="js/register-page.js?v=20260728-timer"></script>
   </body>
 </html>

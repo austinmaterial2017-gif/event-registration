@@ -30,6 +30,26 @@ button, input, textarea, select { font:inherit; } button { cursor:pointer; }
 .registration-shell { padding:25px 0 72px; max-width:860px; }.registration-shell > section > h1 { font-size:clamp(2.4rem, 6vw, 4.3rem); }
 .event-meta { margin:14px 0 0; color:var(--muted); }.steps { list-style:none; display:grid; grid-template-columns:repeat(6, 1fr); gap:8px; padding:0; margin:28px 0; color:var(--muted); font-size:.72rem; }.steps li { display:grid; gap:2px; }.steps span, .step-number { color:var(--wine); font-weight:800; margin:0; }
 .countdown, .notice { margin:0 0 18px; padding:13px 16px; color:var(--wine-deep); background:#ffe2a9; border-radius:14px; }.notice { color:var(--ink); }
+.page-notice { max-width:1180px; margin:18px auto 0; border:2px solid var(--wine); font-weight:800; }
+.registration-attempt-timer {
+  position:sticky; z-index:8; top:12px; display:grid; grid-template-columns:1fr auto;
+  gap:2px 18px; align-items:center; margin:0 0 18px; padding:15px 18px;
+  border:2px solid var(--wine); border-radius:18px; color:var(--wine-deep);
+  background:rgba(255,238,191,.96); box-shadow:0 12px 32px rgba(101,4,11,.16);
+  backdrop-filter:blur(12px);
+}
+.registration-attempt-timer[hidden] { display:none; }
+.registration-attempt-timer span { font-weight:900; }
+.registration-attempt-timer strong {
+  grid-row:1 / span 2; grid-column:2; font:900 clamp(2rem,7vw,3.8rem)/.9 "Consolas", monospace;
+  letter-spacing:-.06em;
+}
+.registration-attempt-timer small { color:var(--muted); }
+.registration-attempt-timer.is-urgent {
+  border-color:#c62636; color:#7d0714; background:#ffd6cf;
+  animation:timer-pulse 1s ease-in-out infinite alternate;
+}
+@keyframes timer-pulse { to { box-shadow:0 12px 38px rgba(198,38,54,.34); } }
 .form-card { padding:22px; margin:16px 0; }.card-title { display:flex; align-items:baseline; gap:12px; margin-bottom:9px; }.helper { margin:0 0 16px; color:var(--muted); font-size:.9rem; }.choice-grid { display:grid; gap:10px; border:0; padding:0; margin:0; }
 .choice, .seat-choice { border:1px solid var(--line); border-radius:15px; padding:13px; display:flex; align-items:flex-start; gap:10px; background:rgba(255,241,200,.48); }.choice:focus-within, .seat-choice:focus-within { outline:2px solid var(--wine); outline-offset:2px; }.choice input, .seat-choice input { margin-top:4px; accent-color:var(--wine); }.choice strong { display:block; }.choice small { display:block; color:var(--muted); margin-top:3px; }
 .seat-map { overflow:auto; padding:14px; border:1px solid var(--line); border-radius:18px; background:linear-gradient(180deg,rgba(18,14,22,.98),rgba(30,22,33,.97)); color:#fff7df; }

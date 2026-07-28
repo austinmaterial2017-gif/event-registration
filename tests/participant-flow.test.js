@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createApiClient } from "../public/js/api.js";
 import { getRegistrationAvailability, getSeatModeState, validateRegistrationDraft } from "../public/js/registration-flow.js";
 import { createTicketViewModel, renderTicketMarkup } from "../public/js/ticket-page.js";
+import { readFile } from "node:fs/promises";
 
 const serverNow = "2026-07-26T10:00:00+08:00";
 const event = {
@@ -50,4 +51,18 @@ test("participant flow validates an open multi-session seat registration, confir
   assert.match(markup, /场次 B/);
   assert.match(markup, /A-01/);
   assert.match(markup, /B-02/);
+});
+
+test("participant pages expose an attempt countdown and a clear expiry notice", async () => {
+  const [registrationHtml, registrationScript, indexHtml, indexScript] = await Promise.all([
+    readFile(new URL("../public/register.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/js/register-page.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/js/index-page.js", import.meta.url), "utf8")
+  ]);
+  assert.match(registrationHtml, /id="registration-attempt-timer"/);
+  assert.match(registrationScript, /registration-expired/);
+  assert.match(registrationScript, /releaseGroupHold/);
+  assert.match(indexHtml, /id="page-notice"/);
+  assert.match(indexScript, /报名时间已结束，请重新进入/);
 });

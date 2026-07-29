@@ -1919,6 +1919,42 @@ test("administrator policy persists seat holds, semantic field roles, and normal
   assert.equal(JSON.stringify(records(questionSheet)), before);
 });
 
+test("saving sessions refreshes the safe public activity date summary", async () => {
+  const harness = await createHarness();
+
+  const saved = harness.context.saveAdminSession({
+    eventId: "event-1",
+    title: "Closing workshop",
+    speaker: "Ms Tan",
+    startsAt: "2026-08-18T09:00:00Z",
+    endsAt: "2026-08-18T12:00:00Z",
+    location: "Studio 2",
+    capacity: 30,
+    required: false,
+    groupRule: "",
+    status: "open"
+  });
+  assert.equal(saved.ok, true, JSON.stringify(saved));
+
+  const settings = readHarnessAdminSettings(harness);
+  assert.equal(
+    settings.registration.events["event-1"].eventStartsAt,
+    "2026-08-16T09:00:00.000Z"
+  );
+  assert.equal(
+    settings.registration.events["event-1"].eventEndsAt,
+    "2026-08-18T12:00:00.000Z"
+  );
+
+  const context = await createPublicRegistrationContext(harness.sourceSheets, {}, {
+    "source-event-sheet-id": harness.sourceSheets
+  });
+  const listed = context.listEvents({});
+  assert.equal(listed.ok, true, JSON.stringify(listed));
+  assert.equal(listed.data.events[0].eventStartsAt, "2026-08-16T09:00:00.000Z");
+  assert.equal(listed.data.events[0].eventEndsAt, "2026-08-18T12:00:00.000Z");
+});
+
 test("seat plans cover every mode and reserve, close, and reopen seats without deleting rows", async () => {
   const harness = await createHarness();
   for (const mode of ["none", "self", "auto", "zone"]) {

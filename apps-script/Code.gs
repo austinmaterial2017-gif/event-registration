@@ -235,7 +235,9 @@ function publicEventSummary_(event, policy) {
     totalCapacity: publicNonNegativeNumber_(policy.totalCapacity, 0),
     checkInMode: ['session', 'event', 'none'].indexOf(
       String(policy.checkInMode || 'session').toLowerCase()
-    ) === -1 ? 'session' : String(policy.checkInMode || 'session').toLowerCase()
+    ) === -1 ? 'session' : String(policy.checkInMode || 'session').toLowerCase(),
+    eventStartsAt: publicText_(policy.eventStartsAt),
+    eventEndsAt: publicText_(policy.eventEndsAt)
   };
 }
 

@@ -1,6 +1,9 @@
 import { listEvents } from "./api.js?v=20260728-stable";
 import { refreshActivityCountdowns } from "./activity-countdown-view.js";
-import { buildActivityTicketView, buildEmptyActivityView } from "./activity-ticket-view.js";
+import {
+  buildActivityTicketView,
+  buildEmptyActivityView,
+} from "./activity-ticket-view.js?v=20260729-dates";
 import { getActivityCountdown, getVisibleActivities } from "./event-list-flow.js";
 import { getRegistrationAvailability } from "./registration-flow.js";
 

@@ -1155,6 +1155,7 @@ function saveAdminSession_(payload, actor) {
     sessionPolicy.groupRule = adminTextField_(
       request, 'groupRule', sessionPolicy.groupRule, ''
     );
+    refreshAdminEventDateSummary_(spreadsheet, settings, row.eventId);
     setAdminSettings_(registry, settings);
     appendAdminAudit_(
       spreadsheet, existing ? 'UPDATE_SESSION' : 'CREATE_SESSION',
@@ -1950,6 +1951,24 @@ function ensureAdminSessionPolicy_(settings, eventId, sessionId) {
   if (!eventPolicy.sessions[sessionId] || typeof eventPolicy.sessions[sessionId] !== 'object' ||
       Array.isArray(eventPolicy.sessions[sessionId])) eventPolicy.sessions[sessionId] = {};
   return eventPolicy.sessions[sessionId];
+}
+
+function refreshAdminEventDateSummary_(spreadsheet, settings, eventId) {
+  var starts = [];
+  var ends = [];
+  readAdminRows_(spreadsheet, '场次').forEach(function(session) {
+    if (String(session.eventId || '') !== eventId) return;
+    var start = Date.parse(session.startsAt);
+    var end = Date.parse(session.endsAt);
+    if (!isFinite(start) || !isFinite(end) || end <= start) return;
+    starts.push(start);
+    ends.push(end);
+  });
+  var policy = ensureAdminEventPolicy_(settings, eventId);
+  policy.eventStartsAt = starts.length
+    ? new Date(Math.min.apply(null, starts)).toISOString() : '';
+  policy.eventEndsAt = ends.length
+    ? new Date(Math.max.apply(null, ends)).toISOString() : '';
 }
 
 function adminEventProjection_(event, settings) {

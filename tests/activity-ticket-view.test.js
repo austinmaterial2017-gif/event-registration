@@ -27,6 +27,33 @@ test("ticket view preserves event facts and the safe registration destination", 
   });
 });
 
+test("activity date uses one localized date for same-day sessions", () => {
+  const view = buildActivityTicketView({
+    eventStartsAt: "2026-08-16T02:00:00.000Z",
+    eventEndsAt: "2026-08-16T04:00:00.000Z",
+  }, false, "即将开放");
+
+  assert.equal(view.dateLabel, "2026年8月16日");
+});
+
+test("activity date uses the earliest and latest localized dates for a multi-day event", () => {
+  const view = buildActivityTicketView({
+    eventStartsAt: "2026-08-16T02:00:00.000Z",
+    eventEndsAt: "2026-08-18T04:00:00.000Z",
+  }, false, "即将开放");
+
+  assert.equal(view.dateLabel, "2026年8月16日－2026年8月18日");
+});
+
+test("activity date remains pending when no valid session summary exists", () => {
+  const view = buildActivityTicketView({
+    eventStartsAt: "",
+    eventEndsAt: "",
+  }, false, "即将开放");
+
+  assert.equal(view.dateLabel, "日期待定");
+});
+
 test("empty activity view directs participants without inventing events", () => {
   assert.deepEqual(buildEmptyActivityView(), {
     kicker: "稍后再来看看",

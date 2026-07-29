@@ -416,6 +416,7 @@ async function createHarness(options = {}) {
     "admin.finalizeDraft": (payload, actor) => context.finalizeAdminDraft_(payload, actor),
     "admin.deleteDraft": (payload, actor) => context.deleteAdminDraft_(payload, actor),
     "admin.deleteEmptyEvent": (payload, actor) => context.deleteEmptyAdminEvent_(payload, actor),
+    "admin.deleteSession": (payload, actor) => context.deleteAdminSession_(payload, actor),
     "admin.saveEvent": (payload, actor) => context.saveAdminEvent_(payload, actor),
     "admin.saveSession": (payload, actor) => context.saveAdminSession_(payload, actor),
     "admin.saveSeatPlan": (payload, actor) => context.saveAdminSeatPlan_(payload, actor),
@@ -1953,6 +1954,136 @@ test("saving sessions refreshes the safe public activity date summary", async ()
   assert.equal(listed.ok, true, JSON.stringify(listed));
   assert.equal(listed.data.events[0].eventStartsAt, "2026-08-16T09:00:00.000Z");
   assert.equal(listed.data.events[0].eventEndsAt, "2026-08-18T12:00:00.000Z");
+});
+
+test("an unused generated session can be deleted and its activity dates are refreshed", async () => {
+  const harness = await createHarness();
+  const created = harness.context.saveAdminSession({
+    eventId: "event-1",
+    title: "Disposable workshop",
+    startsAt: "2026-08-18T09:00:00Z",
+    endsAt: "2026-08-18T12:00:00Z",
+    status: "open"
+  });
+  assert.equal(created.ok, true, JSON.stringify(created));
+
+  const deleted = harness.context.deleteAdminSession({
+    eventId: "event-1",
+    sessionId: created.data.sessionId,
+    confirm: true
+  });
+  assert.equal(deleted.ok, true, JSON.stringify(deleted));
+  assert.deepEqual({ ...deleted.data }, {
+    eventId: "event-1",
+    sessionId: created.data.sessionId,
+    deleted: true
+  });
+  assert.equal(
+    records(sheetByHeader(harness.sourceSheets, "sessionId")).some(
+      (row) => row.sessionId === created.data.sessionId
+    ),
+    false
+  );
+  const settings = readHarnessAdminSettings(harness);
+  assert.equal(
+    settings.registration.events["event-1"].eventStartsAt,
+    "2026-08-16T09:00:00.000Z"
+  );
+  assert.equal(
+    settings.registration.events["event-1"].eventEndsAt,
+    "2026-08-16T10:00:00.000Z"
+  );
+  assert.equal(
+    records(sheetByHeader(harness.sourceSheets, "auditId")).some(
+      (row) => row.action === "DELETE_SESSION" &&
+        row.entityId === created.data.sessionId
+    ),
+    true
+  );
+});
+
+test("registration, seat, or attendance history blocks generated session deletion", async (t) => {
+  const dependencyCases = [
+    {
+      label: "registration history",
+      header: "sessionIds",
+      row: (sessionId) => ({
+        registrationId: "registration-unused-session",
+        eventId: "event-1",
+        participantId: "person-1",
+        ticketNumber: "EVT-UNUSED",
+        status: "cancelled",
+        sessionIds: JSON.stringify([sessionId]),
+        seatChoices: "[]",
+        answers: "{}",
+        createdAt: "2026-07-01T00:00:00Z",
+        updatedAt: "2026-07-01T00:00:00Z"
+      })
+    },
+    {
+      label: "seat history",
+      header: "seatId",
+      row: (sessionId) => ({
+        seatId: "seat-unused-session",
+        eventId: "event-1",
+        sessionId,
+        label: "Z-01",
+        zone: "Z",
+        status: "closed",
+        holderRegistrationId: "",
+        createdAt: "2026-07-01T00:00:00Z",
+        updatedAt: "2026-07-01T00:00:00Z"
+      })
+    },
+    {
+      label: "attendance history",
+      header: "checkInId",
+      row: (sessionId) => ({
+        checkInId: "check-unused-session",
+        registrationId: "registration-1",
+        eventId: "event-1",
+        sessionId,
+        checkedInAt: "2026-08-18T09:05:00Z",
+        checkedInBy: "staff@example.com",
+        status: "checked_in"
+      })
+    }
+  ];
+
+  for (const dependency of dependencyCases) {
+    await t.test(dependency.label, async () => {
+      const harness = await createHarness();
+      const created = harness.context.saveAdminSession({
+        eventId: "event-1",
+        title: `Protected by ${dependency.label}`,
+        startsAt: "2026-08-18T09:00:00Z",
+        endsAt: "2026-08-18T12:00:00Z",
+        status: "open"
+      });
+      assert.equal(created.ok, true, JSON.stringify(created));
+      const sheetName = Object.keys(headers).find(
+        (name) => headers[name].includes(dependency.header)
+      );
+      const row = dependency.row(created.data.sessionId);
+      harness.sourceSheets[sheetName].appendRow(
+        headers[sheetName].map((key) => row[key] ?? "")
+      );
+
+      const denied = harness.context.deleteAdminSession({
+        eventId: "event-1",
+        sessionId: created.data.sessionId,
+        confirm: true
+      });
+      assert.equal(denied.ok, false);
+      assert.equal(denied.code, "SESSION_DELETE_BLOCKED");
+      assert.equal(
+        records(sheetByHeader(harness.sourceSheets, "sessionId")).some(
+          (session) => session.sessionId === created.data.sessionId
+        ),
+        true
+      );
+    });
+  }
 });
 
 test("seat plans cover every mode and reserve, close, and reopen seats without deleting rows", async () => {

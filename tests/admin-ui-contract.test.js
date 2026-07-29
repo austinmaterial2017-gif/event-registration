@@ -66,7 +66,7 @@ test("administrator client uses only explicit RPCs, safe DOM rendering, confirma
 
   for (const rpc of [
     "getAdminDashboard", "saveAdminDraft", "finalizeAdminDraft", "deleteAdminDraft",
-    "deleteEmptyAdminEvent",
+    "deleteEmptyAdminEvent", "deleteAdminSession",
     "saveAdminEvent", "saveAdminSession", "saveAdminSeatPlan",
     "saveAdminQuestion", "adminRecordAction", "testAdminSheetConnection",
     "switchAdminSheet", "getAdminSourceBundles"

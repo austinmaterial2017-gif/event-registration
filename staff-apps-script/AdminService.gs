@@ -76,6 +76,20 @@ function saveAdminSession(payload) {
   });
 }
 
+/** Permanently deletes one unused event session. */
+function deleteAdminSession(payload) {
+  return runAdminService_(function() {
+    var actor = requireAuthorizedAdminSession_();
+    var result = invokeInternalBackend_('admin.deleteSession', payload || {}, actor);
+    if (!result.ok) {
+      adminError_(
+        result.code === 'CONFLICT' ? 'SESSION_DELETE_BLOCKED' : result.code
+      );
+    }
+    return result.data;
+  });
+}
+
 /** Creates seats or changes one seat's operational state. */
 function saveAdminSeatPlan(payload) {
   return runAdminService_(function() {
@@ -148,6 +162,7 @@ function adminFailure_(code) {
     INVALID_REQUEST: '提交信息无效，请检查后重试。',
     NOT_FOUND: '未找到对应记录。',
     CONFLICT: '当前数据状态不允许此操作。',
+    SESSION_DELETE_BLOCKED: '这个场次已有报名、座位或签到记录，不能永久删除；请把场次状态改为 inactive（关闭）。',
     CONFIRMATION_REQUIRED: '此操作需要明确确认。',
     SHEET_CONNECTION_FAILED: '无法连接到指定的数据表。',
     INTEGRITY_ERROR: '数据一致性检查失败，请联系管理员。',
@@ -912,6 +927,71 @@ function saveAdminSession_(payload, actor) {
       'session', sessionId, actor, { eventId: row.eventId }
     );
     return adminSessionProjection_(row, settings);
+  });
+}
+
+function deleteAdminSession_(payload, actor) {
+  var request = requireAdminObject_(payload);
+  if (request.confirm !== true) adminError_('CONFIRMATION_REQUIRED');
+  if (typeof request.eventId !== 'string' || !request.eventId.trim() ||
+      typeof request.sessionId !== 'string' || !request.sessionId.trim()) {
+    adminError_('INVALID_REQUEST');
+  }
+  var normalizedActor = typeof actor === 'string' ? actor.trim().toLowerCase() : '';
+  if (!normalizedActor) adminError_('ADMIN_ACTION_DENIED');
+  return withScriptLock_(function() {
+    var registry = getRootConfiguredSpreadsheet_();
+    requireNoSwitchMaintenance_(registry);
+    var eventId = request.eventId.trim();
+    var sessionId = request.sessionId.trim();
+    var spreadsheet = getAdminEventSpreadsheet_(registry, eventId);
+    var existing = findAdminEventChildRow_(
+      spreadsheet, '场次', 'sessionId', sessionId, eventId
+    );
+    if (!existing) adminError_('NOT_FOUND');
+    var hasRegistrationHistory = readAdminRows_(spreadsheet, '报名项目')
+      .some(function(registration) {
+        return String(registration.eventId || '') === eventId &&
+          parseAdminStringArray_(registration.sessionIds).indexOf(sessionId) !== -1;
+      });
+    var hasSeatHistory = readAdminRows_(spreadsheet, '座位').some(function(seat) {
+      return String(seat.eventId || '') === eventId &&
+        String(seat.sessionId || '') === sessionId;
+    });
+    var hasAttendanceHistory = readAdminRows_(spreadsheet, '签到记录')
+      .some(function(attendance) {
+        return String(attendance.eventId || '') === eventId &&
+          String(attendance.sessionId || '') === sessionId;
+      });
+    if (hasRegistrationHistory || hasSeatHistory || hasAttendanceHistory) {
+      adminError_('CONFLICT');
+    }
+    var sessionSheet = getRequiredSheet_(spreadsheet, '场次');
+    if (typeof journalAdminDelete_ === 'function') {
+      journalAdminDelete_(
+        sessionSheet,
+        existing.rowNumber,
+        STAFF_SHEET_DEFINITIONS['场次'].length
+      );
+    }
+    sessionSheet.deleteRow(existing.rowNumber);
+    var settings = getAdminSettings_(registry);
+    var eventPolicy = ensureAdminEventPolicy_(settings, eventId);
+    if (eventPolicy.sessions && typeof eventPolicy.sessions === 'object' &&
+        !Array.isArray(eventPolicy.sessions)) {
+      delete eventPolicy.sessions[sessionId];
+    }
+    refreshAdminEventDateSummary_(spreadsheet, settings, eventId);
+    setAdminSettings_(registry, settings);
+    appendAdminAudit_(
+      spreadsheet,
+      'DELETE_SESSION',
+      'session',
+      sessionId,
+      normalizedActor,
+      { eventId: eventId, title: existing.title }
+    );
+    return { eventId: eventId, sessionId: sessionId, deleted: true };
   });
 }
 

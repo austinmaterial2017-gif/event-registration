@@ -7,6 +7,7 @@ const staffScriptRoot = new URL("../staff-apps-script/", import.meta.url);
 const ADMIN_RPC_NAMES = [
   "adminRecordAction",
   "deleteAdminDraft",
+  "deleteAdminSession",
   "deleteEmptyAdminEvent",
   "finalizeAdminDraft",
   "getAdminDashboard",

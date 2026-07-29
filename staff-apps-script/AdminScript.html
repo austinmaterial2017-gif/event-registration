@@ -332,8 +332,16 @@
           item.speaker, item.location, `${item.startsAt || "未定"} → ${item.endsAt || "未定"}`,
           `容量 ${sessionCapacityLabel_(item.capacity)}${item.required ? " · 必选" : ""}${item.groupRule ? ` · ${item.groupRule}` : ""}`
         ]);
-        row.append(editButton("编辑场次", () =>
+        const actions = element("div", null, "actions");
+        actions.append(editButton("编辑场次", () =>
           selectedDraft ? editDraftSession_(item) : editAdminSession(item)));
+        const deleteButton = editButton("删除场次", () =>
+          selectedDraft
+            ? deleteDraftSession_(item, deleteButton)
+            : deleteGeneratedSession_(item, deleteButton));
+        deleteButton.className = "secondary danger";
+        actions.append(deleteButton);
+        row.append(actions);
         return row;
       });
       replaceList("#seat-list", selectedDraft ? [] : data.seats, (item) => {
@@ -1070,6 +1078,45 @@
         button,
         "正在删除问题…",
         "问题已删除。"
+      );
+    }
+
+    function deleteDraftSession_(item, button) {
+      if (!state.selectedDraftId || button.dataset.pending === "true") return;
+      if (!window.confirm(
+        `确认删除场次“${item.title || "未命名场次"}”？删除后无法恢复。`
+      )) return;
+      const sessions = state.draftDocument.sessions.filter((session) =>
+        session.draftKey !== item.draftKey);
+      const seatPlan = { ...state.draftDocument.seatPlan };
+      if (seatPlan.sessionId === item.draftKey) seatPlan.sessionId = "";
+      persistDraftDocument_(
+        { ...state.draftDocument, sessions, seatPlan },
+        button,
+        "正在删除场次…",
+        "场次已删除。"
+      );
+    }
+
+    function deleteGeneratedSession_(item, button) {
+      if (!state.selectedEventId || button.dataset.pending === "true") return;
+      if (!window.confirm(
+        `确认永久删除场次“${item.title || "未命名场次"}”？只有完全没有报名、座位或签到记录的场次才能删除。`
+      )) return;
+      runButtonAction_(
+        button,
+        "正在删除场次…",
+        "场次已删除。",
+        (runner) => runner.deleteAdminSession({
+          eventId: state.selectedEventId,
+          sessionId: item.sessionId,
+          confirm: true
+        }),
+        () => {
+          if (document.querySelector("#session-form").elements.sessionId.value ===
+              item.sessionId) resetSessionEditor_();
+          loadDashboard();
+        }
       );
     }
 

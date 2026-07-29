@@ -119,7 +119,7 @@ function dashboard(eventId, title, sheetUrl = "https://docs.google.com/spreadshe
     connection: { connected: true, sheetName: "Private Sheet" },
     drafts: [],
     events: [eventId === "B" ? { ...event, eventId: "A", title: "Activity A", sheetUrl: "https://docs.google.com/spreadsheets/d/a/edit" } : { ...event, eventId: "B", title: "Activity B", sheetUrl: "https://docs.google.com/spreadsheets/d/b/edit" }, event],
-    sessions: [{ eventId, title: `Session ${eventId}`, speaker: "Speaker", location: "Hall", startsAt: "", endsAt: "", capacity: 10, required: false, groupRule: "", status: "open" }],
+    sessions: [{ sessionId: `session-${eventId}`, eventId, title: `Session ${eventId}`, speaker: "Speaker", location: "Hall", startsAt: "", endsAt: "", capacity: 10, required: false, groupRule: "", status: "open" }],
     seats: [{ seatId: `seat-${eventId}`, eventId, label: "A-01", zone: "A", sessionId: "", status: "available" }],
     questions: [],
     records: [{
@@ -231,6 +231,9 @@ async function createHarness() {
     }
     saveAdminSession(payload) {
       mutations.push({ kind: "session", payload, success: this.success, failure: this.failure });
+    }
+    deleteAdminSession(payload) {
+      mutations.push({ kind: "deleteSession", payload, success: this.success, failure: this.failure });
     }
     saveAdminSeatPlan(payload) {
       mutations.push({ kind: "seat", payload, success: this.success, failure: this.failure });
@@ -511,6 +514,84 @@ test("a draft question can be deleted once and the remaining draft is persisted"
   assert.deepEqual(
     JSON.parse(JSON.stringify(ui.mutations.at(-1).payload.questions)),
     [data.drafts[0].draft.questions[1]]
+  );
+});
+
+test("a draft session can be deleted once and a matching draft seat-plan link is cleared", async () => {
+  const ui = await createHarness();
+  const data = draftDashboard("D", "Session draft");
+  data.drafts[0].draft.sessions = [
+    {
+      draftKey: "draft-session-1",
+      title: "Disposable session",
+      speaker: "Speaker A",
+      startsAt: "",
+      endsAt: "",
+      location: "Room A",
+      capacity: 0,
+      required: false,
+      groupRule: "",
+      status: "draft"
+    },
+    {
+      draftKey: "draft-session-2",
+      title: "Remaining session",
+      speaker: "Speaker B",
+      startsAt: "",
+      endsAt: "",
+      location: "Room B",
+      capacity: 0,
+      required: false,
+      groupRule: "",
+      status: "draft"
+    }
+  ];
+  data.drafts[0].draft.seatPlan.sessionId = "draft-session-1";
+  ui.selector.value = "draft:D";
+  ui.selector.dispatch("change");
+  ui.requests.at(-1).success({ ok: true, data });
+
+  const firstRow = ui.elements.get("#session-list").children[0];
+  const deleteButton = firstRow.children.at(-1).children
+    .find((button) => button.textContent === "删除场次");
+  deleteButton.dispatch("click");
+  deleteButton.dispatch("click");
+
+  assert.equal(ui.mutations.filter((item) => item.kind === "draft").length, 1);
+  assert.equal(deleteButton.disabled, true);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(ui.mutations.at(-1).payload.sessions)),
+    [data.drafts[0].draft.sessions[1]]
+  );
+  assert.equal(ui.mutations.at(-1).payload.seatPlan.sessionId, "");
+});
+
+test("a generated session delete sends one confirmed request and gives visible feedback", async () => {
+  const ui = await createHarness();
+  const data = dashboard("B", "Generated activity");
+  ui.selector.value = "B";
+  ui.selector.dispatch("change");
+  ui.requests.at(-1).success({ ok: true, data });
+
+  const sessionRow = ui.elements.get("#session-list").children[0];
+  const deleteButton = sessionRow.children.at(-1).children
+    .find((button) => button.textContent === "删除场次");
+  deleteButton.dispatch("click");
+  deleteButton.dispatch("click");
+
+  assert.equal(ui.mutations.filter((item) => item.kind === "deleteSession").length, 1);
+  assert.equal(deleteButton.disabled, true);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(ui.mutations.at(-1).payload)),
+    { eventId: "B", sessionId: "session-B", confirm: true }
+  );
+  ui.mutations.at(-1).success({
+    ok: true,
+    data: { eventId: "B", sessionId: "session-B", deleted: true }
+  });
+  assert.equal(
+    ui.elements.get("#admin-status").textContent,
+    "场次已删除。"
   );
 });
 

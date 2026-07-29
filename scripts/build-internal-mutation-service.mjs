@@ -13,7 +13,9 @@ const [source, repository] = await Promise.all([
 const coreMarker = "var ADMIN_EVENT_STATUSES_ =";
 const markerIndex = source.indexOf(coreMarker);
 if (markerIndex === -1) throw new Error(`Missing administrator core marker: ${coreMarker}`);
-const adminCore = source.slice(markerIndex).trimEnd();
+const adminCore = source.slice(markerIndex).trimEnd()
+  .replaceAll("validateStaffEventCatalogEntry_", "validateEventCatalogEntry_")
+  .replaceAll("normalizeStaffRoutingValue_", "normalizeRoutingValue_");
 const repositoryCoreMarker = "var ACTIVITY_SPREADSHEET_NAME_LIMIT_ =";
 const repositoryCoreEndMarker = "\nfunction getConfiguredSpreadsheet_(";
 const repositoryCoreStart = repository.indexOf(repositoryCoreMarker);
@@ -44,6 +46,7 @@ var ADMIN_MUTATION_ACTIONS_ = {
   'admin.finalizeDraft': true,
   'admin.deleteDraft': true,
   'admin.deleteEmptyEvent': true,
+  'admin.deleteSession': true,
   'admin.saveEvent': true,
   'admin.saveSession': true,
   'admin.saveSeatPlan': true,
@@ -58,9 +61,15 @@ function executeInternalActionLocked_(action, payload, actor) {
       var registry = getRegistrySpreadsheet_();
       var route = requireAttendanceTicketRoute_(registry, payload && payload.token);
       var spreadsheet = getEventSpreadsheet_(registry, route.eventId);
-      return attendancePublicProjection_(
+      var projection = attendancePublicProjection_(
         findAttendanceTicket_(spreadsheet, payload && payload.token, route)
       );
+      var settings = getAdminSettings(registry);
+      var policy = settings && settings.registration &&
+        settings.registration.events && settings.registration.events[route.eventId] || {};
+      var mode = String(policy.checkInMode || 'session').toLowerCase();
+      projection.checkInMode = mode === 'event' || mode === 'none' ? mode : 'session';
+      return projection;
     },
     'staff.checkIn': function() {
       return internalStaffCheckInLocked_(payload, actor);
@@ -70,6 +79,7 @@ function executeInternalActionLocked_(action, payload, actor) {
     'admin.finalizeDraft': function() { return finalizeAdminDraft_(payload, actor); },
     'admin.deleteDraft': function() { return deleteAdminDraft_(payload, actor); },
     'admin.deleteEmptyEvent': function() { return deleteEmptyAdminEvent_(payload, actor); },
+    'admin.deleteSession': function() { return deleteAdminSession_(payload, actor); },
     'admin.saveEvent': function() { return saveAdminEvent_(payload, actor); },
     'admin.saveSession': function() { return saveAdminSession_(payload, actor); },
     'admin.saveSeatPlan': function() { return saveAdminSeatPlan_(payload, actor); },
@@ -131,6 +141,7 @@ function internalMutationFailure_(code) {
     TOKEN_INVALID: '凭证无效或已过期。',
     SESSION_NOT_REGISTERED: '该凭证未报名此场讲座。',
     CHECK_IN_CLOSED: '当前不在此场讲座的签到时间内。',
+    CHECK_IN_DISABLED: '此活动不需要签到，二维码仍可用于验票。',
     ALREADY_CHECKED_IN: '此场讲座已完成签到。',
     MAINTENANCE: '系统正在切换数据连接，请稍后重试。',
     LEGACY_MIGRATION_REQUIRED: 'Existing legacy activity data must be migrated before activation.',
@@ -195,6 +206,24 @@ function journalAdminWrite_(sheet, rowNumber, columnCount, isAppend) {
   });
 }
 
+function journalAdminDelete_(sheet, rowNumber, columnCount) {
+  if (!ADMIN_TRANSACTION_) return;
+  var sheetIndex = ADMIN_TRANSACTION_.sheets.indexOf(sheet);
+  if (sheetIndex === -1) {
+    ADMIN_TRANSACTION_.sheets.push(sheet);
+    sheetIndex = ADMIN_TRANSACTION_.sheets.length - 1;
+  }
+  var key = sheetIndex + ':' + rowNumber;
+  if (ADMIN_TRANSACTION_.seen[key]) return;
+  ADMIN_TRANSACTION_.seen[key] = true;
+  ADMIN_TRANSACTION_.entries.push({
+    sheet: sheet,
+    rowNumber: rowNumber,
+    isDelete: true,
+    values: sheet.getRange(rowNumber, 1, 1, columnCount).getValues()[0]
+  });
+}
+
 function rollbackAdminMutationTransaction_() {
   var transaction = ADMIN_TRANSACTION_;
   if (!transaction) return [];
@@ -202,7 +231,12 @@ function rollbackAdminMutationTransaction_() {
   for (var index = transaction.entries.length - 1; index >= 0; index -= 1) {
     var entry = transaction.entries[index];
     try {
-      if (entry.isAppend) {
+      if (entry.isDelete) {
+        entry.sheet.insertRowsBefore(entry.rowNumber, 1);
+        entry.sheet.getRange(
+          entry.rowNumber, 1, 1, entry.values.length
+        ).setValues([entry.values]);
+      } else if (entry.isAppend) {
         if (entry.sheet.getLastRow() >= entry.rowNumber) {
           entry.sheet.deleteRow(entry.rowNumber);
         }
@@ -257,8 +291,7 @@ function openSpreadsheetById_(spreadsheetId) {
 function internalStaffCheckInLocked_(payload, actor) {
   var registry = getRegistrySpreadsheet_();
   requireNoSwitchMaintenance_(registry);
-  if (!payload || typeof payload !== 'object' ||
-      typeof payload.sessionId !== 'string' || !payload.sessionId.trim()) {
+  if (!payload || typeof payload !== 'object') {
     adminError_('INVALID_REQUEST');
   }
   var route = requireAttendanceTicketRoute_(registry, payload.token);
@@ -271,17 +304,33 @@ function internalStaffCheckInLocked_(payload, actor) {
   if (String(match.event.status || '').toLowerCase() !== 'live') {
     adminError_('CHECK_IN_CLOSED');
   }
-  var sessionId = payload.sessionId.trim();
-  var session = match.sessions.filter(function(candidate) {
-    return candidate.sessionId === sessionId;
-  })[0];
-  if (!session) adminError_('SESSION_NOT_REGISTERED');
-  var sessionStatus = String(session.status || '').toLowerCase();
-  if (sessionStatus !== 'live' && sessionStatus !== 'open') {
-    adminError_('CHECK_IN_CLOSED');
+  var settings = getAdminSettings(registry);
+  var eventPolicy = settings && settings.registration &&
+    settings.registration.events && settings.registration.events[route.eventId] || {};
+  var checkInMode = String(eventPolicy.checkInMode || 'session').toLowerCase();
+  if (checkInMode !== 'session' && checkInMode !== 'event' && checkInMode !== 'none') {
+    checkInMode = 'session';
+  }
+  if (checkInMode === 'none') adminError_('CHECK_IN_DISABLED');
+  var sessionId = '__EVENT__';
+  var session = null;
+  if (checkInMode === 'session') {
+    if (typeof payload.sessionId !== 'string' || !payload.sessionId.trim()) {
+      adminError_('INVALID_REQUEST');
+    }
+    sessionId = payload.sessionId.trim();
+    session = match.sessions.filter(function(candidate) {
+      return candidate.sessionId === sessionId;
+    })[0];
+    if (!session) adminError_('SESSION_NOT_REGISTERED');
+    var sessionStatus = String(session.status || '').toLowerCase();
+    if (sessionStatus !== 'live' && sessionStatus !== 'open') {
+      adminError_('CHECK_IN_CLOSED');
+    }
   }
   var now = new Date();
-  if (!isWithinInternalAttendanceWindow_(registry, session, now)) {
+  if (checkInMode === 'session' &&
+      !isWithinInternalAttendanceWindow_(registry, session, now)) {
     adminError_('CHECK_IN_CLOSED');
   }
   var duplicate = readRows(spreadsheet, '签到记录').some(function(record) {

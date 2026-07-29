@@ -647,7 +647,9 @@ async function runAdminUiThroughRealService(system) {
     finalizeAdminDraft(payload) { this.invoke("finalizeAdminDraft", payload); }
     deleteAdminDraft(payload) { this.invoke("deleteAdminDraft", payload); }
     deleteEmptyAdminEvent(payload) { this.invoke("deleteEmptyAdminEvent", payload); }
+    deleteAdminSession(payload) { this.invoke("deleteAdminSession", payload); }
     saveAdminEvent(payload) { this.invoke("saveAdminEvent", payload); }
+    saveAdminSession(payload) { this.invoke("saveAdminSession", payload); }
     saveAdminSeatPlan(payload) { this.invoke("saveAdminSeatPlan", payload); }
     adminRecordAction(payload) { this.invoke("adminRecordAction", payload); }
   }
@@ -1130,4 +1132,35 @@ test("assembled administrator mutations roll back rows, settings, appends, and a
   assert.equal(failedPlan.code, "INTERNAL");
   assert.equal(rows(seatSheet).length, 0);
   assert.equal(rows(seatAuditSheet).length, 0);
+
+  let failDeleteSettings = false;
+  const deleteSystem = await createSystem({
+    onWrite: (sheetName) => {
+      if (failDeleteSettings && headers[sheetName].includes("key")) {
+        failDeleteSettings = false;
+        throw new Error("injected delete settings failure");
+      }
+    }
+  });
+  const createdSession = deleteSystem.staffContext.saveAdminSession({
+    eventId: "event-1",
+    title: "Rollback workshop",
+    startsAt: "2026-08-18T09:00:00Z",
+    endsAt: "2026-08-18T10:00:00Z",
+    status: "open"
+  });
+  assert.equal(createdSession.ok, true, JSON.stringify(createdSession));
+  const sessionSheet = Object.values(deleteSystem.sheets)
+    .find((sheet) => headers[sheet.name].includes("sessionId") &&
+      headers[sheet.name].includes("speaker"));
+  const beforeDelete = JSON.stringify(rows(sessionSheet));
+  failDeleteSettings = true;
+  const failedDelete = deleteSystem.staffContext.deleteAdminSession({
+    eventId: "event-1",
+    sessionId: createdSession.data.sessionId,
+    confirm: true
+  });
+  assert.equal(failedDelete.ok, false);
+  assert.equal(failedDelete.code, "INTERNAL");
+  assert.equal(JSON.stringify(rows(sessionSheet)), beforeDelete);
 });

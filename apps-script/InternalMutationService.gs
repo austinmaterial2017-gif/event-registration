@@ -114,6 +114,7 @@ var ADMIN_MUTATION_ACTIONS_ = {
   'admin.finalizeDraft': true,
   'admin.deleteDraft': true,
   'admin.deleteEmptyEvent': true,
+  'admin.deleteSession': true,
   'admin.saveEvent': true,
   'admin.saveSession': true,
   'admin.saveSeatPlan': true,
@@ -146,6 +147,7 @@ function executeInternalActionLocked_(action, payload, actor) {
     'admin.finalizeDraft': function() { return finalizeAdminDraft_(payload, actor); },
     'admin.deleteDraft': function() { return deleteAdminDraft_(payload, actor); },
     'admin.deleteEmptyEvent': function() { return deleteEmptyAdminEvent_(payload, actor); },
+    'admin.deleteSession': function() { return deleteAdminSession_(payload, actor); },
     'admin.saveEvent': function() { return saveAdminEvent_(payload, actor); },
     'admin.saveSession': function() { return saveAdminSession_(payload, actor); },
     'admin.saveSeatPlan': function() { return saveAdminSeatPlan_(payload, actor); },
@@ -272,6 +274,24 @@ function journalAdminWrite_(sheet, rowNumber, columnCount, isAppend) {
   });
 }
 
+function journalAdminDelete_(sheet, rowNumber, columnCount) {
+  if (!ADMIN_TRANSACTION_) return;
+  var sheetIndex = ADMIN_TRANSACTION_.sheets.indexOf(sheet);
+  if (sheetIndex === -1) {
+    ADMIN_TRANSACTION_.sheets.push(sheet);
+    sheetIndex = ADMIN_TRANSACTION_.sheets.length - 1;
+  }
+  var key = sheetIndex + ':' + rowNumber;
+  if (ADMIN_TRANSACTION_.seen[key]) return;
+  ADMIN_TRANSACTION_.seen[key] = true;
+  ADMIN_TRANSACTION_.entries.push({
+    sheet: sheet,
+    rowNumber: rowNumber,
+    isDelete: true,
+    values: sheet.getRange(rowNumber, 1, 1, columnCount).getValues()[0]
+  });
+}
+
 function rollbackAdminMutationTransaction_() {
   var transaction = ADMIN_TRANSACTION_;
   if (!transaction) return [];
@@ -279,7 +299,12 @@ function rollbackAdminMutationTransaction_() {
   for (var index = transaction.entries.length - 1; index >= 0; index -= 1) {
     var entry = transaction.entries[index];
     try {
-      if (entry.isAppend) {
+      if (entry.isDelete) {
+        entry.sheet.insertRowsBefore(entry.rowNumber, 1);
+        entry.sheet.getRange(
+          entry.rowNumber, 1, 1, entry.values.length
+        ).setValues([entry.values]);
+      } else if (entry.isAppend) {
         if (entry.sheet.getLastRow() >= entry.rowNumber) {
           entry.sheet.deleteRow(entry.rowNumber);
         }
@@ -1162,6 +1187,71 @@ function saveAdminSession_(payload, actor) {
       'session', sessionId, actor, { eventId: row.eventId }
     );
     return adminSessionProjection_(row, settings);
+  });
+}
+
+function deleteAdminSession_(payload, actor) {
+  var request = requireAdminObject_(payload);
+  if (request.confirm !== true) adminError_('CONFIRMATION_REQUIRED');
+  if (typeof request.eventId !== 'string' || !request.eventId.trim() ||
+      typeof request.sessionId !== 'string' || !request.sessionId.trim()) {
+    adminError_('INVALID_REQUEST');
+  }
+  var normalizedActor = typeof actor === 'string' ? actor.trim().toLowerCase() : '';
+  if (!normalizedActor) adminError_('ADMIN_ACTION_DENIED');
+  return withScriptLock_(function() {
+    var registry = getRootConfiguredSpreadsheet_();
+    requireNoSwitchMaintenance_(registry);
+    var eventId = request.eventId.trim();
+    var sessionId = request.sessionId.trim();
+    var spreadsheet = getAdminEventSpreadsheet_(registry, eventId);
+    var existing = findAdminEventChildRow_(
+      spreadsheet, '场次', 'sessionId', sessionId, eventId
+    );
+    if (!existing) adminError_('NOT_FOUND');
+    var hasRegistrationHistory = readAdminRows_(spreadsheet, '报名项目')
+      .some(function(registration) {
+        return String(registration.eventId || '') === eventId &&
+          parseAdminStringArray_(registration.sessionIds).indexOf(sessionId) !== -1;
+      });
+    var hasSeatHistory = readAdminRows_(spreadsheet, '座位').some(function(seat) {
+      return String(seat.eventId || '') === eventId &&
+        String(seat.sessionId || '') === sessionId;
+    });
+    var hasAttendanceHistory = readAdminRows_(spreadsheet, '签到记录')
+      .some(function(attendance) {
+        return String(attendance.eventId || '') === eventId &&
+          String(attendance.sessionId || '') === sessionId;
+      });
+    if (hasRegistrationHistory || hasSeatHistory || hasAttendanceHistory) {
+      adminError_('CONFLICT');
+    }
+    var sessionSheet = getRequiredSheet_(spreadsheet, '场次');
+    if (typeof journalAdminDelete_ === 'function') {
+      journalAdminDelete_(
+        sessionSheet,
+        existing.rowNumber,
+        STAFF_SHEET_DEFINITIONS['场次'].length
+      );
+    }
+    sessionSheet.deleteRow(existing.rowNumber);
+    var settings = getAdminSettings_(registry);
+    var eventPolicy = ensureAdminEventPolicy_(settings, eventId);
+    if (eventPolicy.sessions && typeof eventPolicy.sessions === 'object' &&
+        !Array.isArray(eventPolicy.sessions)) {
+      delete eventPolicy.sessions[sessionId];
+    }
+    refreshAdminEventDateSummary_(spreadsheet, settings, eventId);
+    setAdminSettings_(registry, settings);
+    appendAdminAudit_(
+      spreadsheet,
+      'DELETE_SESSION',
+      'session',
+      sessionId,
+      normalizedActor,
+      { eventId: eventId, title: existing.title }
+    );
+    return { eventId: eventId, sessionId: sessionId, deleted: true };
   });
 }
 

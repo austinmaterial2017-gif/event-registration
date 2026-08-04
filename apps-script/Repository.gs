@@ -17,7 +17,7 @@ var SHEET_DEFINITIONS = {
   '报名问题': ['questionId', 'eventId', 'label', 'type', 'required', 'options', 'sortOrder', 'status', 'createdAt', 'updatedAt'],
   '参加者': ['participantId', 'name', 'phone', 'email', 'createdAt', 'updatedAt'],
   '报名项目': ['registrationId', 'eventId', 'participantId', 'ticketNumber', 'status', 'sessionIds', 'seatChoices', 'answers', 'createdAt', 'updatedAt'],
-  '签到记录': ['checkInId', 'registrationId', 'eventId', 'sessionId', 'checkedInAt', 'checkedInBy', 'status'],
+  '签到记录': ['checkInId', 'registrationId', 'eventId', 'sessionId', 'checkpointId', 'checkpointLabel', 'checkedInAt', 'checkedInBy', 'status'],
   '操作记录': ['auditId', 'action', 'entityType', 'entityId', 'actor', 'details', 'createdAt']
 };
 
@@ -356,14 +356,19 @@ function ensureHeaders_(sheet, headers) {
 }
 
 function migrateLegacyAttendanceHeader_(sheet, headers) {
-  var legacy = ['checkInId', 'registrationId', 'eventId', 'checkedInAt', 'checkedInBy', 'status'];
-  if (sheet.getName() !== '签到记录' ||
-      headers.length !== legacy.length + 1 ||
-      sheet.getLastRow() === 0) return false;
-  var existing = sheet.getRange(1, 1, 1, legacy.length).getValues()[0];
-  if (!legacy.every(function(header, index) { return existing[index] === header; })) return false;
-  sheet.insertColumnAfter(3);
-  sheet.getRange(1, 4, 1, 1).setValues([['sessionId']]);
+  var preSession = ['checkInId', 'registrationId', 'eventId', 'checkedInAt', 'checkedInBy', 'status'];
+  var preCheckpoint = ['checkInId', 'registrationId', 'eventId', 'sessionId', 'checkedInAt', 'checkedInBy', 'status'];
+  if (sheet.getName() !== '签到记录' || headers.length !== 9 || sheet.getLastRow() === 0) return false;
+  var existing = sheet.getRange(1, 1, 1, preCheckpoint.length).getValues()[0];
+  var matchesPreSession = preSession.every(function(header, index) { return existing[index] === header; });
+  var matchesPreCheckpoint = preCheckpoint.every(function(header, index) { return existing[index] === header; });
+  if (!matchesPreSession && !matchesPreCheckpoint) return false;
+  if (matchesPreSession) {
+    sheet.insertColumnAfter(3);
+    sheet.getRange(1, 4, 1, 1).setValues([['sessionId']]);
+  }
+  sheet.insertColumnsAfter(4, 2);
+  sheet.getRange(1, 5, 1, 2).setValues([['checkpointId', 'checkpointLabel']]);
   return true;
 }
 

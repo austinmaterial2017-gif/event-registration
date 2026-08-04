@@ -12,7 +12,7 @@ var STAFF_SHEET_DEFINITIONS = {
   '报名问题': ['questionId', 'eventId', 'label', 'type', 'required', 'options', 'sortOrder', 'status', 'createdAt', 'updatedAt'],
   '参加者': ['participantId', 'name', 'phone', 'email', 'createdAt', 'updatedAt'],
   '报名项目': ['registrationId', 'eventId', 'participantId', 'ticketNumber', 'status', 'sessionIds', 'seatChoices', 'answers', 'createdAt', 'updatedAt'],
-  '签到记录': ['checkInId', 'registrationId', 'eventId', 'sessionId', 'checkedInAt', 'checkedInBy', 'status'],
+  '签到记录': ['checkInId', 'registrationId', 'eventId', 'sessionId', 'checkpointId', 'checkpointLabel', 'checkedInAt', 'checkedInBy', 'status'],
   '操作记录': ['auditId', 'action', 'entityType', 'entityId', 'actor', 'details', 'createdAt']
 };
 

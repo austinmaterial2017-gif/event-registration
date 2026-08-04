@@ -404,7 +404,9 @@
         ]));
       replaceList("#attendance-list", data.attendance, (item) =>
         dataRow(item.registrationId, item.status, [
-          `场次 ${item.sessionId}`, item.checkedInAt, item.checkedInBy
+          `场次 ${item.sessionId}`,
+          `${item.checkpointLabel || "第 1 次签到"} · ${item.checkpointId || "checkpoint-1"}`,
+          item.checkedInAt, item.checkedInBy
         ]));
       if (selectedDraft) fillEventEditor(selectedDraft.draft.event);
       else if (selectedEvent) fillEventEditor(selectedEvent);

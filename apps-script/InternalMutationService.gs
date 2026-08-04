@@ -129,14 +129,14 @@ function executeInternalActionLocked_(action, payload, actor) {
       var registry = getRegistrySpreadsheet_();
       var route = requireAttendanceTicketRoute_(registry, payload && payload.token);
       var spreadsheet = getEventSpreadsheet_(registry, route.eventId);
-      var projection = attendancePublicProjection_(
-        findAttendanceTicket_(spreadsheet, payload && payload.token, route)
-      );
+      var match = findAttendanceTicket_(spreadsheet, payload && payload.token, route);
+      var projection = attendancePublicProjection_(match);
       var settings = getAdminSettings(registry);
       var policy = settings && settings.registration &&
         settings.registration.events && settings.registration.events[route.eventId] || {};
       var mode = String(policy.checkInMode || 'session').toLowerCase();
       projection.checkInMode = mode === 'event' || mode === 'none' ? mode : 'session';
+      projection.sessions = internalCheckpointSessions_(spreadsheet, match, policy);
       return projection;
     },
     'staff.checkIn': function() {
@@ -211,6 +211,9 @@ function internalMutationFailure_(code) {
     CHECK_IN_CLOSED: '当前不在此场讲座的签到时间内。',
     CHECK_IN_DISABLED: '此活动不需要签到，二维码仍可用于验票。',
     ALREADY_CHECKED_IN: '此场讲座已完成签到。',
+    CHECKPOINT_REQUIRED: '请选择要进行的签到次数。',
+    CHECKPOINT_INVALID: '所选签到次数无效。',
+    ALL_CHECK_INS_COMPLETE: '这张票在此场次的所有签到都已完成。',
     MAINTENANCE: '系统正在切换数据连接，请稍后重试。',
     LEGACY_MIGRATION_REQUIRED: 'Existing legacy activity data must be migrated before activation.',
     INTERNAL: '请求未能完成，请稍后重试。'
@@ -382,6 +385,7 @@ function internalStaffCheckInLocked_(payload, actor) {
   if (checkInMode === 'none') adminError_('CHECK_IN_DISABLED');
   var sessionId = '__EVENT__';
   var session = null;
+  var checkpointPolicy = { checkInMode: 'single', checkInCount: 1, checkInLabels: [''] };
   if (checkInMode === 'session') {
     if (typeof payload.sessionId !== 'string' || !payload.sessionId.trim()) {
       adminError_('INVALID_REQUEST');
@@ -391,6 +395,9 @@ function internalStaffCheckInLocked_(payload, actor) {
       return candidate.sessionId === sessionId;
     })[0];
     if (!session) adminError_('SESSION_NOT_REGISTERED');
+    var sessionPolicy = eventPolicy.sessions && eventPolicy.sessions[sessionId] || {};
+    checkpointPolicy = adminCheckpointPolicy_(sessionPolicy);
+    if (checkpointPolicy.checkInMode === 'none') adminError_('CHECK_IN_DISABLED');
     var sessionStatus = String(session.status || '').toLowerCase();
     if (sessionStatus !== 'live' && sessionStatus !== 'open') {
       adminError_('CHECK_IN_CLOSED');
@@ -401,17 +408,41 @@ function internalStaffCheckInLocked_(payload, actor) {
       !isWithinInternalAttendanceWindow_(registry, session, now)) {
     adminError_('CHECK_IN_CLOSED');
   }
-  var duplicate = readRows(spreadsheet, '签到记录').some(function(record) {
-    return record.registrationId === match.registrationId &&
-      record.sessionId === sessionId &&
-      String(record.status || '').toLowerCase() === 'checked_in';
+  var attendanceRows = readRows(spreadsheet, '签到记录');
+  var completed = {};
+  attendanceRows.forEach(function(record) {
+    if (record.registrationId !== match.registrationId || record.sessionId !== sessionId ||
+        String(record.status || '').toLowerCase() !== 'checked_in') return;
+    completed[String(record.checkpointId || 'checkpoint-1')] = true;
   });
-  if (duplicate) adminError_('ALREADY_CHECKED_IN');
+  var checkpointId = 'checkpoint-1';
+  if (checkInMode === 'session' && checkpointPolicy.checkInMode === 'manual') {
+    if (typeof payload.checkpointId !== 'string' || !payload.checkpointId.trim()) {
+      adminError_('CHECKPOINT_REQUIRED');
+    }
+    checkpointId = payload.checkpointId.trim();
+    if (!internalCheckpointIndex_(checkpointId, checkpointPolicy.checkInCount)) {
+      adminError_('CHECKPOINT_INVALID');
+    }
+  } else if (checkInMode === 'session' && checkpointPolicy.checkInMode === 'automatic') {
+    checkpointId = '';
+    for (var checkpointNumber = 1; checkpointNumber <= checkpointPolicy.checkInCount; checkpointNumber += 1) {
+      var candidateId = 'checkpoint-' + checkpointNumber;
+      if (!completed[candidateId]) { checkpointId = candidateId; break; }
+    }
+    if (!checkpointId) adminError_('ALL_CHECK_INS_COMPLETE');
+  }
+  if (completed[checkpointId]) adminError_('ALREADY_CHECKED_IN');
+  var checkpointIndex = internalCheckpointIndex_(checkpointId, checkpointPolicy.checkInCount || 1);
+  var checkpointLabel = checkInMode === 'event' ? '活动签到' :
+    internalCheckpointLabel_(checkpointPolicy, checkpointIndex - 1);
   var row = {
     checkInId: Utilities.getUuid(),
     registrationId: match.registrationId,
     eventId: match.event.eventId,
     sessionId: sessionId,
+    checkpointId: checkpointId,
+    checkpointLabel: checkpointLabel,
     checkedInAt: now.toISOString(),
     checkedInBy: String(actor || '').trim().toLowerCase(),
     status: 'checked_in'
@@ -419,7 +450,58 @@ function internalStaffCheckInLocked_(payload, actor) {
   var sheet = getRequiredSheet_(spreadsheet, '签到记录');
   var values = normalizeRow_('签到记录', row);
   sheet.getRange(sheet.getLastRow() + 1, 1, 1, values.length).setValues([values]);
-  return { status: 'checked_in', sessionId: sessionId, checkedInAt: row.checkedInAt };
+  return {
+    status: 'checked_in', sessionId: sessionId, checkpointId: checkpointId,
+    checkpointLabel: checkpointLabel, checkedInAt: row.checkedInAt,
+    checkpoints: internalCheckpointState_(spreadsheet, match.registrationId, sessionId, checkpointPolicy)
+  };
+}
+
+function internalCheckpointIndex_(checkpointId, count) {
+  var match = /^checkpoint-(\d+)$/.exec(String(checkpointId || ''));
+  var index = match ? Number(match[1]) : 0;
+  return Number.isInteger(index) && index >= 1 && index <= count ? index : 0;
+}
+
+function internalCheckpointLabel_(policy, index) {
+  var label = policy.checkInLabels && policy.checkInLabels[index];
+  return String(label || '').trim() || ('第 ' + (index + 1) + ' 次签到');
+}
+
+function internalCheckpointState_(spreadsheet, registrationId, sessionId, policy) {
+  var completed = {};
+  readRows(spreadsheet, '签到记录').forEach(function(record) {
+    if (record.registrationId !== registrationId || record.sessionId !== sessionId ||
+        String(record.status || '').toLowerCase() !== 'checked_in') return;
+    completed[String(record.checkpointId || 'checkpoint-1')] = record;
+  });
+  var result = [];
+  for (var index = 0; index < policy.checkInCount; index += 1) {
+    var checkpointId = 'checkpoint-' + (index + 1);
+    var record = completed[checkpointId];
+    result.push({
+      checkpointId: checkpointId,
+      label: internalCheckpointLabel_(policy, index),
+      status: record ? 'completed' : 'available',
+      checkedInAt: record ? String(record.checkedInAt || '') : '',
+      checkedInBy: record ? String(record.checkedInBy || '') : ''
+    });
+  }
+  return result;
+}
+
+function internalCheckpointSessions_(spreadsheet, match, eventPolicy) {
+  return match.sessions.map(function(session) {
+    var policy = adminCheckpointPolicy_(eventPolicy.sessions && eventPolicy.sessions[session.sessionId] || {});
+    return {
+      sessionId: session.sessionId,
+      title: String(session.title || ''), speaker: String(session.speaker || ''),
+      startsAt: String(session.startsAt || ''), endsAt: String(session.endsAt || ''),
+      location: String(session.location || match.event.location || ''),
+      checkInMode: policy.checkInMode,
+      checkpoints: internalCheckpointState_(spreadsheet, match.registrationId, session.sessionId, policy)
+    };
+  });
 }
 
 function isWithinInternalAttendanceWindow_(registry, session, now) {
@@ -972,6 +1054,8 @@ function getAdminDashboard_(payload) {
           registrationId: String(record.registrationId || ''),
           eventId: String(record.eventId || ''),
           sessionId: String(record.sessionId || ''),
+          checkpointId: String(record.checkpointId || 'checkpoint-1'),
+          checkpointLabel: String(record.checkpointLabel || '第 1 次签到'),
           checkedInAt: String(record.checkedInAt || ''),
           checkedInBy: maskAdminValue_(record.checkedInBy),
           status: String(record.status || '')

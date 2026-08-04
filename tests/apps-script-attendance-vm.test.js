@@ -10,7 +10,7 @@ const headers = {
   "座位": ["seatId", "eventId", "sessionId", "label", "zone", "status", "holderRegistrationId", "createdAt", "updatedAt"],
   "参加者": ["participantId", "name", "phone", "email", "createdAt", "updatedAt"],
   "报名项目": ["registrationId", "eventId", "participantId", "ticketNumber", "status", "sessionIds", "seatChoices", "answers", "createdAt", "updatedAt"],
-  "签到记录": ["checkInId", "registrationId", "eventId", "sessionId", "checkedInAt", "checkedInBy", "status"]
+  "签到记录": ["checkInId", "registrationId", "eventId", "sessionId", "checkpointId", "checkpointLabel", "checkedInAt", "checkedInBy", "status"]
 };
 
 class FakeSheet {
@@ -449,6 +449,49 @@ test("event check-in mode writes one reserved attendance row and ignores submitt
   assert.equal(first.data.sessionId, "__EVENT__");
   assert.equal(duplicate.code, "ALREADY_CHECKED_IN");
   assert.deepEqual(rows(harness.sheets["签到记录"]).map((row) => row.sessionId), ["__EVENT__"]);
+});
+
+test("automatic session check-in advances through every configured checkpoint", async () => {
+  const harness = await createHarness({
+    staffProject: true,
+    sessionEmail: "staff@example.com",
+    adminSettings: { registration: { events: { "event-1": {
+      checkInMode: "session",
+      sessions: { s1: { checkInMode: "automatic", checkInCount: 3, checkInLabels: ["入场", "", "离场"] } }
+    } } } }
+  });
+  const request = { token: "opaque-token", sessionId: "s1" };
+
+  const results = [
+    harness.context.checkIn(request),
+    harness.context.checkIn(request),
+    harness.context.checkIn(request),
+    harness.context.checkIn(request)
+  ];
+
+  assert.deepEqual(results.slice(0, 3).map((result) => result.data.checkpointId),
+    ["checkpoint-1", "checkpoint-2", "checkpoint-3"]);
+  assert.equal(results[1].data.checkpointLabel, "第 2 次签到");
+  assert.equal(results[3].code, "ALL_CHECK_INS_COMPLETE");
+});
+
+test("manual session check-in requires and isolates the selected checkpoint", async () => {
+  const harness = await createHarness({
+    staffProject: true,
+    sessionEmail: "staff@example.com",
+    adminSettings: { registration: { events: { "event-1": {
+      checkInMode: "session",
+      sessions: { s1: { checkInMode: "manual", checkInCount: 3, checkInLabels: ["", "课堂练习", ""] } }
+    } } } }
+  });
+  const base = { token: "opaque-token", sessionId: "s1" };
+
+  assert.equal(harness.context.checkIn(base).code, "CHECKPOINT_REQUIRED");
+  assert.equal(harness.context.checkIn({ ...base, checkpointId: "checkpoint-9" }).code, "CHECKPOINT_INVALID");
+  const saved = harness.context.checkIn({ ...base, checkpointId: "checkpoint-2" });
+  assert.equal(saved.data.checkpointLabel, "课堂练习");
+  assert.equal(harness.context.checkIn({ ...base, checkpointId: "checkpoint-2" }).code, "ALREADY_CHECKED_IN");
+  assert.equal(harness.context.checkIn({ ...base, checkpointId: "checkpoint-3" }).ok, true);
 });
 
 test("none check-in mode keeps verification readable but rejects attendance writes", async () => {

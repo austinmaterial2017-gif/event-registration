@@ -712,6 +712,8 @@ function getAdminDashboard_(payload) {
           registrationId: String(record.registrationId || ''),
           eventId: String(record.eventId || ''),
           sessionId: String(record.sessionId || ''),
+          checkpointId: String(record.checkpointId || 'checkpoint-1'),
+          checkpointLabel: String(record.checkpointLabel || '第 1 次签到'),
           checkedInAt: String(record.checkedInAt || ''),
           checkedInBy: maskAdminValue_(record.checkedInBy),
           status: String(record.status || '')

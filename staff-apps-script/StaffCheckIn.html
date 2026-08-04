@@ -30,6 +30,10 @@
             <option value="">请选择场次</option>
           </select>
         </label>
+        <label id="checkpoint-checkin-field" hidden>签到次数
+          <select name="checkpointId"><option value="">请选择签到次数</option></select>
+        </label>
+        <div id="checkpoint-status" aria-live="polite"></div>
         <label class="confirm">
           <input name="confirmCheckIn" type="checkbox" required>
           <span id="confirm-checkin-copy">我已当面核对参与者和本场讲座</span>
@@ -45,12 +49,49 @@
       const summary = document.querySelector("#ticket-summary");
       const sessionField = document.querySelector("#session-checkin-field");
       const confirmCopy = document.querySelector("#confirm-checkin-copy");
+      const checkpointField = document.querySelector("#checkpoint-checkin-field");
+      const checkpointStatus = document.querySelector("#checkpoint-status");
       const lookupButton = lookupForm.querySelector('button[type="submit"]');
       const checkInButton = checkInForm.querySelector('button[type="submit"]');
       let activeToken = "";
       let lookupPending = false;
       let checkInPending = false;
       let activeCheckInMode = "session";
+      let activeTicket = null;
+
+      function selectedSession_() {
+        const sessionId = checkInForm.elements.sessionId.value;
+        return activeTicket && activeTicket.sessions.find((session) => session.sessionId === sessionId);
+      }
+
+      function renderCheckpointControls_() {
+        const session = selectedSession_();
+        const checkpointSelect = checkInForm.elements.checkpointId;
+        if (!checkpointSelect || !checkpointField || !checkpointStatus) return;
+        checkpointSelect.length = 1;
+        checkpointStatus.textContent = "";
+        if (!session || activeCheckInMode !== "session") {
+          checkpointField.hidden = true;
+          checkpointSelect.required = false;
+          return;
+        }
+        const checkpoints = Array.isArray(session.checkpoints) ? session.checkpoints : [];
+        checkpointStatus.textContent = checkpoints.map((checkpoint) =>
+          `${checkpoint.status === "completed" ? "✓" : "○"} ${checkpoint.label}`
+        ).join(" · ");
+        const manual = session.checkInMode === "manual";
+        checkpointField.hidden = !manual;
+        checkpointSelect.required = manual;
+        if (manual) checkpoints.filter((checkpoint) => checkpoint.status !== "completed")
+          .forEach((checkpoint) => {
+            const option = document.createElement("option");
+            option.value = checkpoint.checkpointId;
+            option.textContent = checkpoint.label;
+            checkpointSelect.append(option);
+          });
+        checkInButton.textContent = session.checkInMode === "automatic"
+          ? "签到下一次" : checkInIdleText();
+      }
 
       function checkInIdleText() {
         return activeCheckInMode === "event" ? "确认整个活动签到" : "确认本场签到";
@@ -81,6 +122,7 @@
           return;
         }
         const ticket = result.data;
+        activeTicket = ticket;
         activeCheckInMode = ["session", "event", "none"].includes(ticket.checkInMode)
           ? ticket.checkInMode : "session";
         summary.textContent = `${ticket.participantName} · ${ticket.event.title} · ${ticket.status}`;
@@ -100,6 +142,7 @@
           ? "我已当面核对参与者和本场讲座"
           : "我已当面核对参与者和整个活动";
         checkInButton.textContent = checkInIdleText();
+        renderCheckpointControls_();
         checkInForm.hidden = ticket.status !== "active" || activeCheckInMode === "none";
         message.textContent = activeCheckInMode === "none"
           ? "此活动不需要签到；二维码仍可用于验票。"
@@ -137,6 +180,9 @@
         event.preventDefault();
         lookupTicketForCheckIn(lookupForm.elements.token.value);
       });
+      if (typeof checkInForm.elements.sessionId.addEventListener === "function") {
+        checkInForm.elements.sessionId.addEventListener("change", renderCheckpointControls_);
+      }
 
       checkInForm.addEventListener("submit", (event) => {
         event.preventDefault();
@@ -148,6 +194,13 @@
           .withSuccessHandler((result) => {
             checkInPending = false;
             setPending(checkInButton, false, "正在签到…", checkInIdleText());
+            if (result && result.ok && activeCheckInMode === "session") {
+              const session = selectedSession_();
+              if (session && Array.isArray(result.data.checkpoints)) {
+                session.checkpoints = result.data.checkpoints;
+                renderCheckpointControls_();
+              }
+            }
             message.textContent = result && result.ok
               ? activeCheckInMode === "event" ? "整个活动签到成功。" : "本场签到成功。"
               : result && result.message ? result.message : "签到未完成。";
@@ -160,7 +213,10 @@
           .checkIn({
             token: activeToken,
             sessionId: activeCheckInMode === "session"
-              ? checkInForm.elements.sessionId.value : ""
+              ? checkInForm.elements.sessionId.value : "",
+            checkpointId: activeCheckInMode === "session" &&
+              selectedSession_() && selectedSession_().checkInMode === "manual"
+              ? checkInForm.elements.checkpointId.value : undefined
           });
       });
 

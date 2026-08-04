@@ -38,6 +38,9 @@ function staffAttendanceFailure_(code) {
     CHECK_IN_CLOSED: '当前不在此场讲座的签到时间内。',
     CHECK_IN_DISABLED: '此活动不需要签到，二维码仍可用于验票。',
     ALREADY_CHECKED_IN: '此场讲座已完成签到。',
+    CHECKPOINT_REQUIRED: '请选择要进行的签到次数。',
+    CHECKPOINT_INVALID: '所选签到次数无效。',
+    ALL_CHECK_INS_COMPLETE: '这张票在此场次的所有签到都已完成。',
     MAINTENANCE: '系统正在切换数据连接，请稍后重试。',
     INTERNAL: '请求未能完成，请稍后重试。'
   };

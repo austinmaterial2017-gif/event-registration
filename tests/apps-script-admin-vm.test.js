@@ -19,7 +19,7 @@ const headers = {
   "报名问题": ["questionId", "eventId", "label", "type", "required", "options", "sortOrder", "status", "createdAt", "updatedAt"],
   "参加者": ["participantId", "name", "phone", "email", "createdAt", "updatedAt"],
   "报名项目": ["registrationId", "eventId", "participantId", "ticketNumber", "status", "sessionIds", "seatChoices", "answers", "createdAt", "updatedAt"],
-  "签到记录": ["checkInId", "registrationId", "eventId", "sessionId", "checkedInAt", "checkedInBy", "status"],
+  "签到记录": ["checkInId", "registrationId", "eventId", "sessionId", "checkpointId", "checkpointLabel", "checkedInAt", "checkedInBy", "status"],
   "操作记录": ["auditId", "action", "entityType", "entityId", "actor", "details", "createdAt"]
 };
 
@@ -1819,11 +1819,31 @@ test("event, session, and question CRUD validate supported values and retain ext
     capacity: 120,
     required: true,
     groupRule: "group-a",
+    checkInMode: "manual",
+    checkInCount: 4,
+    checkInLabels: ["入场", "", "", "离场"],
     status: "open"
   });
   assert.equal(session.ok, true);
   assert.equal(session.data.location, "Room 3");
   assert.equal(session.data.groupRule, "group-a");
+  assert.equal(session.data.checkInMode, "manual");
+  assert.equal(session.data.checkInCount, 4);
+  assert.deepEqual(Array.from(session.data.checkInLabels), ["入场", "", "", "离场"]);
+
+  for (const invalidPolicy of [
+    { checkInMode: "sometimes", checkInCount: 2 },
+    { checkInMode: "automatic", checkInCount: 0 },
+    { checkInMode: "manual", checkInCount: 21 },
+    { checkInMode: "manual", checkInCount: 2.5 },
+    { checkInMode: "manual", checkInCount: 2, checkInLabels: ["一", "二", "三"] }
+  ]) {
+    assert.equal(harness.context.saveAdminSession({
+      eventId,
+      title: "Invalid checkpoint policy",
+      ...invalidPolicy
+    }).code, "INVALID_REQUEST");
+  }
 
   const question = harness.context.saveAdminQuestion({
     eventId,

@@ -307,6 +307,21 @@
                     <input name="groupRule" placeholder="例如：科学">
                     <small>相同文字代表同一组，参加者最多选该组 1 场；没有限制请留空。例如：科学讲师 A 填“科学”、科学讲师 B 也填“科学”；BI 讲师 A 和 BI 讲师 B 都填“BI”。</small>
                   </label>
+                  <label>签到方式<select name="checkInMode">
+                    <option value="none">不需要签到</option>
+                    <option value="single" selected>只签到一次</option>
+                    <option value="automatic">多次签到（扫描后自动签到下一次）</option>
+                    <option value="manual">多次签到（扫描后由工作人员选择）</option>
+                  </select></label>
+                  <div class="wide" id="session-checkpoint-fields" hidden>
+                    <div class="fields">
+                      <label>需要签到几次<input name="checkInCount" type="number" min="1" max="20" step="1" value="1"></label>
+                      <label class="wide">每次签到名称（选填，每行一个）
+                        <textarea name="checkInLabels" placeholder="例如：入场签到&#10;课间签到&#10;离场签到"></textarea>
+                        <small>留空的名称会自动显示为“第 N 次签到”。</small>
+                      </label>
+                    </div>
+                  </div>
                 </div>
                 <label class="check"><input name="required" type="checkbox">这是必选场次</label>
                   <button id="save-session" type="submit">保存新场次</button>

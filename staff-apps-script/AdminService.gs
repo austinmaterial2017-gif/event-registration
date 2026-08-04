@@ -911,15 +911,30 @@ function saveAdminSession_(payload, actor) {
       createdAt: existing ? existing.createdAt : now,
       updatedAt: now
     };
-    writeAdminRow_(spreadsheet, '场次', existing && existing.rowNumber, row);
     var settings = getAdminSettings_(registry);
     var sessionPolicy = ensureAdminSessionPolicy_(settings, row.eventId, sessionId);
+    var currentCheckpointPolicy = adminCheckpointPolicy_(sessionPolicy);
+    var hasCheckpointPolicy = Object.prototype.hasOwnProperty.call(request, 'checkInMode') ||
+      Object.prototype.hasOwnProperty.call(request, 'checkInCount') ||
+      Object.prototype.hasOwnProperty.call(request, 'checkInLabels');
+    var checkpointPolicy = hasCheckpointPolicy ? adminCheckpointPolicy_({
+      checkInMode: Object.prototype.hasOwnProperty.call(request, 'checkInMode')
+        ? request.checkInMode : currentCheckpointPolicy.checkInMode,
+      checkInCount: Object.prototype.hasOwnProperty.call(request, 'checkInCount')
+        ? request.checkInCount : currentCheckpointPolicy.checkInCount,
+      checkInLabels: Object.prototype.hasOwnProperty.call(request, 'checkInLabels')
+        ? request.checkInLabels : currentCheckpointPolicy.checkInLabels
+    }) : currentCheckpointPolicy;
+    writeAdminRow_(spreadsheet, '场次', existing && existing.rowNumber, row);
     sessionPolicy.location = adminTextField_(
       request, 'location', sessionPolicy.location, ''
     );
     sessionPolicy.groupRule = adminTextField_(
       request, 'groupRule', sessionPolicy.groupRule, ''
     );
+    sessionPolicy.checkInMode = checkpointPolicy.checkInMode;
+    sessionPolicy.checkInCount = checkpointPolicy.checkInCount;
+    sessionPolicy.checkInLabels = checkpointPolicy.checkInLabels;
     refreshAdminEventDateSummary_(spreadsheet, settings, row.eventId);
     setAdminSettings_(registry, settings);
     appendAdminAudit_(
@@ -1783,6 +1798,26 @@ function ensureAdminSessionPolicy_(settings, eventId, sessionId) {
   return eventPolicy.sessions[sessionId];
 }
 
+function adminCheckpointPolicy_(value) {
+  var source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  var mode = String(source.checkInMode || 'single').trim().toLowerCase();
+  if (['none', 'single', 'automatic', 'manual'].indexOf(mode) === -1) {
+    adminError_('INVALID_REQUEST');
+  }
+  if (mode === 'none') return { checkInMode: 'none', checkInCount: 0, checkInLabels: [] };
+  if (mode === 'single') return { checkInMode: 'single', checkInCount: 1, checkInLabels: [''] };
+  var count = Number(source.checkInCount);
+  if (!Number.isInteger(count) || count < 1 || count > 20) adminError_('INVALID_REQUEST');
+  var labels = source.checkInLabels === undefined ? [] : source.checkInLabels;
+  if (!Array.isArray(labels) || labels.length > count) adminError_('INVALID_REQUEST');
+  labels = labels.map(function(label) {
+    if (typeof label !== 'string' || label.length > 100) adminError_('INVALID_REQUEST');
+    return label.trim();
+  });
+  while (labels.length < count) labels.push('');
+  return { checkInMode: mode, checkInCount: count, checkInLabels: labels };
+}
+
 function refreshAdminEventDateSummary_(spreadsheet, settings, eventId) {
   var starts = [];
   var ends = [];
@@ -1839,6 +1874,7 @@ function adminEventProjection_(event, settings) {
 function adminSessionProjection_(session, settings) {
   var eventPolicy = ensureAdminEventPolicy_(settings || {}, session.eventId);
   var policy = eventPolicy.sessions && eventPolicy.sessions[session.sessionId] || {};
+  var checkpointPolicy = adminCheckpointPolicy_(policy);
   return {
     sessionId: String(session.sessionId || ''),
     eventId: String(session.eventId || ''),
@@ -1850,6 +1886,9 @@ function adminSessionProjection_(session, settings) {
     capacity: Number(session.capacity || 0),
     required: adminTruthy_(session.required),
     groupRule: String(policy.groupRule || ''),
+    checkInMode: checkpointPolicy.checkInMode,
+    checkInCount: checkpointPolicy.checkInCount,
+    checkInLabels: checkpointPolicy.checkInLabels,
     status: String(session.status || ''),
     createdAt: String(session.createdAt || ''),
     updatedAt: String(session.updatedAt || '')

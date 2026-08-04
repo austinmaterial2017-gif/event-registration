@@ -238,8 +238,23 @@
       form.reset();
       form.elements.eventId.value = state.selectedEventId;
       form.elements.sessionId.value = "";
+      if (form.elements.checkInMode) form.elements.checkInMode.value = "single";
+      if (form.elements.checkInCount) form.elements.checkInCount.value = "1";
+      if (form.elements.checkInLabels) form.elements.checkInLabels.value = "";
+      updateConditionalSessionFields_();
       document.querySelector("#session-editor-mode").textContent = "正在新增场次";
       document.querySelector("#save-session").textContent = "保存新场次";
+    }
+
+    function updateConditionalSessionFields_() {
+      const form = document.querySelector("#session-form");
+      if (!form.elements.checkInMode) return;
+      const mode = form.elements.checkInMode.value;
+      const multiple = mode === "automatic" || mode === "manual";
+      const fields = document.querySelector("#session-checkpoint-fields");
+      if (fields) fields.hidden = !multiple;
+      if (mode === "none") form.elements.checkInCount.value = "0";
+      if (mode === "single") form.elements.checkInCount.value = "1";
     }
 
     function resetRelatedForms() {
@@ -511,7 +526,11 @@
       form.elements.capacity.value = item.capacity;
       form.elements.required.checked = item.required === true;
       form.elements.groupRule.value = item.groupRule;
+      if (form.elements.checkInMode) form.elements.checkInMode.value = item.checkInMode || "single";
+      if (form.elements.checkInCount) form.elements.checkInCount.value = String(item.checkInCount ?? 1);
+      if (form.elements.checkInLabels) form.elements.checkInLabels.value = (item.checkInLabels || []).join("\n");
       form.elements.status.value = item.status;
+      updateConditionalSessionFields_();
       document.querySelector("#session-editor-mode").textContent =
         `正在编辑：${item.title || "未命名场次"}`;
       document.querySelector("#save-session").textContent = "保存场次修改";
@@ -635,6 +654,14 @@
       if (values.startsAt && values.endsAt &&
           Date.parse(values.endsAt) <= Date.parse(values.startsAt)) {
         return "场次结束时间必须晚于开始时间。";
+      }
+      if (["automatic", "manual"].includes(values.checkInMode)) {
+        const count = Number(values.checkInCount);
+        if (!Number.isInteger(count) || count < 1 || count > 20) {
+          return "多次签到的次数必须是 1 至 20 的整数。";
+        }
+        const labels = String(values.checkInLabels || "").split(/\r?\n/);
+        if (labels.length > count) return "签到名称的行数不能多于签到次数。";
       }
       return "";
     }
@@ -935,7 +962,13 @@
         startsAt: localDateValue(values.startsAt),
         endsAt: localDateValue(values.endsAt),
         capacity: Number(values.capacity),
-        required: checked(form, "required")
+        required: checked(form, "required"),
+        checkInMode: values.checkInMode || "single",
+        checkInCount: (values.checkInMode || "single") === "none" ? 0 :
+          ((values.checkInMode || "single") === "single" ? 1 : Number(values.checkInCount)),
+        checkInLabels: (values.checkInMode || "single") === "none" ? [] :
+          ((values.checkInMode || "single") === "single" ? [""] :
+            String(values.checkInLabels || "").split(/\r?\n/).map((label) => label.trim()))
       };
       if (state.selectedDraftId) {
         const draftKey = values.sessionId ||
@@ -976,6 +1009,9 @@
       resetSessionEditor_();
       focusEditor(document.querySelector("#session-form"));
     });
+    const sessionCheckInMode = document.querySelector("#session-form").elements.checkInMode;
+    if (sessionCheckInMode) sessionCheckInMode
+      .addEventListener("change", updateConditionalSessionFields_);
 
     document.querySelector("#seat-form").addEventListener("submit", (event) => {
       event.preventDefault();

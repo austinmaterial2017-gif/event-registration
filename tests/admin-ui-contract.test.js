@@ -140,3 +140,16 @@ test("administrator capacity controls explain and display zero as unlimited", as
   assert.match(script, /function\s+sessionCapacityLabel_\s*\(/);
   assert.match(script, /不限人数/);
 });
+
+test("each session exposes independent configurable check-in controls", async () => {
+  const [admin, script] = await Promise.all([
+    readFile(adminUrl, "utf8"),
+    readFile(scriptUrl, "utf8")
+  ]);
+
+  assert.match(admin, /name=["']checkInMode["'][\s\S]*?value=["']none["'][\s\S]*?value=["']single["'][\s\S]*?value=["']automatic["'][\s\S]*?value=["']manual["']/);
+  assert.match(admin, /name=["']checkInCount["'][^>]*min=["']1["'][^>]*max=["']20["']/);
+  assert.match(admin, /name=["']checkInLabels["']/);
+  assert.match(script, /function\s+updateConditionalSessionFields_/);
+  assert.match(script, /checkInLabels:\s*\(values\.checkInMode/);
+});

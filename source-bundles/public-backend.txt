@@ -2074,7 +2074,8 @@ function updateRegistrationSessions(payload) {
       var sessionSheetName = ticketSheetNameByHeaders_(['sessionId', 'speaker', 'capacity']);
       var sessions = readRows(spreadsheet, sessionSheetName).filter(function(session) {
         var status = String(session.status || '').toLowerCase();
-        return session.eventId === event.eventId && (status === 'active' || status === 'open');
+        return session.eventId === event.eventId &&
+          (status === 'active' || status === 'open' || status === 'upcoming');
       });
       var submittedIds = payload && Array.isArray(payload.sessionIds) ? payload.sessionIds : [];
       sessions.forEach(function(session) {
@@ -2597,7 +2598,8 @@ function buildTicketSessionManagement_(match, now) {
   var sessionSheetName = ticketSheetNameByHeaders_(['sessionId', 'speaker', 'capacity']);
   var sessions = readRows(match.spreadsheet, sessionSheetName).filter(function(session) {
     var status = String(session.status || '').toLowerCase();
-    return session.eventId === match.event.eventId && (status === 'active' || status === 'open');
+    return session.eventId === match.event.eventId &&
+      (status === 'active' || status === 'open' || status === 'upcoming');
   });
   var activeRegistrations = readRows(
     match.spreadsheet, ticketSheetNameByHeader_('sessionIds')

@@ -3,7 +3,12 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { getActivityCountdown, getVisibleActivities } from "../public/js/event-list-flow.js";
 import { applyRegistrationGate, getFieldControlSpec, getRegistrationAvailability, getSeatModeState, validateRegistrationDraft } from "../public/js/registration-flow.js";
-import { buildSeatMapGroups, createSeatHoldOwner, formatSeatChoiceLabels } from "../public/js/register-page.js";
+import {
+  buildSeatMapGroups,
+  createSeatHoldOwner,
+  formatSeatChoiceLabels,
+  formatSelectedSessionLabels
+} from "../public/js/register-page.js";
 
 const serverNow = Date.parse("2026-07-26T10:00:00+08:00");
 
@@ -109,6 +114,36 @@ test("registration review shows human seat labels instead of internal seat ids",
   assert.equal(
     formatSeatChoiceLabels(event, ["7f6c7075-internal-id"]),
     "A区-1-2"
+  );
+});
+
+test("registration review identifies every selected teacher instead of showing subject codes only", () => {
+  const event = {
+    sessions: [
+      {
+        id: "mm-qiu",
+        title: "MM",
+        speaker: "邱老师",
+        startsAt: "2026-08-15T13:00:00+08:00",
+        endsAt: "2026-08-15T14:30:00+08:00"
+      },
+      {
+        id: "sn-joanne",
+        title: "SN",
+        speaker: "JOANNE老师",
+        startsAt: "2026-09-19T13:00:00+08:00",
+        endsAt: "2026-09-19T14:30:00+08:00"
+      }
+    ]
+  };
+
+  assert.equal(
+    formatSelectedSessionLabels(event, ["mm-qiu", "sn-joanne"]),
+    "MM · 邱老师 · 8月15日 13:00–14:30、SN · JOANNE老师 · 9月19日 13:00–14:30"
+  );
+  assert.equal(
+    formatSelectedSessionLabels({ sessions: [{ id: "pending", title: "BM", speaker: "瑄老师", startsAt: "", endsAt: "" }] }, ["pending"]),
+    "BM · 瑄老师 · 时间待定"
   );
 });
 

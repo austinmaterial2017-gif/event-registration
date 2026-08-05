@@ -676,6 +676,43 @@ test("verified ticket projection exposes safe session-management choices before 
   assert.equal(serialized.includes("holderRegistrationId"), false);
 });
 
+test("verified ticket management includes participant-visible upcoming sessions", async () => {
+  const rows = baseRows();
+  rows["场次"][1].status = "upcoming";
+  const harness = await createHarness({ rows });
+  const created = harness.context.createRegistration(registrationPayload({ sessionIds: ["s1"] }));
+  const lookup = harness.context.lookupTicket({
+    ticketNumber: created.data.ticketNumber,
+    verificationValue: "alice@example.com"
+  });
+
+  assert.equal(lookup.ok, true, JSON.stringify(lookup));
+  assert.deepEqual(
+    Array.from(lookup.data.sessionManagement.sessions, (session) => session.sessionId),
+    ["s1", "s2"]
+  );
+});
+
+test("verified ticket owner can add a participant-visible upcoming session", async () => {
+  const rows = baseRows();
+  rows["场次"][1].status = "upcoming";
+  const harness = await createHarness({ rows });
+  const created = harness.context.createRegistration(registrationPayload({ sessionIds: ["s1"] }));
+
+  const updated = harness.context.updateRegistrationSessions({
+    ticketNumber: created.data.ticketNumber,
+    verificationValue: "alice@example.com",
+    sessionIds: ["s1", "s2"],
+    seatChoices: []
+  });
+
+  assert.equal(updated.ok, true, JSON.stringify(updated));
+  assert.deepEqual(
+    Array.from(updated.data.sessions, (session) => session.sessionId).sort(),
+    ["s1", "s2"]
+  );
+});
+
 test("a session that has already started cannot be removed from a ticket", async () => {
   const rows = baseRows();
   rows["场次"][0].startsAt = "2001-01-01T09:00:00Z";

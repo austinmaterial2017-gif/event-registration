@@ -231,6 +231,8 @@ test("public verification stays read-only, ticket mutations require owner verifi
   assert.match(ticketHtml, /ticket-lookup-form/);
   assert.match(ticketHtml, /ticketNumber/);
   assert.match(ticketHtml, /verificationValue/);
+  assert.match(ticketHtml, /通常是报名时填写的完整姓名或电话号码/);
+  assert.match(ticketHtml, /报名身份资料（通常为姓名或电话号码）/);
   assert.match(ticketHtml, /print-ticket/);
   const ticketPage = await readFile(new URL("../public/js/ticket-page.js", import.meta.url), "utf8");
   assert.match(ticketPage, /cancelRegistration/);

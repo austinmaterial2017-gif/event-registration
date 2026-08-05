@@ -304,12 +304,30 @@ function initializeNamedStaffSheets_(spreadsheet, sheetNames) {
 
 function ensureStaffHeaders_(sheet, headers) {
   if (hasExactStaffHeaderRow_(sheet, headers)) return;
+  if (migrateLegacyStaffAttendanceHeader_(sheet, headers)) return;
   if (sheet.getLastRow() === 0) {
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
     return;
   }
   sheet.insertRowsBefore(1, 1);
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+}
+
+function migrateLegacyStaffAttendanceHeader_(sheet, headers) {
+  var preSession = ['checkInId', 'registrationId', 'eventId', 'checkedInAt', 'checkedInBy', 'status'];
+  var preCheckpoint = ['checkInId', 'registrationId', 'eventId', 'sessionId', 'checkedInAt', 'checkedInBy', 'status'];
+  if (sheet.getName() !== '签到记录' || headers.length !== 9 || sheet.getLastRow() === 0) return false;
+  var existing = sheet.getRange(1, 1, 1, preCheckpoint.length).getValues()[0];
+  var matchesPreSession = preSession.every(function(header, index) { return existing[index] === header; });
+  var matchesPreCheckpoint = preCheckpoint.every(function(header, index) { return existing[index] === header; });
+  if (!matchesPreSession && !matchesPreCheckpoint) return false;
+  if (matchesPreSession) {
+    sheet.insertColumnAfter(3);
+    sheet.getRange(1, 4, 1, 1).setValues([['sessionId']]);
+  }
+  sheet.insertColumnsAfter(4, 2);
+  sheet.getRange(1, 5, 1, 2).setValues([['checkpointId', 'checkpointLabel']]);
+  return true;
 }
 
 function hasExactStaffHeaderRow_(sheet, headers) {
@@ -338,6 +356,13 @@ function getEventSpreadsheet_(registry, eventId) {
     spreadsheet = SpreadsheetApp.openById(entry.spreadsheetId);
   } catch (_ignored) {
     staffRoutingError_('INTEGRITY_ERROR');
+  }
+  var attendanceSheet = spreadsheet.getSheetByName('签到记录');
+  if (attendanceSheet) {
+    migrateLegacyStaffAttendanceHeader_(
+      attendanceSheet,
+      STAFF_SHEET_DEFINITIONS['签到记录']
+    );
   }
   EVENT_SHEET_NAMES_.forEach(function(sheetName) {
     var sheet = spreadsheet.getSheetByName(sheetName);

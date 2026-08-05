@@ -416,6 +416,13 @@ function getEventSpreadsheet_(registry, eventId) {
   } catch (_ignored) {
     routingError_('INTEGRITY_ERROR');
   }
+  var attendanceSheet = spreadsheet.getSheetByName('签到记录');
+  if (attendanceSheet) {
+    migrateLegacyAttendanceHeader_(
+      attendanceSheet,
+      SHEET_DEFINITIONS['签到记录']
+    );
+  }
   EVENT_SHEET_NAMES_.forEach(function(sheetName) {
     var sheet = spreadsheet.getSheetByName(sheetName);
     if (!sheet || !hasExactHeaderRow_(sheet, SHEET_DEFINITIONS[sheetName])) {

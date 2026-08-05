@@ -70,6 +70,170 @@ test("attendance schema migration inserts checkpoint identity into the existing 
   assert.equal(sheet.rows.length, 2);
 });
 
+test("opening an existing activity migrates its legacy attendance header before integrity validation", async () => {
+  const makeSheet = (name, rows) => ({
+    name,
+    rows: rows.map((row) => row.slice()),
+    getName() { return this.name; },
+    getLastRow() { return this.rows.length; },
+    getLastColumn() { return Math.max(0, ...this.rows.map((row) => row.length)); },
+    getRange(row, column, rowCount, columnCount) {
+      return {
+        getValues: () => Array.from({ length: rowCount }, (_, y) =>
+          Array.from({ length: columnCount }, (_, x) => this.rows[row - 1 + y]?.[column - 1 + x] ?? "")),
+        setValues: (values) => values.forEach((source, y) => {
+          if (!this.rows[row - 1 + y]) this.rows[row - 1 + y] = [];
+          source.forEach((value, x) => { this.rows[row - 1 + y][column - 1 + x] = value; });
+        })
+      };
+    },
+    insertColumnsAfter(column, count) {
+      this.rows.forEach((source) => source.splice(column, 0, ...Array(count).fill("")));
+    },
+    insertColumnAfter(column) {
+      this.rows.forEach((source) => source.splice(column, 0, ""));
+    }
+  });
+  const context = vm.createContext({ Date, JSON, Object, Array, String, Number, Error, isFinite });
+  const source = await readFile(new URL("../apps-script/Repository.gs", import.meta.url), "utf8");
+  vm.runInContext(source, context);
+
+  const eventId = "event-1";
+  const activitySpreadsheetId = "activity-sheet-1";
+  const activitySheets = {};
+  for (const sheetName of Array.from(context.EVENT_SHEET_NAMES_)) {
+    const headers = Array.from(context.SHEET_DEFINITIONS[sheetName]);
+    activitySheets[sheetName] = makeSheet(sheetName, [headers]);
+  }
+  const attendanceSheetName = Object.keys(activitySheets).find((name) =>
+    Array.from(context.SHEET_DEFINITIONS[name]).includes("checkpointId"));
+  const eventSheetName = Object.keys(activitySheets).find((name) => {
+    const headers = Array.from(context.SHEET_DEFINITIONS[name]);
+    return headers[0] === "eventId" && headers[1] === "title";
+  });
+  activitySheets[attendanceSheetName] = makeSheet(attendanceSheetName, [[
+    "checkInId", "registrationId", "eventId", "sessionId",
+    "checkedInAt", "checkedInBy", "status"
+  ]]);
+  activitySheets[eventSheetName].rows.push([
+    eventId, "Activity", "", "open", "", "", "", "all", 0, 1,
+    "none", "[]", "2026-08-01T00:00:00.000Z", "2026-08-01T00:00:00.000Z"
+  ]);
+  const activitySpreadsheet = {
+    getId: () => activitySpreadsheetId,
+    getSheetByName: (name) => activitySheets[name] || null,
+    getSheets: () => Object.values(activitySheets),
+    insertSheet() { throw new Error("all activity sheets already exist"); }
+  };
+
+  const catalogSheetName = Object.keys(context.SHEET_DEFINITIONS).find((name) => {
+    const headers = Array.from(context.SHEET_DEFINITIONS[name]);
+    return headers[0] === "eventId" && headers[1] === "spreadsheetId";
+  });
+  const catalogHeaders = Array.from(context.SHEET_DEFINITIONS[catalogSheetName]);
+  const catalogSheet = makeSheet(catalogSheetName, [catalogHeaders, [
+    eventId, activitySpreadsheetId, eventSheetName, "Activity", "", "open",
+    "", "", "", "all", 0, 1, "none", "[]",
+    "2026-08-01T00:00:00.000Z", "2026-08-01T00:00:00.000Z"
+  ]]);
+  const registry = {
+    getId: () => "registry-sheet",
+    getSheetByName: (name) => name === catalogSheetName ? catalogSheet : null
+  };
+  context.SpreadsheetApp = {
+    openById: (id) => {
+      assert.equal(id, activitySpreadsheetId);
+      return activitySpreadsheet;
+    }
+  };
+
+  assert.equal(context.getEventSpreadsheet_(registry, eventId), activitySpreadsheet);
+  assert.deepEqual(activitySheets[attendanceSheetName].rows[0], [
+    "checkInId", "registrationId", "eventId", "sessionId",
+    "checkpointId", "checkpointLabel", "checkedInAt", "checkedInBy", "status"
+  ]);
+});
+
+test("staff opening an existing activity migrates its legacy attendance header before integrity validation", async () => {
+  const makeSheet = (name, rows) => ({
+    name,
+    rows: rows.map((row) => row.slice()),
+    getName() { return this.name; },
+    getLastRow() { return this.rows.length; },
+    getLastColumn() { return Math.max(0, ...this.rows.map((row) => row.length)); },
+    getRange(row, column, rowCount, columnCount) {
+      return {
+        getValues: () => Array.from({ length: rowCount }, (_, y) =>
+          Array.from({ length: columnCount }, (_, x) => this.rows[row - 1 + y]?.[column - 1 + x] ?? "")),
+        setValues: (values) => values.forEach((source, y) => {
+          if (!this.rows[row - 1 + y]) this.rows[row - 1 + y] = [];
+          source.forEach((value, x) => { this.rows[row - 1 + y][column - 1 + x] = value; });
+        })
+      };
+    },
+    insertColumnsAfter(column, count) {
+      this.rows.forEach((source) => source.splice(column, 0, ...Array(count).fill("")));
+    },
+    insertColumnAfter(column) {
+      this.rows.forEach((source) => source.splice(column, 0, ""));
+    }
+  });
+  const context = vm.createContext({ Date, JSON, Object, Array, String, Number, Error, isFinite });
+  const source = await readFile(new URL("../staff-apps-script/Repository.gs", import.meta.url), "utf8");
+  vm.runInContext(source, context);
+
+  const eventId = "event-1";
+  const activitySpreadsheetId = "activity-sheet-1";
+  const activitySheets = {};
+  for (const sheetName of Array.from(context.EVENT_SHEET_NAMES_)) {
+    activitySheets[sheetName] = makeSheet(
+      sheetName,
+      [Array.from(context.STAFF_SHEET_DEFINITIONS[sheetName])]
+    );
+  }
+  const attendanceSheetName = Object.keys(activitySheets).find((name) =>
+    Array.from(context.STAFF_SHEET_DEFINITIONS[name]).includes("checkpointId"));
+  const eventSheetName = Object.keys(activitySheets).find((name) => {
+    const headers = Array.from(context.STAFF_SHEET_DEFINITIONS[name]);
+    return headers[0] === "eventId" && headers[1] === "title";
+  });
+  activitySheets[attendanceSheetName] = makeSheet(attendanceSheetName, [[
+    "checkInId", "registrationId", "eventId", "sessionId",
+    "checkedInAt", "checkedInBy", "status"
+  ]]);
+  activitySheets[eventSheetName].rows.push([
+    eventId, "Activity", "", "open", "", "", "", "all", 0, 1,
+    "none", "[]", "2026-08-01T00:00:00.000Z", "2026-08-01T00:00:00.000Z"
+  ]);
+  const activitySpreadsheet = {
+    getId: () => activitySpreadsheetId,
+    getSheetByName: (name) => activitySheets[name] || null,
+    getSheets: () => Object.values(activitySheets),
+    insertSheet() { throw new Error("all activity sheets already exist"); }
+  };
+  const catalogSheetName = Object.keys(context.STAFF_SHEET_DEFINITIONS).find((name) => {
+    const headers = Array.from(context.STAFF_SHEET_DEFINITIONS[name]);
+    return headers[0] === "eventId" && headers[1] === "spreadsheetId";
+  });
+  const catalogSheet = makeSheet(catalogSheetName, [
+    Array.from(context.STAFF_SHEET_DEFINITIONS[catalogSheetName]),
+    [eventId, activitySpreadsheetId, eventSheetName, "Activity", "", "open",
+      "", "", "", "all", 0, 1, "none", "[]",
+      "2026-08-01T00:00:00.000Z", "2026-08-01T00:00:00.000Z"]
+  ]);
+  const registry = {
+    getId: () => "registry-sheet",
+    getSheetByName: (name) => name === catalogSheetName ? catalogSheet : null
+  };
+  context.SpreadsheetApp = { openById: () => activitySpreadsheet };
+
+  assert.equal(context.getEventSpreadsheet_(registry, eventId), activitySpreadsheet);
+  assert.deepEqual(activitySheets[attendanceSheetName].rows[0], [
+    "checkInId", "registrationId", "eventId", "sessionId",
+    "checkpointId", "checkpointLabel", "checkedInAt", "checkedInBy", "status"
+  ]);
+});
+
 test("the configured spreadsheet can be opened before the shared settings sheet is initialized", async () => {
   const spreadsheet = {
     getSheetByName: () => null

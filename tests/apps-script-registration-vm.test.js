@@ -264,6 +264,27 @@ function sheetWithHeader(harness, header) {
   return Object.values(harness.sheets).find((sheet) => headers[sheet.name].includes(header));
 }
 
+test("registration accepts a participant-visible upcoming session", async () => {
+  const rows = baseRows({
+    sessions: [{
+      sessionId: "s1",
+      eventId: "event-1",
+      title: "Upcoming Session",
+      startsAt: "2030-01-01T09:00:00Z",
+      endsAt: "2030-01-01T10:00:00Z",
+      required: false,
+      capacity: 5,
+      status: "upcoming"
+    }]
+  });
+  const harness = await createHarness({ rows });
+
+  const result = harness.context.createRegistration(registrationPayload());
+
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(sheetObjects(sheetWithHeader(harness, "registrationId")).length, 1);
+});
+
 test("event total capacity rejects only new active registrations after the unique limit is reached", async () => {
   const settings = {
     registration: {

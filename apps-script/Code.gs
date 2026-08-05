@@ -58,7 +58,7 @@ var PUBLIC_EVENT_STATUSES_ = {
   cancelled: true
 };
 
-var PUBLIC_SESSION_STATUSES_ = { active: true, open: true };
+var PUBLIC_SESSION_STATUSES_ = { active: true, open: true, upcoming: true };
 
 /** Returns safe summaries for every participant-visible event. */
 function listEvents(_payload) {

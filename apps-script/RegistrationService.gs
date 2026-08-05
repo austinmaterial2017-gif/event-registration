@@ -24,7 +24,8 @@ function createRegistration(payload) {
       });
       var sessions = readRows(spreadsheet, '场次').filter(function(session) {
         var status = String(session.status || '').toLowerCase();
-        return session.eventId === event.eventId && (status === 'active' || status === 'open');
+        return session.eventId === event.eventId &&
+          (status === 'active' || status === 'open' || status === 'upcoming');
       });
       var registrations = readRows(spreadsheet, '报名项目');
       var answers = validateDynamicAnswers_(questions, request.answers);

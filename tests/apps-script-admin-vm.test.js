@@ -3073,6 +3073,13 @@ test("real public event reads expose only safe visible projections and authorita
   })));
   const harness = await createHarness({ rows, nowIso: "2026-08-10T04:00:00Z" });
   const event1Sheets = eventSpreadsheetSheets("event-1", "Ideas Forum");
+  event1Sheets["场次"].rows.push(headers["场次"].map((key) => ({
+    ...rows["场次"][0],
+    sessionId: "upcoming-session",
+    eventId: "event-1",
+    title: "Future selectable session",
+    status: "upcoming"
+  })[key] ?? ""));
   event1Sheets["座位"].rows.push(headers["座位"].map((key) => ({
     seatId: "held-private-seat",
     eventId: "event-1",
@@ -3107,7 +3114,7 @@ test("real public event reads expose only safe visible projections and authorita
   assert.equal(detail.data.serverNow, "2026-08-10T04:00:00.000Z");
   assert.deepEqual(
     Array.from(detail.data.event.sessions, (session) => session.id),
-    ["session-1"]
+    ["session-1", "upcoming-session"]
   );
   assert.equal(detail.data.event.fields[0].constraints.minLength, 6);
   assert.equal(detail.data.event.fields[0].constraints.maxLength, 120);

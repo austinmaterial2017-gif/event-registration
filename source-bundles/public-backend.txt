@@ -641,7 +641,8 @@ function createRegistration(payload) {
       });
       var sessions = readRows(spreadsheet, '场次').filter(function(session) {
         var status = String(session.status || '').toLowerCase();
-        return session.eventId === event.eventId && (status === 'active' || status === 'open');
+        return session.eventId === event.eventId &&
+          (status === 'active' || status === 'open' || status === 'upcoming');
       });
       var registrations = readRows(spreadsheet, '报名项目');
       var answers = validateDynamicAnswers_(questions, request.answers);
@@ -6005,7 +6006,7 @@ var PUBLIC_EVENT_STATUSES_ = {
   cancelled: true
 };
 
-var PUBLIC_SESSION_STATUSES_ = { active: true, open: true };
+var PUBLIC_SESSION_STATUSES_ = { active: true, open: true, upcoming: true };
 
 /** Returns safe summaries for every participant-visible event. */
 function listEvents(_payload) {

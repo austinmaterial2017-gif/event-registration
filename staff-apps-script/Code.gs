@@ -16,7 +16,7 @@ function doGet(event) {
   try {
     requireAuthorizedStaffSession_();
     return HtmlService.createHtmlOutputFromFile('StaffCheckIn')
-      .setTitle('员工讲座签到');
+      .setTitle('工作人员验票／参与者签到');
   } catch (_ignored) {
     return HtmlService
       .createHtmlOutput('<!doctype html><html><body><main><h1>Staff access unavailable.</h1></main></body></html>')

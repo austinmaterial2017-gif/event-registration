@@ -120,7 +120,7 @@ test("an allowlisted active Google session receives the StaffCheckIn template", 
 
   assert.equal(result.kind, "file");
   assert.equal(result.content, "StaffCheckIn");
-  assert.equal(result.title, "员工讲座签到");
+  assert.equal(result.title, "工作人员验票／参与者签到");
   assert.equal(harness.templateLoads, 1);
 });
 

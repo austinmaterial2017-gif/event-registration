@@ -327,3 +327,18 @@ test("staff check-in accepts a raw token or scanned verification URL and auto-lo
   listeners["lookup:submit"]({ preventDefault() {} });
   assert.equal(calls.length, 1);
 });
+
+test("staff check-in offers a mobile rear-camera scanner with a clear manual fallback", async () => {
+  const staffHtml = await readFile(
+    new URL("../staff-apps-script/StaffCheckIn.html", import.meta.url),
+    "utf8"
+  );
+
+  assert.match(staffHtml, /id="start-camera-scan"/);
+  assert.match(staffHtml, /打开手机相机扫码/);
+  assert.match(staffHtml, /facingMode:\s*\{\s*ideal:\s*["']environment["']/);
+  assert.match(staffHtml, /new BarcodeDetector\(\{\s*formats:\s*\["qr_code"\]/);
+  assert.match(staffHtml, /lookupTicketForCheckIn\(scannedValue\)/);
+  assert.match(staffHtml, /也可以把二维码网址粘贴到下方/);
+  assert.match(staffHtml, /停止扫码/);
+});

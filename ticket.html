@@ -15,17 +15,29 @@
       <section class="ticket-lookup" aria-labelledby="ticket-page-title">
         <p class="eyebrow">YOUR PASS</p>
         <h1 id="ticket-page-title">找回电子凭证</h1>
-        <p class="helper">请输入凭证编号，以及报名时指定的验证资料。</p>
-        <form id="ticket-lookup-form" class="ticket-lookup-form">
-          <label>凭证编号<input name="ticketNumber" autocomplete="off" required></label>
-          <label>验证资料<input name="verificationValue" autocomplete="off" required></label>
-          <button class="primary-button" type="submit">查看电子凭证</button>
+        <p class="helper">不需要记住凭证编号。选择活动，再填写报名时使用的完整姓名和电话号码。</p>
+        <form id="registration-recovery-form" class="ticket-lookup-form">
+          <label>活动
+            <select name="eventId" required><option value="">正在读取活动…</option></select>
+          </label>
+          <label>完整姓名<input name="name" autocomplete="name" required></label>
+          <label>电话号码<input name="phone" autocomplete="tel" required></label>
+          <button class="primary-button" type="submit">找回我的电子凭证</button>
         </form>
+        <details class="ticket-number-lookup">
+          <summary>我有凭证编号</summary>
+          <p class="helper">也可以用凭证编号和报名身份资料直接找回。</p>
+          <form id="ticket-lookup-form" class="ticket-lookup-form">
+            <label>凭证编号<input name="ticketNumber" autocomplete="off" required></label>
+            <label>报名身份资料（通常为姓名或电话号码）<input name="verificationValue" autocomplete="off" required></label>
+            <button class="secondary-button" type="submit">用凭证编号查看</button>
+          </form>
+        </details>
         <p id="ticket-message" class="helper" role="status" aria-live="polite"></p>
       </section>
       <section id="ticket-result" aria-live="polite"></section>
       <button id="print-ticket" class="secondary-button ticket-print" type="button" onclick="window.print()">打印 / 保存凭证</button>
     </main>
-    <script type="module" src="js/ticket-page.js?v=20260728-final"></script>
+    <script type="module" src="js/ticket-page.js?v=20260806-recovery"></script>
   </body>
 </html>

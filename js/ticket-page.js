@@ -1,6 +1,7 @@
 import {
-  cancelRegistration, exchangeSeat, lookupTicket, updateRegistrationSessions
-} from "./api.js?v=20260728-stable";
+  cancelRegistration, exchangeSeat, listEvents, lookupTicket, recoverTicket,
+  updateRegistrationSessions
+} from "./api.js?v=20260806-recovery";
 import { renderQrSvg } from "./qr.js";
 import { consumeStoredTicketResult } from "./registration-success.js";
 import { PUBLIC_BASE_URL } from "./config.js";
@@ -311,7 +312,8 @@ export function consumeInitialTicketResult(storage = globalThis.sessionStorage) 
 
 async function initialiseTicketPage() {
   const form = document.querySelector("#ticket-lookup-form");
-  if (!form) return;
+  const recoveryForm = document.querySelector("#registration-recovery-form");
+  if (!form || !recoveryForm) return;
   const resultHolder = document.querySelector("#ticket-result");
   const message = document.querySelector("#ticket-message");
   const showTicket = (ticket, verificationValue = "") => {
@@ -322,8 +324,39 @@ async function initialiseTicketPage() {
   if (storedTicket) {
     message.textContent = "报名成功，以下是你的电子凭证。";
     showTicket(storedTicket);
-    return;
   }
+  const eventSelect = recoveryForm.elements.eventId;
+  const eventsResult = await listEvents();
+  eventSelect.replaceChildren(new Option("请选择活动", ""));
+  if (eventsResult.ok) {
+    for (const event of eventsResult.data.events || []) {
+      eventSelect.append(new Option(event.title, event.id));
+    }
+  } else {
+    eventSelect.replaceChildren(new Option("活动读取失败，请刷新重试", ""));
+  }
+  recoveryForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = recoveryForm.querySelector("button");
+    button.disabled = true;
+    message.textContent = "正在找回电子凭证…";
+    resultHolder.replaceChildren();
+    const request = {
+      eventId: recoveryForm.elements.eventId.value,
+      name: recoveryForm.elements.name.value.trim(),
+      phone: recoveryForm.elements.phone.value.trim()
+    };
+    const result = await recoverTicket(request);
+    button.disabled = false;
+    if (!result.ok) {
+      message.textContent = result.message;
+      return;
+    }
+    const verificationValue = result.data.ownerVerificationRole === "phone"
+      ? request.phone : request.name;
+    message.textContent = "已找回电子凭证。";
+    showTicket(result.data, verificationValue);
+  });
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const button = form.querySelector("button");

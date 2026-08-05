@@ -143,6 +143,40 @@ export function formatSeatChoiceLabels(event, seatChoices) {
     .join("、");
 }
 
+export function formatSelectedSessionLabels(event, sessionIds) {
+  const sessionsById = new Map(
+    (Array.isArray(event?.sessions) ? event.sessions : [])
+      .map((session) => [String(session?.id || ""), session])
+      .filter(([id]) => id)
+  );
+  const dateFormatter = new Intl.DateTimeFormat("en-CA", {
+    month: "numeric",
+    day: "numeric",
+    timeZone: "Asia/Kuala_Lumpur"
+  });
+  const timeFormatter = new Intl.DateTimeFormat("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "Asia/Kuala_Lumpur"
+  });
+
+  return (Array.isArray(sessionIds) ? sessionIds : []).map((sessionId) => {
+    const session = sessionsById.get(String(sessionId));
+    if (!session) return String(sessionId);
+    const startsAt = new Date(session.startsAt);
+    const endsAt = new Date(session.endsAt);
+    const invalidSchedule = Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime());
+    const dateParts = invalidSchedule ? null : Object.fromEntries(
+      dateFormatter.formatToParts(startsAt).map((part) => [part.type, part.value])
+    );
+    const schedule = invalidSchedule
+      ? "时间待定"
+      : `${Number(dateParts.month)}月${Number(dateParts.day)}日 ${timeFormatter.format(startsAt)}–${timeFormatter.format(endsAt)}`;
+    return [session.title || "未命名场次", session.speaker || "讲师待公布", schedule].join(" · ");
+  }).join("、");
+}
+
 function selectedSeatGroups(event) {
   const seats = normalizedPublicSeats(event);
   const shared = seats.filter((seat) => !seat.sessionId);
@@ -424,7 +458,7 @@ function showErrors(messages) {
 
 function showReview(event, request) {
   const details = document.querySelector("#review-details"); details.replaceChildren();
-  const sessionNames = request.sessionIds.map((id) => event.sessions.find((session) => session.id === id)?.title || id).join("、");
+  const sessionNames = formatSelectedSessionLabels(event, request.sessionIds);
   const rows = [["已选场次", sessionNames], ["座位", formatSeatChoiceLabels(event, request.seatChoices) || getSeatModeState(event.seatMode).label], ...event.fields.map((field) => { const value = request.answers[field.id]; return [field.label, Array.isArray(value) ? value.join("、") : value === true ? "已同意" : value || "未填写"]; })];
   for (const [label, value] of rows) { const list = document.createElement("dl"); list.append(node("dt", "", label), node("dd", "", value)); details.append(list); }
   state.review = request; form.hidden = true; const card = document.querySelector("#review-card"); card.hidden = false; card.focus();

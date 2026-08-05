@@ -736,13 +736,14 @@ test("a participant can recover one event ticket with activity, full name, and p
     }
   });
   const created = harness.context.createRegistration(registrationPayload({
-    answers: { "name-q": "Alice Chan", "phone-q": "+60 12-345 6789" }
+    answers: { "name-q": "Alice Chan", "phone-q": "0100000020" }
   }));
+  harness.sheets["参加者"].rows[1][2] = 100000020;
 
   const recovered = harness.context.recoverTicket({
     eventId: "event-1",
     name: "Alice Chan",
-    phone: "+60123456789"
+    phone: "0100000020"
   });
 
   assert.equal(recovered.ok, true, JSON.stringify(recovered));

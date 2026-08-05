@@ -2060,17 +2060,24 @@ function recoverTicket(payload) {
       var spreadsheet = getEventSpreadsheet_(registry, eventId);
       recoverPendingTransactions_(spreadsheet);
       cleanupStaleTicketSeats_(spreadsheet);
-      var participantIds = {};
-      readRows(spreadsheet, '参加者').forEach(function(participant) {
-        if (normalizeIdentityValue_(participant.name) === normalizeIdentityValue_(payload.name) &&
-            normalizeRecoveryPhone_(participant.phone) === normalizeRecoveryPhone_(payload.phone)) {
-          participantIds[String(participant.participantId || '')] = true;
-        }
-      });
+      var event = readRows(spreadsheet, '活动').filter(function(candidate) {
+        return candidate.eventId === eventId;
+      })[0];
+      if (!event) ticketError_('TICKET_NOT_FOUND');
+      var policy = getRegistrationPolicy_(getAdminSettings(registry), eventId);
+      var roles = policy && policy.fieldRoles && typeof policy.fieldRoles === 'object'
+        ? policy.fieldRoles : {};
+      var nameField = typeof roles.name === 'string' ? roles.name : '';
+      var phoneField = typeof roles.phone === 'string' ? roles.phone : '';
+      if (!nameField || !phoneField) ticketError_('TICKET_NOT_FOUND');
       var registrations = readRows(spreadsheet, '报名项目');
       var matching = registrations.filter(function(record) {
-        return record.eventId === eventId && participantIds[record.participantId] === true &&
-          String(record.status || '').toLowerCase() !== 'pending';
+        if (record.eventId !== eventId || String(record.status || '').toLowerCase() === 'pending') {
+          return false;
+        }
+        var storedAnswers = parseStoredRegistrationAnswers_(record.answers).values;
+        return normalizeIdentityValue_(storedAnswers[nameField]) === normalizeIdentityValue_(payload.name) &&
+          normalizeRecoveryPhone_(storedAnswers[phoneField]) === normalizeRecoveryPhone_(payload.phone);
       });
       var registrationIds = {};
       matching.forEach(function(record) {
@@ -2086,11 +2093,6 @@ function recoverTicket(payload) {
         ticketError_('INTEGRITY_ERROR');
       }
       var route = getTicketRouteByNumber_(registry, ticketNumber);
-      var event = readRows(spreadsheet, '活动').filter(function(candidate) {
-        return candidate.eventId === eventId;
-      })[0];
-      if (!event) ticketError_('TICKET_NOT_FOUND');
-      var policy = getRegistrationPolicy_(getAdminSettings(registry), eventId);
       var stored = parseStoredRegistrationAnswers_(matching[0].answers);
       var verificationField = stored.verificationField || policy.verificationField || policy.identityFields[0];
       var verificationRole = recoveryVerificationRole_(policy, verificationField);
@@ -2463,8 +2465,11 @@ function requireVerifiedTicket_(spreadsheet, registry, payload, registrations, r
   var policy = getRegistrationPolicy_(getAdminSettings(registry), event.eventId);
   var stored = parseStoredRegistrationAnswers_(records[0].answers);
   var verificationField = stored.verificationField || policy.verificationField || policy.identityFields[0];
-  if (!verificationField ||
-      normalizeIdentityValue_(stored.values[verificationField]) !== normalizeIdentityValue_(payload.verificationValue)) {
+  var verificationRole = recoveryVerificationRole_(policy, verificationField);
+  var verificationMatches = verificationRole === 'phone'
+    ? normalizeRecoveryPhone_(stored.values[verificationField]) === normalizeRecoveryPhone_(payload.verificationValue)
+    : normalizeIdentityValue_(stored.values[verificationField]) === normalizeIdentityValue_(payload.verificationValue);
+  if (!verificationField || !verificationMatches) {
     ticketError_('TICKET_VERIFICATION_FAILED');
   }
   if (!stored.ticketToken ||

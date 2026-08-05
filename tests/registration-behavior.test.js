@@ -163,6 +163,12 @@ test("public markup retains the semantic participant regions and six ordered sta
   assert.ok(!indexHtml.includes('id="activity-list" class="activity-list" aria-live='));
 });
 
+test("the public activity homepage offers a direct ticket recovery entry", async () => {
+  const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
+  assert.match(html, /href="ticket\.html"/);
+  assert.match(html, /找回我的电子票/);
+});
+
 test("review validation delegates session and answer rules and fails closed after closing time", () => {
   const event = {
     status: "open", opensAt: "2026-07-26T09:00:00+08:00", closesAt: "2026-07-26T12:00:00+08:00", minChoices: 1, maxChoices: 1, seatMode: "self",

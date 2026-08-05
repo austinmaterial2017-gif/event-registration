@@ -713,6 +713,43 @@ test("verified ticket owner can add a participant-visible upcoming session", asy
   );
 });
 
+test("a participant can recover one event ticket with activity, full name, and phone", async () => {
+  const rows = baseRows({
+    questions: [
+      { questionId: "name-q", eventId: "event-1", label: "Name", type: "text", required: true, status: "active" },
+      { questionId: "phone-q", eventId: "event-1", label: "Phone", type: "tel", required: true, status: "active" }
+    ]
+  });
+  const harness = await createHarness({
+    rows,
+    settings: {
+      registration: {
+        identityFields: ["name-q", "phone-q"],
+        verificationField: "name-q",
+        events: {
+          "event-1": {
+            cancellationEnabled: true,
+            fieldRoles: { name: "name-q", phone: "phone-q" }
+          }
+        }
+      }
+    }
+  });
+  const created = harness.context.createRegistration(registrationPayload({
+    answers: { "name-q": "Alice Chan", "phone-q": "+60 12-345 6789" }
+  }));
+
+  const recovered = harness.context.recoverTicket({
+    eventId: "event-1",
+    name: "Alice Chan",
+    phone: "+60123456789"
+  });
+
+  assert.equal(recovered.ok, true, JSON.stringify(recovered));
+  assert.equal(recovered.data.ticketNumber, created.data.ticketNumber);
+  assert.equal(recovered.data.ownerVerificationRole, "name");
+});
+
 test("a session that has already started cannot be removed from a ticket", async () => {
   const rows = baseRows();
   rows["场次"][0].startsAt = "2001-01-01T09:00:00Z";

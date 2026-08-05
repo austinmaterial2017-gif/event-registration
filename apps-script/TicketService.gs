@@ -197,6 +197,85 @@ function exchangeSeat(payload) {
 }
 
 /**
+ * Recovers one ticket without requiring the participant to remember its number.
+ * The activity, full name, and phone must identify exactly one registration.
+ * @param {Object} payload
+ * @return {Object} ApiResult<Ticket>
+ */
+function recoverTicket(payload) {
+  return runTicketService_(function() {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload) ||
+        typeof payload.eventId !== 'string' || !payload.eventId.trim() ||
+        typeof payload.name !== 'string' || !payload.name.trim() ||
+        typeof payload.phone !== 'string' || !payload.phone.trim()) {
+      ticketError_('INVALID_REQUEST');
+    }
+    return withScriptLock(function() {
+      var registry = getRegistrySpreadsheet_();
+      var eventId = payload.eventId.trim();
+      var spreadsheet = getEventSpreadsheet_(registry, eventId);
+      recoverPendingTransactions_(spreadsheet);
+      cleanupStaleTicketSeats_(spreadsheet);
+      var participantIds = {};
+      readRows(spreadsheet, '参加者').forEach(function(participant) {
+        if (normalizeIdentityValue_(participant.name) === normalizeIdentityValue_(payload.name) &&
+            normalizeRecoveryPhone_(participant.phone) === normalizeRecoveryPhone_(payload.phone)) {
+          participantIds[String(participant.participantId || '')] = true;
+        }
+      });
+      var registrations = readRows(spreadsheet, '报名项目');
+      var matching = registrations.filter(function(record) {
+        return record.eventId === eventId && participantIds[record.participantId] === true &&
+          String(record.status || '').toLowerCase() !== 'pending';
+      });
+      var registrationIds = {};
+      matching.forEach(function(record) {
+        registrationIds[String(record.registrationId || '')] = true;
+      });
+      if (Object.keys(registrationIds).filter(Boolean).length !== 1 || !matching.length) {
+        ticketError_('TICKET_NOT_FOUND');
+      }
+      var ticketNumber = String(matching[0].ticketNumber || '').trim();
+      if (!ticketNumber || matching.some(function(record) {
+        return String(record.ticketNumber || '').trim() !== ticketNumber;
+      })) {
+        ticketError_('INTEGRITY_ERROR');
+      }
+      var route = getTicketRouteByNumber_(registry, ticketNumber);
+      var event = readRows(spreadsheet, '活动').filter(function(candidate) {
+        return candidate.eventId === eventId;
+      })[0];
+      if (!event) ticketError_('TICKET_NOT_FOUND');
+      var policy = getRegistrationPolicy_(getAdminSettings(registry), eventId);
+      var stored = parseStoredRegistrationAnswers_(matching[0].answers);
+      var verificationField = stored.verificationField || policy.verificationField || policy.identityFields[0];
+      var verificationRole = recoveryVerificationRole_(policy, verificationField);
+      if (!verificationRole) ticketError_('TICKET_NOT_FOUND');
+      var verificationValue = verificationRole === 'phone' ? payload.phone : payload.name;
+      var match = requireVerifiedTicket_(spreadsheet, registry, {
+        ticketNumber: ticketNumber,
+        verificationValue: verificationValue
+      }, registrations, route);
+      var projection = ticketProjectionFromRecords_(match);
+      projection.ownerVerificationRole = verificationRole;
+      return projection;
+    });
+  });
+}
+
+function normalizeRecoveryPhone_(value) {
+  return String(value === undefined || value === null ? '' : value).replace(/[^0-9]/g, '');
+}
+
+function recoveryVerificationRole_(policy, verificationField) {
+  var roles = policy && policy.fieldRoles && typeof policy.fieldRoles === 'object'
+    ? policy.fieldRoles : {};
+  if (roles.name === verificationField) return 'name';
+  if (roles.phone === verificationField) return 'phone';
+  return '';
+}
+
+/**
  * Updates the sessions attached to one verified ticket.
  * The complete locked transaction is implemented by the ticket service.
  * @param {Object} payload

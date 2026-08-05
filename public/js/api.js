@@ -133,6 +133,11 @@ export function createApiClient({ endpoint = APPS_SCRIPT_WEB_APP_URL, fetchImpl 
       answers: requestData?.answers,
       seatHoldOwner: requestData?.seatHoldOwner
     }),
+    recoverTicket: (requestData) => request("recoverTicket", {
+      eventId: requestData?.eventId,
+      name: requestData?.name,
+      phone: requestData?.phone
+    }),
     lookupTicket: (ticketNumber, verificationValue) => request("lookupTicket", { ticketNumber, verificationValue }),
     verifyTicket: (token) => request("verifyTicket", { token }),
     createSeatHold: (requestData) => request("createSeatHold", {
@@ -169,6 +174,7 @@ const publicClient = createApiClient();
 export const listEvents = () => publicClient.listEvents();
 export const getEvent = (eventId) => publicClient.getEvent(eventId);
 export const createRegistration = (request) => publicClient.createRegistration(request);
+export const recoverTicket = (request) => publicClient.recoverTicket(request);
 export const lookupTicket = (ticketNumber, verificationValue) => publicClient.lookupTicket(ticketNumber, verificationValue);
 export const verifyTicket = (token) => publicClient.verifyTicket(token);
 export const createSeatHold = (request) => publicClient.createSeatHold(request);

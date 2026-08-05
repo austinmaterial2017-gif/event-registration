@@ -32,6 +32,7 @@ test("every public method sends its JSON envelope as a CORS-safe simple POST", a
     ["listEvents", {}, () => client.listEvents()],
     ["getEvent", { eventId: "event-1" }, () => client.getEvent("event-1")],
     ["createRegistration", { eventId: "event-1", sessionIds: ["s1"], seatChoices: ["A-01"], answers: { name: "陈晓明" } }, () => client.createRegistration({ eventId: "event-1", sessionIds: ["s1"], seatChoices: ["A-01"], answers: { name: "陈晓明" } })],
+    ["recoverTicket", { eventId: "event-1", name: "Alice Chan", phone: "+60123456789" }, () => client.recoverTicket({ eventId: "event-1", name: "Alice Chan", phone: "+60123456789" })],
     ["lookupTicket", { ticketNumber: "T-01", verificationValue: "13800000000" }, () => client.lookupTicket("T-01", "13800000000")],
     ["verifyTicket", { token: "signed-token" }, () => client.verifyTicket("signed-token")],
     ["createSeatHold", { eventId: "event-1", seatId: "seat-1", holdOwner: "browser-owner-0001" }, () => client.createSeatHold({ eventId: "event-1", seatId: "seat-1", holdOwner: "browser-owner-0001" })],
@@ -84,12 +85,15 @@ test("the production timeout tolerates an Apps Script cold start", async () => {
 
 test("participant entry modules cache-bust the production API client", async () => {
   const root = new URL("../public/js/", import.meta.url);
-  const sources = await Promise.all(
-    ["index-page.js", "register-page.js", "ticket-page.js", "verify-page.js"]
-      .map((name) => readFile(new URL(name, root), "utf8"))
-  );
-  for (const source of sources) {
-    assert.match(source, /from\s+["']\.\/api\.js\?v=20260728-stable["']/);
+  const modules = [
+    ["index-page.js", "20260728-stable"],
+    ["register-page.js", "20260728-stable"],
+    ["ticket-page.js", "20260806-recovery"],
+    ["verify-page.js", "20260728-stable"]
+  ];
+  for (const [name, version] of modules) {
+    const source = await readFile(new URL(name, root), "utf8");
+    assert.match(source, new RegExp(`from\\s+["']\\.\\/api\\.js\\?v=${version}["']`));
   }
 });
 
@@ -98,7 +102,7 @@ test("participant HTML cache-busts each updated entry module", async () => {
   const pages = [
     ["index.html", "index-page.js", "20260729-dates"],
     ["register.html", "register-page.js", "20260806-review"],
-    ["ticket.html", "ticket-page.js", "20260728-final"],
+    ["ticket.html", "ticket-page.js", "20260806-recovery"],
     ["verify.html", "verify-page.js", "20260728-final"],
     ["v.html", "verify-page.js", "20260728-final"]
   ];

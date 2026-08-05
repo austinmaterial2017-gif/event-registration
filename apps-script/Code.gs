@@ -40,6 +40,7 @@ var PUBLIC_ROUTES = {
   'createSeatHold': function(payload) { return createSeatHold(payload); },
   'releaseSeatHold': function(payload) { return releaseSeatHold(payload); },
   'createRegistration': function(payload) { return createRegistration(payload); },
+  'recoverTicket': function(payload) { return recoverTicket(payload); },
   'lookupTicket': function(payload) { return lookupTicket(payload); },
   'verifyTicket': function(payload) { return verifyTicket(payload); },
   'cancelRegistration': function(payload) { return cancelRegistration(payload); },

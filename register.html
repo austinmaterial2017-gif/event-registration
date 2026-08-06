@@ -4,6 +4,9 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>完成报名 · 现代X好未来</title>
+    <link rel="preconnect" href="https://script.google.com">
+    <link rel="preconnect" href="https://script.googleusercontent.com">
+    <link rel="dns-prefetch" href="//script.google.com">
     <link rel="stylesheet" href="css/app.css?v=20260728-timer">
   </head>
   <body>
@@ -12,8 +15,9 @@
       <a class="back-link" href="index.html">← 返回活动</a>
     </header>
     <main class="registration-shell">
+      <section id="registration-loading" class="notice" role="status" aria-live="polite">正在读取活动资料…</section>
       <section id="registration-closed" class="notice" hidden aria-live="polite"></section>
-      <section id="registration-content" aria-labelledby="registration-title">
+      <section id="registration-content" aria-labelledby="registration-title" hidden>
         <p class="eyebrow">YOUR PASS</p>
         <h1 id="registration-title">完成这次相遇</h1>
         <p id="event-meta" class="event-meta" aria-live="polite"></p>
@@ -32,6 +36,7 @@
           <small>请在时间结束前选好场次、座位并提交。</small>
         </aside>
         <div id="error-summary" class="error-summary" role="alert" tabindex="-1" hidden></div>
+        <p class="helper recovery-shortcut"><a href="ticket.html">已经报名过？找回电子票</a></p>
         <form id="registration-form" novalidate>
           <section class="form-card" aria-labelledby="sessions-title">
             <div class="card-title"><p class="step-number">02</p><h2 id="sessions-title">选择讲座 / 讲师 / 时段</h2></div>
@@ -64,6 +69,6 @@
         </section>
       </section>
     </main>
-    <script type="module" src="js/register-page.js?v=20260806-review"></script>
+    <script type="module" src="js/register-page.js?v=20260806-feedback"></script>
   </body>
 </html>

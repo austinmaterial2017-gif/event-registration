@@ -1,5 +1,5 @@
-import { createRegistration, getEvent } from "./api.js?v=20260728-stable";
-import { createSeatHold, releaseSeatHold } from "./api.js?v=20260728-stable";
+import { createRegistration, getEvent } from "./api.js?v=20260806-feedback";
+import { createSeatHold, releaseSeatHold } from "./api.js?v=20260806-feedback";
 import { applyRegistrationGate, getFieldControlSpec, getSeatModeState, validateRegistrationDraft } from "./registration-flow.js";
 import { transitionToTicket } from "./registration-success.js";
 import { createRegistrationAttemptTimer } from "./registration-attempt-timer.js?v=20260728-timer";
@@ -497,8 +497,16 @@ function validateReview(event, request) {
 }
 
 async function initialise() {
+  const loading = document.querySelector("#registration-loading");
+  const loadingTimers = [
+    window.setTimeout(() => { if (loading && !loading.hidden) loading.textContent = "服务器正在唤醒，请稍候…"; }, 3500),
+    window.setTimeout(() => { if (loading && !loading.hidden) loading.textContent = "仍在读取活动资料，请不要重复刷新…"; }, 9000)
+  ];
   const eventId = selectedEventId(); const result = eventId ? await getEvent(eventId) : { ok: false, message: "未指定活动。" };
+  loadingTimers.forEach((timer) => window.clearTimeout(timer));
+  if (loading) loading.hidden = true;
   if (!result.ok || !result.data?.event) { document.querySelector("#registration-content").hidden = true; const closed = document.querySelector("#registration-closed"); closed.hidden = false; closed.textContent = result.message || "暂时无法加载活动，请返回活动列表重试。"; return; }
+  document.querySelector("#registration-content").hidden = false;
   const timestamp = Date.parse(result.data.serverNow); state.serverOffset = Number.isFinite(timestamp) ? timestamp - Date.now() : Number.NaN; state.event = result.data.event;
   state.holdOwner = createSeatHoldOwner();
   document.querySelector("#event-meta").textContent = state.event.title;

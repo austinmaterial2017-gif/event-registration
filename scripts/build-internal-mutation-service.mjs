@@ -52,6 +52,7 @@ var ADMIN_MUTATION_ACTIONS_ = {
   'admin.saveSeatPlan': true,
   'admin.saveQuestion': true,
   'admin.recordAction': true,
+  'admin.refreshReadableViews': true,
   'admin.switchSheet': true
 };
 
@@ -85,6 +86,7 @@ function executeInternalActionLocked_(action, payload, actor) {
     'admin.saveSeatPlan': function() { return saveAdminSeatPlan_(payload, actor); },
     'admin.saveQuestion': function() { return saveAdminQuestion_(payload, actor); },
     'admin.recordAction': function() { return adminRecordAction_(payload, actor); },
+    'admin.refreshReadableViews': function() { return refreshAdminReadableViews_(payload, actor); },
     'admin.testSheet': function() { return testAdminSheetConnection_(payload, actor); },
     'admin.switchSheet': function() { return switchInternalAdminSheet_(payload, actor); }
   };
@@ -382,6 +384,7 @@ function internalStaffCheckInLocked_(payload, actor) {
   var sheet = getRequiredSheet_(spreadsheet, '签到记录');
   var values = normalizeRow_('签到记录', row);
   sheet.getRange(sheet.getLastRow() + 1, 1, 1, values.length).setValues([values]);
+  syncReadableRegistration_(spreadsheet, match.event.eventId, match.registrationId, settings);
   return {
     status: 'checked_in', sessionId: sessionId, checkpointId: checkpointId,
     checkpointLabel: checkpointLabel, checkedInAt: row.checkedInAt,

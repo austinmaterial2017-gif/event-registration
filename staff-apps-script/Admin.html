@@ -404,6 +404,10 @@
           <section id="records" class="panel selected-required generated-required">
             <div class="panel-head"><div><p class="eyebrow">History</p><h2>报名记录</h2><p>列表与搜索只显示脱敏资料；取消和调整座位保留全部历史。</p></div></div>
             <div class="panel-body">
+              <div class="actions">
+                <button type="button" id="refresh-readable-views">生成／刷新清晰总览</button>
+                <span>在活动 Google Sheet 建立“报名总览”和“签到总览”；原始资料不会被删除。</span>
+              </div>
               <form id="record-search-form" class="actions">
                 <label>搜索报名号／票号／姓名／联系方式<input name="search"></label>
                 <button type="submit">搜索</button><button class="secondary" type="button" id="clear-search">清除</button>

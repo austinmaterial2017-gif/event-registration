@@ -132,6 +132,18 @@ function createRegistration(payload) {
         sessionCount: selectedSessions.length,
         seatCount: selectedSeats.length
       });
+      upsertReadableViewsSafely_(spreadsheet, {
+        eventId: event.eventId,
+        policy: policy,
+        participants: [readableRowObject_('\u53c2\u52a0\u8005', participant.values)],
+        questions: questions,
+        sessions: sessions,
+        seats: seats,
+        registrations: registrationBatch.activeRows.map(function(values) {
+          return readableRowObject_('\u62a5\u540d\u9879\u76ee', values);
+        }),
+        attendance: []
+      }, settings);
       return registrationTicketProjection_(
         event,
         registrationId,
@@ -288,13 +300,26 @@ function requireRegistrationPayload_(payload) {
   };
 }
 
+function effectiveRegistrationEventStatus_(event, now) {
+  var status = String(event && event.status || '').toLowerCase();
+  if (status !== 'upcoming' && status !== 'open') return status;
+  var timestamp = now instanceof Date ? now.getTime() : new Date(now).getTime();
+  if (!isFinite(timestamp)) timestamp = Date.now();
+  var opensAt = Date.parse(event && event.opensAt || '');
+  var closesAt = Date.parse(event && event.closesAt || '');
+  if (isFinite(opensAt) && timestamp < opensAt) return 'upcoming';
+  if (isFinite(closesAt) && timestamp >= closesAt) return 'closed';
+  return 'open';
+}
+
 function requireOpenEvent_(spreadsheet, eventId, now) {
   var event = readRows(spreadsheet, '活动').filter(function(candidate) {
     return candidate.eventId === eventId;
   })[0];
   if (!event) registrationError_('EVENT_NOT_FOUND');
-  if (event.status !== 'open') {
-    registrationError_(event.status === 'upcoming' ? 'REGISTRATION_NOT_OPEN' : 'REGISTRATION_CLOSED');
+  var effectiveStatus = effectiveRegistrationEventStatus_(event, now);
+  if (effectiveStatus !== 'open') {
+    registrationError_(effectiveStatus === 'upcoming' ? 'REGISTRATION_NOT_OPEN' : 'REGISTRATION_CLOSED');
   }
   var nowMs = now.getTime();
   var opensAt = parseRegistrationDate_(event.opensAt);

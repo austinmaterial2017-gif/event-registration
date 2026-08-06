@@ -58,6 +58,8 @@ function cancelRegistration(payload) {
             throw routeError;
           }
         }
+        syncReadableRegistration_(spreadsheet, match.event.eventId, match.registrationId,
+          getAdminSettings(registry));
         return ticketProjectionFromRecords_(match);
       }
       if (!match.policy.cancellationEnabled) ticketError_('CANCELLATION_DISABLED');
@@ -86,6 +88,8 @@ function cancelRegistration(payload) {
         });
         match.records.forEach(function(record) { record.status = 'cancelled'; });
         match.status = 'cancelled';
+        syncReadableRegistration_(spreadsheet, match.event.eventId, match.registrationId,
+          getAdminSettings(registry));
         return ticketProjectionFromRecords_(match);
       } catch (error) {
         var rollbackSnapshots = registrationSnapshots.concat(seatSnapshots);
@@ -173,6 +177,8 @@ function exchangeSeat(payload) {
         match.token = rotatedToken;
         newSeat.holderRegistrationId = match.registrationId;
         newSeat.status = 'registered';
+        syncReadableRegistration_(spreadsheet, match.event.eventId, match.registrationId,
+          getAdminSettings(registry));
         match.seats = readRows(spreadsheet, '座位').filter(function(seat) {
           return seatBelongsToRegistration_(seat, match.registrationId);
         });
@@ -450,6 +456,8 @@ function updateRegistrationSessions(payload) {
         var refreshed = requireVerifiedTicket_(
           spreadsheet, registry, payload, refreshedRegistrations, route
         );
+        syncReadableRegistration_(spreadsheet, refreshed.event.eventId, refreshed.registrationId,
+          getAdminSettings(registry));
         return ticketProjectionFromRecords_(refreshed);
       } catch (error) {
         var restoreFailures = restoreTicketSnapshots_(rowSnapshots.concat(seatSnapshots));

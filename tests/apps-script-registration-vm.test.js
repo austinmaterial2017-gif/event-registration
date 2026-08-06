@@ -231,7 +231,7 @@ async function createHarness({
       finally { lockDepth -= 1; locks.push("release"); }
     }
   });
-  for (const file of ["RegistrationService.gs", "TicketService.gs"]) {
+  for (const file of ["ReadableViews.gs", "RegistrationService.gs", "TicketService.gs"]) {
     vm.runInContext(await readFile(new URL(file, serviceRoot), "utf8"), context, { filename: file });
   }
   return {
@@ -283,6 +283,22 @@ test("registration accepts a participant-visible upcoming session", async () => 
 
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.equal(sheetObjects(sheetWithHeader(harness, "registrationId")).length, 1);
+});
+
+test("an upcoming activity automatically accepts registration when server time reaches opensAt", async () => {
+  const rows = baseRows({
+    event: {
+      status: "upcoming",
+      opensAt: "2000-01-01T00:00:00.000Z",
+      closesAt: "2099-01-01T00:00:00.000Z"
+    }
+  });
+  const harness = await createHarness({ rows });
+
+  const result = harness.context.createRegistration(registrationPayload());
+
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.data.status, "active");
 });
 
 test("event total capacity rejects only new active registrations after the unique limit is reached", async () => {

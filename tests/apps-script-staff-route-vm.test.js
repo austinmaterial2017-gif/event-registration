@@ -12,6 +12,7 @@ const ADMIN_RPC_NAMES = [
   "finalizeAdminDraft",
   "getAdminDashboard",
   "getAdminSourceBundles",
+  "refreshAdminReadableViews",
   "saveAdminDraft",
   "saveAdminEvent",
   "saveAdminQuestion",

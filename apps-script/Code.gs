@@ -67,11 +67,12 @@ function listEvents(_payload) {
     return withScriptLock(function() {
       var registry = getRegistrySpreadsheet_();
       var settings = getAdminSettings(registry);
+      var now = new Date();
       var events = getPublicEventCatalogEntries_(registry)
         .map(function(event) {
-          return publicEventSummary_(event, publicEventPolicy_(settings, event.eventId));
+          return publicEventSummary_(event, publicEventPolicy_(settings, event.eventId), now);
         });
-      return { events: events, serverNow: new Date().toISOString() };
+      return { events: events, serverNow: now.toISOString() };
     });
   });
 }
@@ -96,7 +97,8 @@ function getEvent(payload) {
       }
       var settings = getAdminSettings(registry);
       var policy = publicEventPolicy_(settings, eventId);
-      if (!publicCatalogMatchesEvent_(catalog, event, policy)) {
+      var now = new Date();
+      if (!publicCatalogMatchesEvent_(catalog, event, policy, now)) {
         publicEventReadError_('INTEGRITY_ERROR');
       }
       var sessions = readRows(spreadsheet, '场次')
@@ -152,11 +154,11 @@ function getEvent(payload) {
             available: available
           };
         });
-      var detail = publicEventSummary_(event, policy);
+      var detail = publicEventSummary_(event, policy, now);
       detail.sessions = sessions;
       detail.seats = seats;
       detail.fields = fields;
-      return { event: detail, serverNow: new Date().toISOString() };
+      return { event: detail, serverNow: now.toISOString() };
     });
   });
 }
@@ -210,12 +212,12 @@ function publicEventReadError_(code) {
   throw error;
 }
 
-function publicEventSummary_(event, policy) {
+function publicEventSummary_(event, policy, now) {
   return {
     id: String(event.eventId || ''),
     title: String(event.title || ''),
     description: String(event.description || ''),
-    status: String(event.status || '').toLowerCase(),
+    status: effectiveRegistrationEventStatus_(event, now || new Date()),
     opensAt: publicText_(event.opensAt),
     closesAt: publicText_(event.closesAt),
     location: String(event.location || ''),
@@ -242,9 +244,9 @@ function publicEventSummary_(event, policy) {
   };
 }
 
-function publicCatalogMatchesEvent_(catalog, event, policy) {
-  return JSON.stringify(publicEventSummary_(catalog, policy)) ===
-    JSON.stringify(publicEventSummary_(event, policy));
+function publicCatalogMatchesEvent_(catalog, event, policy, now) {
+  return JSON.stringify(publicEventSummary_(catalog, policy, now)) ===
+    JSON.stringify(publicEventSummary_(event, policy, now));
 }
 
 function publicEventPolicy_(settings, eventId) {

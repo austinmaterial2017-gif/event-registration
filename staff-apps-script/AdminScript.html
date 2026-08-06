@@ -81,8 +81,10 @@
       };
       const runner = adminRunner_((data) => {
         onSuccess(data);
-        state.actionNotice = successText;
-        setStatus(successText);
+        const resolvedSuccessText = typeof successText === "function"
+          ? successText(data) : successText;
+        state.actionNotice = resolvedSuccessText;
+        setStatus(resolvedSuccessText);
       }, undefined, settle);
       invoke(runner);
     }
@@ -1308,6 +1310,19 @@
           state.selectedEventId = "";
           loadDashboard();
         }
+      );
+    });
+
+    document.querySelector("#refresh-readable-views").addEventListener("click", (event) => {
+      if (!state.selectedEventId) {
+        setStatus("请先选择一个活动，再生成清晰总览。", "error");
+        return;
+      }
+      runButtonAction_(
+        event.currentTarget,
+        "正在整理报名与签到资料…",
+        (data) => `清晰总览已更新：报名 ${data.registration.rowCount} 人，签到名单 ${data.attendance.rowCount} 人。`,
+        (runner) => runner.refreshAdminReadableViews({ eventId: state.selectedEventId })
       );
     });
 

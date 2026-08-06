@@ -220,6 +220,8 @@ async function createHarness(options = {}) {
   const publicServiceUrl = new URL("../apps-script/AttendanceService.gs", import.meta.url);
   vm.runInContext(await readFile(publicServiceUrl, "utf8"), context);
   if (options.staffProject) {
+    const readableViewsUrl = new URL("../apps-script/ReadableViews.gs", import.meta.url);
+    vm.runInContext(await readFile(readableViewsUrl, "utf8"), context);
     const internalServiceUrl = new URL("../apps-script/InternalMutationService.gs", import.meta.url);
     vm.runInContext(await readFile(internalServiceUrl, "utf8"), context);
     context.invokeInternalBackend_ = (action, payload, actor) =>

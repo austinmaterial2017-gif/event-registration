@@ -120,6 +120,7 @@ var ADMIN_MUTATION_ACTIONS_ = {
   'admin.saveSeatPlan': true,
   'admin.saveQuestion': true,
   'admin.recordAction': true,
+  'admin.refreshReadableViews': true,
   'admin.switchSheet': true
 };
 
@@ -153,6 +154,7 @@ function executeInternalActionLocked_(action, payload, actor) {
     'admin.saveSeatPlan': function() { return saveAdminSeatPlan_(payload, actor); },
     'admin.saveQuestion': function() { return saveAdminQuestion_(payload, actor); },
     'admin.recordAction': function() { return adminRecordAction_(payload, actor); },
+    'admin.refreshReadableViews': function() { return refreshAdminReadableViews_(payload, actor); },
     'admin.testSheet': function() { return testAdminSheetConnection_(payload, actor); },
     'admin.switchSheet': function() { return switchInternalAdminSheet_(payload, actor); }
   };
@@ -450,6 +452,7 @@ function internalStaffCheckInLocked_(payload, actor) {
   var sheet = getRequiredSheet_(spreadsheet, '签到记录');
   var values = normalizeRow_('签到记录', row);
   sheet.getRange(sheet.getLastRow() + 1, 1, 1, values.length).setValues([values]);
+  syncReadableRegistration_(spreadsheet, match.event.eventId, match.registrationId, settings);
   return {
     status: 'checked_in', sessionId: sessionId, checkpointId: checkpointId,
     checkpointLabel: checkpointLabel, checkedInAt: row.checkedInAt,
@@ -582,6 +585,16 @@ function ensureActivityDraftRegistry_(registry) {
   if (!headers.every(function(header, index) { return actual[index] === header; })) {
     adminError_('INTEGRITY_ERROR');
   }
+}
+
+/** Rebuilds human-readable registration and attendance tabs for one activity. */
+function refreshAdminReadableViews(payload) {
+  return runAdminService_(function() {
+    var actor = requireAuthorizedAdminSession_();
+    var result = invokeInternalBackend_('admin.refreshReadableViews', payload || {}, actor);
+    if (!result.ok) adminError_(result.code);
+    return result.data;
+  });
 }
 
 function validateActivityDraftDocument_(value) {
@@ -1281,6 +1294,7 @@ function saveAdminSession_(payload, actor) {
     sessionPolicy.checkInLabels = checkpointPolicy.checkInLabels;
     refreshAdminEventDateSummary_(spreadsheet, settings, row.eventId);
     setAdminSettings_(registry, settings);
+    refreshExistingReadableViewsSafely_(spreadsheet, row.eventId, settings);
     appendAdminAudit_(
       spreadsheet, existing ? 'UPDATE_SESSION' : 'CREATE_SESSION',
       'session', sessionId, actor, { eventId: row.eventId }
@@ -1342,6 +1356,7 @@ function deleteAdminSession_(payload, actor) {
     }
     refreshAdminEventDateSummary_(spreadsheet, settings, eventId);
     setAdminSettings_(registry, settings);
+    refreshExistingReadableViewsSafely_(spreadsheet, eventId, settings);
     appendAdminAudit_(
       spreadsheet,
       'DELETE_SESSION',
@@ -1449,6 +1464,7 @@ function saveAdminQuestion_(payload, actor) {
       spreadsheet, existing ? 'UPDATE_QUESTION' : 'CREATE_QUESTION',
       'question', questionId, actor, { eventId: row.eventId, status: status }
     );
+    refreshExistingReadableViewsSafely_(spreadsheet, row.eventId, settings);
     var projection = adminQuestionProjection_(row, settings);
     projection.semanticRole = semanticRole;
     return projection;
@@ -1555,6 +1571,35 @@ function saveAdminSeatPlan_(payload, actor) {
     upsertActivityCatalogEntry_(registry, event, spreadsheet);
     return { eventId: event.eventId, mode: mode, createdCount: created.length };
   });
+}
+
+function refreshAdminReadableViews_(payload, actor) {
+  var request = requireAdminObject_(payload);
+  var eventId = typeof request.eventId === 'string' ? request.eventId.trim() : '';
+  if (!eventId) adminError_('INVALID_REQUEST');
+  var registry = getRootConfiguredSpreadsheet_();
+  requireNoSwitchMaintenance_(registry);
+  var spreadsheet = getAdminEventSpreadsheet_(registry, eventId);
+  if (!findAdminRow_(spreadsheet, '\u6d3b\u52a8', 'eventId', eventId)) {
+    adminError_('NOT_FOUND');
+  }
+  var result = refreshReadableViews_(
+    spreadsheet,
+    eventId,
+    getAdminSettings_(registry)
+  );
+  appendAdminAudit_(
+    spreadsheet,
+    'REFRESH_READABLE_VIEWS',
+    'event',
+    eventId,
+    actor,
+    {
+      registrationRows: result.registration.rowCount,
+      attendanceRows: result.attendance.rowCount
+    }
+  );
+  return result;
 }
 
 function adminRecordAction_(payload, actor) {
@@ -1696,6 +1741,8 @@ function adminRecordAction_(payload, actor) {
         spreadsheet, action.toUpperCase(), 'registration', request.registrationId.trim(),
         actor, { seatId: String(request.seatId || '') }
       );
+      syncReadableRegistration_(spreadsheet, eventId, request.registrationId.trim(),
+        getAdminSettings_(registry));
       return {
         registrationId: request.registrationId.trim(),
         action: action,
@@ -1708,6 +1755,8 @@ function adminRecordAction_(payload, actor) {
       spreadsheet, action.toUpperCase(), 'registration', request.registrationId.trim(),
       actor, { seatId: action === 'adjust_seat' ? String(request.seatId || '') : '' }
     );
+    syncReadableRegistration_(spreadsheet, eventId, request.registrationId.trim(),
+      getAdminSettings_(registry));
     return { registrationId: request.registrationId.trim(), action: action, status: 'completed' };
   });
 }

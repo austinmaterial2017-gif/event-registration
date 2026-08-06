@@ -57,7 +57,7 @@ class FakeSheet {
     this.notifyWrite();
   }
   getRange(row, column, rowCount, columnCount) {
-    return {
+    const range = {
       getValues: () => Array.from({ length: rowCount }, (_, y) =>
         Array.from({ length: columnCount }, (_, x) =>
           this.rows[row - 1 + y]?.[column - 1 + x] ?? "")),
@@ -69,9 +69,17 @@ class FakeSheet {
           this.rows[row - 1 + y] = target;
         });
         this.notifyWrite();
-      }
+      },
+      setFontWeight: () => range,
+      setBackground: () => range,
+      setWrap: () => range,
+      setVerticalAlignment: () => range
     };
+    return range;
   }
+  clearContents() { this.rows = []; return this; }
+  setFrozenRows() { return this; }
+  autoResizeColumns() { return this; }
   appendRow(values) {
     this.onWrite?.(this.name);
     this.rows.push(values.slice());
@@ -284,7 +292,15 @@ async function createSystem({ onWrite, failActivityCreationStage, extraSheetData
   const activitySpreadsheet = {
     getId: () => "activity-sheet",
     getName: () => "Activity",
-    getSheetByName: (name) => sheets[name] || null
+    getSheetByName: (name) => sheets[name] || null,
+    insertSheet: (name) => {
+      const sheet = new FakeSheet(name, [], (sheetName) => {
+        assert.equal(publicLockDepth, 1, `${sheetName} changed outside the public lock`);
+        onWrite?.(sheetName);
+      });
+      sheets[name] = sheet;
+      return sheet;
+    }
   };
   const registrySpreadsheet = {
     getId: () => "registry-sheet",
@@ -422,6 +438,7 @@ async function createSystem({ onWrite, failActivityCreationStage, extraSheetData
   });
   for (const file of [
     "Repository.gs",
+    "ReadableViews.gs",
     "RegistrationService.gs",
     "TicketService.gs",
     "AttendanceService.gs",
@@ -597,7 +614,7 @@ async function runAdminUiThroughRealService(system) {
     "#selected-activity-title", "#selected-activity-meta", "#selected-activity-sheet",
     "#finalize-draft", "#delete-draft", "#delete-empty-event",
     "#min-session-field", "#max-session-field", "#seat-zone-field",
-    "#activity-empty-state", "#clear-search", "#test-sheet", "#switch-sheet", "#new-activity",
+    "#activity-empty-state", "#clear-search", "#refresh-readable-views", "#test-sheet", "#switch-sheet", "#new-activity",
     "#save-event", "#save-session", "#save-seat-plan", "#save-question",
     "#new-session", "#session-editor-mode"
   ]) add(selector);
@@ -651,6 +668,7 @@ async function runAdminUiThroughRealService(system) {
     saveAdminEvent(payload) { this.invoke("saveAdminEvent", payload); }
     saveAdminSession(payload) { this.invoke("saveAdminSession", payload); }
     saveAdminSeatPlan(payload) { this.invoke("saveAdminSeatPlan", payload); }
+    refreshAdminReadableViews(payload) { this.invoke("refreshAdminReadableViews", payload); }
     adminRecordAction(payload) { this.invoke("adminRecordAction", payload); }
   }
   const context = vm.createContext({
@@ -1163,4 +1181,23 @@ test("assembled administrator mutations roll back rows, settings, appends, and a
   assert.equal(failedDelete.ok, false);
   assert.equal(failedDelete.code, "INTERNAL");
   assert.equal(JSON.stringify(rows(sessionSheet)), beforeDelete);
+});
+
+test("administrator can rebuild readable registration and attendance tabs without changing raw rows", async () => {
+  const system = await createSystem();
+  const rawRegistrationCount = system.sheets["报名项目"].rows.length;
+  const rawAttendanceCount = system.sheets["签到记录"].rows.length;
+
+  const result = system.staffContext.refreshAdminReadableViews({ eventId: "event-1" });
+
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.data.registration.rowCount, 1);
+  assert.equal(result.data.attendance.rowCount, 1);
+  assert.equal(system.sheets["报名项目"].rows.length, rawRegistrationCount);
+  assert.equal(system.sheets["签到记录"].rows.length, rawAttendanceCount);
+  assert.deepEqual(system.sheets["报名总览"].rows[0].slice(0, 3), [
+    "报名状态", "姓名", "电话号码"
+  ]);
+  assert.equal(system.sheets["报名总览"].rows[1][1], "Alice");
+  assert.equal(system.sheets["签到总览"].rows[1][3], "未签到");
 });

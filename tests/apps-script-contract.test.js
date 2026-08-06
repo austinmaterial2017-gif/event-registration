@@ -115,7 +115,8 @@ test("registration service validates every server-authoritative rule inside one 
     assert.match(registration, new RegExp(`function\\s+${helper}\\s*\\(`));
     assert.match(createBody, new RegExp(`${helper}\\s*\\(`));
   }
-  assert.match(registration, /event\.status\s*!==\s*['"]open['"]/);
+  assert.match(registration, /effectiveRegistrationEventStatus_\s*\(/);
+  assert.match(registration, /effectiveStatus\s*!==\s*['"]open['"]/);
   assert.match(registration, /opensAt|closesAt/);
   assert.match(registration, /selectionMode|minChoices|maxChoices|required/);
   assert.match(registration, /capacity/);

@@ -87,7 +87,7 @@ test("participant entry modules cache-bust the production API client", async () 
   const root = new URL("../public/js/", import.meta.url);
   const modules = [
     ["index-page.js", "20260728-stable"],
-    ["register-page.js", "20260728-stable"],
+    ["register-page.js", "20260806-feedback"],
     ["ticket-page.js", "20260806-recovery"],
     ["verify-page.js", "20260728-stable"]
   ];
@@ -101,7 +101,7 @@ test("participant HTML cache-busts each updated entry module", async () => {
   const root = new URL("../public/", import.meta.url);
   const pages = [
     ["index.html", "index-page.js", "20260729-dates"],
-    ["register.html", "register-page.js", "20260806-review"],
+    ["register.html", "register-page.js", "20260806-feedback"],
     ["ticket.html", "ticket-page.js", "20260806-recovery"],
     ["verify.html", "verify-page.js", "20260728-final"],
     ["v.html", "verify-page.js", "20260728-final"]
@@ -134,9 +134,11 @@ test("a server error and successful response use the public result contract with
 
 test("only allowlisted public error codes receive fixed Chinese messages", async () => {
   const closed = clientWithResponse({ ok: false, code: "REGISTRATION_CLOSED", message: "a different short message" }).client;
+  const duplicate = clientWithResponse({ ok: false, code: "DUPLICATE_REGISTRATION", message: "private duplicate details" }).client;
   const unknown = clientWithResponse({ ok: false, code: "UNEXPECTED_FAILURE", message: "也不能公开这段服务端信息" }).client;
 
   assert.deepEqual(await closed.listEvents(), { ok: false, code: "REGISTRATION_CLOSED", message: "报名已截止。" });
+  assert.deepEqual(await duplicate.listEvents(), { ok: false, code: "DUPLICATE_REGISTRATION", message: "你已经报名过这个活动，请直接找回电子票。" });
   assert.deepEqual(await unknown.listEvents(), { ok: false, code: "UNEXPECTED_FAILURE", message: "请求未能完成，请稍后重试。" });
 });
 

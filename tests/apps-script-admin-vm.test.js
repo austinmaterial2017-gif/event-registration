@@ -404,6 +404,11 @@ async function createHarness(options = {}) {
       base64EncodeWebSafe: (bytes) => Buffer.from(bytes).toString("base64url")
     }
   });
+  vm.runInContext(
+    await readFile(new URL("ReadableViews.gs", publicScriptRoot), "utf8"),
+    context,
+    { filename: "ReadableViews.gs" }
+  );
   for (const file of ["Repository.gs", "AttendanceService.gs", "AdminService.gs"]) {
     vm.runInContext(await readFile(new URL(file, staffScriptRoot), "utf8"), context, { filename: file });
   }
@@ -422,6 +427,7 @@ async function createHarness(options = {}) {
     "admin.saveSeatPlan": (payload, actor) => context.saveAdminSeatPlan_(payload, actor),
     "admin.saveQuestion": (payload, actor) => context.saveAdminQuestion_(payload, actor),
     "admin.recordAction": (payload, actor) => context.adminRecordAction_(payload, actor),
+    "admin.refreshReadableViews": (payload, actor) => context.refreshAdminReadableViews_(payload, actor),
     "admin.testSheet": (payload, actor) => context.testAdminSheetConnection_(payload, actor),
     "admin.switchSheet": (payload, actor) => context.switchAdminSheet_(payload, actor),
     "staff.getTicket": (payload) => {
@@ -574,6 +580,7 @@ async function createPublicRegistrationContext(
   context.__setNow = (value) => { serverNow = value; };
   for (const file of [
     "Repository.gs",
+    "ReadableViews.gs",
     "RegistrationService.gs",
     "TicketService.gs",
     "AttendanceService.gs",
@@ -3105,6 +3112,10 @@ test("real public event reads expose only safe visible projections and authorita
   assert.deepEqual(
     Array.from(listed.data.events, (event) => event.id).sort(),
     ["event-1", "upcoming-event"]
+  );
+  assert.equal(
+    listed.data.events.find((event) => event.id === "upcoming-event").status,
+    "open"
   );
   assert.equal(JSON.stringify(listed.data).includes("Private draft"), false);
   assert.equal(JSON.stringify(listed.data).includes("source-sheet-id"), false);

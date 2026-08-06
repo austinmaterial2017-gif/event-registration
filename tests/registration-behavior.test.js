@@ -169,6 +169,18 @@ test("the public activity homepage offers a direct ticket recovery entry", async
   assert.match(html, /找回我的电子票/);
 });
 
+test("the registration page keeps ticket recovery visible and reports slow loading", async () => {
+  const [html, script] = await Promise.all([
+    readFile(new URL("../public/register.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/js/register-page.js", import.meta.url), "utf8")
+  ]);
+  assert.match(html, /id="registration-loading"/);
+  assert.match(html, /href="ticket\.html"/);
+  assert.match(html, /已经报名过？找回电子票/);
+  assert.match(script, /服务器正在唤醒/);
+  assert.match(script, /仍在读取活动资料/);
+});
+
 test("review validation delegates session and answer rules and fails closed after closing time", () => {
   const event = {
     status: "open", opensAt: "2026-07-26T09:00:00+08:00", closesAt: "2026-07-26T12:00:00+08:00", minChoices: 1, maxChoices: 1, seatMode: "self",

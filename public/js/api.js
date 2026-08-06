@@ -15,6 +15,7 @@ const PUBLIC_ERROR_MESSAGES = {
   REGISTRATION_UPDATE_CLOSED: "已超过报名修改期限。",
   REGISTRATION_CHANGED: "报名资料已变化，请重新载入电子票。",
   EVENT_CAPACITY_FULL: "活动总名额已满。",
+  DUPLICATE_REGISTRATION: "你已经报名过这个活动，请直接找回电子票。",
   REGISTRATION_FULL: "报名名额已满。",
   REGISTRATION_NOT_OPEN: "报名尚未开放。",
   REQUIRED_SESSION: "必选场次不能取消。",

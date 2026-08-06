@@ -242,6 +242,16 @@ function ensureActivityDraftRegistry_(registry) {
   }
 }
 
+/** Rebuilds human-readable registration and attendance tabs for one activity. */
+function refreshAdminReadableViews(payload) {
+  return runAdminService_(function() {
+    var actor = requireAuthorizedAdminSession_();
+    var result = invokeInternalBackend_('admin.refreshReadableViews', payload || {}, actor);
+    if (!result.ok) adminError_(result.code);
+    return result.data;
+  });
+}
+
 function validateActivityDraftDocument_(value) {
   var request = requireAdminObject_(value);
   var event = requireAdminObject_(request.event);
@@ -939,6 +949,7 @@ function saveAdminSession_(payload, actor) {
     sessionPolicy.checkInLabels = checkpointPolicy.checkInLabels;
     refreshAdminEventDateSummary_(spreadsheet, settings, row.eventId);
     setAdminSettings_(registry, settings);
+    refreshExistingReadableViewsSafely_(spreadsheet, row.eventId, settings);
     appendAdminAudit_(
       spreadsheet, existing ? 'UPDATE_SESSION' : 'CREATE_SESSION',
       'session', sessionId, actor, { eventId: row.eventId }
@@ -1000,6 +1011,7 @@ function deleteAdminSession_(payload, actor) {
     }
     refreshAdminEventDateSummary_(spreadsheet, settings, eventId);
     setAdminSettings_(registry, settings);
+    refreshExistingReadableViewsSafely_(spreadsheet, eventId, settings);
     appendAdminAudit_(
       spreadsheet,
       'DELETE_SESSION',
@@ -1107,6 +1119,7 @@ function saveAdminQuestion_(payload, actor) {
       spreadsheet, existing ? 'UPDATE_QUESTION' : 'CREATE_QUESTION',
       'question', questionId, actor, { eventId: row.eventId, status: status }
     );
+    refreshExistingReadableViewsSafely_(spreadsheet, row.eventId, settings);
     var projection = adminQuestionProjection_(row, settings);
     projection.semanticRole = semanticRole;
     return projection;
@@ -1213,6 +1226,35 @@ function saveAdminSeatPlan_(payload, actor) {
     upsertActivityCatalogEntry_(registry, event, spreadsheet);
     return { eventId: event.eventId, mode: mode, createdCount: created.length };
   });
+}
+
+function refreshAdminReadableViews_(payload, actor) {
+  var request = requireAdminObject_(payload);
+  var eventId = typeof request.eventId === 'string' ? request.eventId.trim() : '';
+  if (!eventId) adminError_('INVALID_REQUEST');
+  var registry = getRootConfiguredSpreadsheet_();
+  requireNoSwitchMaintenance_(registry);
+  var spreadsheet = getAdminEventSpreadsheet_(registry, eventId);
+  if (!findAdminRow_(spreadsheet, '\u6d3b\u52a8', 'eventId', eventId)) {
+    adminError_('NOT_FOUND');
+  }
+  var result = refreshReadableViews_(
+    spreadsheet,
+    eventId,
+    getAdminSettings_(registry)
+  );
+  appendAdminAudit_(
+    spreadsheet,
+    'REFRESH_READABLE_VIEWS',
+    'event',
+    eventId,
+    actor,
+    {
+      registrationRows: result.registration.rowCount,
+      attendanceRows: result.attendance.rowCount
+    }
+  );
+  return result;
 }
 
 function adminRecordAction_(payload, actor) {
@@ -1354,6 +1396,8 @@ function adminRecordAction_(payload, actor) {
         spreadsheet, action.toUpperCase(), 'registration', request.registrationId.trim(),
         actor, { seatId: String(request.seatId || '') }
       );
+      syncReadableRegistration_(spreadsheet, eventId, request.registrationId.trim(),
+        getAdminSettings_(registry));
       return {
         registrationId: request.registrationId.trim(),
         action: action,
@@ -1366,6 +1410,8 @@ function adminRecordAction_(payload, actor) {
       spreadsheet, action.toUpperCase(), 'registration', request.registrationId.trim(),
       actor, { seatId: action === 'adjust_seat' ? String(request.seatId || '') : '' }
     );
+    syncReadableRegistration_(spreadsheet, eventId, request.registrationId.trim(),
+      getAdminSettings_(registry));
     return { registrationId: request.registrationId.trim(), action: action, status: 'completed' };
   });
 }

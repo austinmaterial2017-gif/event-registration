@@ -175,7 +175,7 @@ async function createHarness() {
   const recordSearch = add("#record-search-form", form(["search"]));
   const recordAction = add("#record-action-form", form(["registrationId", "seatId"]));
   const sheetForm = add("#sheet-form", form(["spreadsheetId"]));
-  for (const selector of ["#admin-status", "#connection-status", "#event-list", "#session-list", "#seat-list", "#question-list", "#record-list", "#attendance-list", "#selected-activity", "#selected-activity-title", "#selected-activity-meta", "#selected-activity-sheet", "#finalize-draft", "#delete-draft", "#delete-empty-event", "#min-session-field", "#max-session-field", "#seat-zone-field", "#activity-empty-state", "#clear-search", "#test-sheet", "#switch-sheet", "#new-activity", "#new-session", "#session-editor-mode", "#save-event", "#save-session", "#save-seat-plan", "#save-question", "#seat-preview", "#seat-preview-stage", "#seat-preview-floor", "#seat-preview-message", "#expand-seat-preview"]) add(selector);
+  for (const selector of ["#admin-status", "#connection-status", "#event-list", "#session-list", "#seat-list", "#question-list", "#record-list", "#attendance-list", "#selected-activity", "#selected-activity-title", "#selected-activity-meta", "#selected-activity-sheet", "#finalize-draft", "#delete-draft", "#delete-empty-event", "#min-session-field", "#max-session-field", "#seat-zone-field", "#activity-empty-state", "#clear-search", "#refresh-readable-views", "#test-sheet", "#switch-sheet", "#new-activity", "#new-session", "#session-editor-mode", "#save-event", "#save-session", "#save-seat-plan", "#save-question", "#seat-preview", "#seat-preview-stage", "#seat-preview-floor", "#seat-preview-message", "#expand-seat-preview"]) add(selector);
   const selector = add("#activity-selector", new FakeElement("select"));
   const sections = ["#sessions", "#seats", "#questions", "#records", "#attendance"].map((id) => add(id));
   const navLinks = ["#events", "#sessions", "#seats", "#questions", "#records", "#attendance"].map((href) => {
@@ -244,6 +244,9 @@ async function createHarness() {
     adminRecordAction(payload) {
       mutations.push({ kind: "record", payload, success: this.success, failure: this.failure });
     }
+    refreshAdminReadableViews(payload) {
+      mutations.push({ kind: "readableViews", payload, success: this.success, failure: this.failure });
+    }
     testAdminSheetConnection() {} switchAdminSheet() {} getAdminSourceBundles() {}
   }
   const context = vm.createContext({
@@ -262,6 +265,30 @@ async function createHarness() {
     selector, sections, navLinks, lifecycle, recordActions, requests, mutations
   };
 }
+
+test("clear overview button refreshes only the selected activity and reports row counts", async () => {
+  const ui = await createHarness();
+  ui.selector.value = "B";
+  ui.selector.dispatch("change");
+  ui.requests.at(-1).success({ ok: true, data: dashboard("B", "Activity B") });
+
+  ui.elements.get("#refresh-readable-views").dispatch("click");
+  const mutation = ui.mutations.at(-1);
+  assert.equal(mutation.kind, "readableViews");
+  assert.deepEqual(JSON.parse(JSON.stringify(mutation.payload)), { eventId: "B" });
+
+  mutation.success({
+    ok: true,
+    data: {
+      registration: { rowCount: 12 },
+      attendance: { rowCount: 12 }
+    }
+  });
+  assert.equal(
+    ui.elements.get("#admin-status").textContent,
+    "清晰总览已更新：报名 12 人，签到名单 12 人。"
+  );
+});
 
 test("later selected dashboard response wins when older request resolves last", async () => {
   const ui = await createHarness();

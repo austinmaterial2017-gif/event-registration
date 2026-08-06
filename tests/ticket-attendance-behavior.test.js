@@ -341,6 +341,20 @@ test("staff check-in offers a mobile rear-camera scanner with a clear manual fal
   assert.match(staffHtml, /lookupTicketForCheckIn\(scannedValue\)/);
   assert.match(staffHtml, /也可以把二维码网址粘贴到下方/);
   assert.match(staffHtml, /停止扫码/);
+  assert.match(staffHtml, /加入手机主画面/);
+  assert.match(staffHtml, /id="scan-next-ticket"/);
+  assert.match(staffHtml, /继续扫描下一位/);
+});
+
+test("the protected admin page links directly to the staff phone scanner without copying a URL", async () => {
+  const adminHtml = await readFile(
+    new URL("../staff-apps-script/Admin.html", import.meta.url),
+    "utf8"
+  );
+
+  assert.match(adminHtml, /href="\?view=staff"/);
+  assert.match(adminHtml, /手机扫码签到/);
+  assert.match(adminHtml, /target="_top"/);
 });
 
 test("staff mobile camera sends the first decoded QR URL into the protected lookup flow", async () => {

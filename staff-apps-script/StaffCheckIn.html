@@ -12,7 +12,7 @@
       .confirm { display:flex; align-items:flex-start; gap:8px; }.confirm input { min-height:auto; margin-top:5px; }.message { min-height:1.5em; color:#77e4aa; }
       .camera-actions { display:grid; gap:8px; }.camera-help { margin:0; color:#d8c7df; font-size:13px; }
       #camera-scanner { display:grid; gap:10px; } #camera-preview { width:100%; max-height:54vh; border-radius:14px; background:#080609; object-fit:cover; }
-      #stop-camera-scan { background:#4a3b51; }
+      #stop-camera-scan, #scan-next-ticket { background:#4a3b51; }
       [hidden] { display:none !important; }
     </style>
   </head>
@@ -20,6 +20,7 @@
     <main>
       <h1>工作人员验票／参与者签到</h1>
       <p>仅限工作人员使用。扫描参与者的电子票后，再选择场次并确认到场；工作人员身份来自当前 Google 登录账号。</p>
+      <p class="camera-help">第一次在手机打开后，可用浏览器菜单选择“加入手机主画面”。以后点桌面图标，再按“打开手机相机扫码”即可，不需要复制网址。</p>
       <form id="lookup-form">
         <div class="camera-actions">
           <button id="start-camera-scan" type="button">打开手机相机扫码</button>
@@ -51,6 +52,7 @@
         </label>
         <button type="submit">确认本场签到</button>
       </form>
+      <button id="scan-next-ticket" type="button" hidden>继续扫描下一位</button>
       <p id="message" class="message" role="status"></p>
     </main>
     <script>
@@ -68,6 +70,7 @@
       const stopCameraButton = document.querySelector("#stop-camera-scan");
       const cameraScanner = document.querySelector("#camera-scanner");
       const cameraPreview = document.querySelector("#camera-preview");
+      const scanNextButton = document.querySelector("#scan-next-ticket");
       let activeToken = "";
       let lookupPending = false;
       let checkInPending = false;
@@ -119,6 +122,19 @@
         if (!button) return;
         button.disabled = pending;
         button.textContent = pending ? pendingText : idleText;
+      }
+
+      function resetForNextTicket_() {
+        stopCameraScan_();
+        activeToken = "";
+        activeTicket = null;
+        lookupForm.elements.token.value = "";
+        checkInForm.hidden = true;
+        checkInForm.elements.sessionId.value = "";
+        checkInForm.elements.confirmCheckIn.checked = false;
+        if (scanNextButton) scanNextButton.hidden = true;
+        message.textContent = "请扫描下一位参与者的二维码。";
+        startCameraScan_();
       }
 
       function parseScannedTicketToken(value) {
@@ -264,6 +280,7 @@
         stopCameraScan_();
         message.textContent = "已停止扫码；可以重新打开相机或粘贴二维码网址。";
       });
+      if (scanNextButton) scanNextButton.addEventListener("click", resetForNextTicket_);
       if (typeof checkInForm.elements.sessionId.addEventListener === "function") {
         checkInForm.elements.sessionId.addEventListener("change", renderCheckpointControls_);
       }
@@ -288,6 +305,7 @@
             message.textContent = result && result.ok
               ? activeCheckInMode === "event" ? "整个活动签到成功。" : "本场签到成功。"
               : result && result.message ? result.message : "签到未完成。";
+            if (scanNextButton) scanNextButton.hidden = !(result && result.ok);
           })
           .withFailureHandler(() => {
             checkInPending = false;

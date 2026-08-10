@@ -23,6 +23,9 @@ function doGet(event) {
     var requestedScan = event && event.parameter &&
       (event.parameter.t || event.parameter.token || event.parameter.scan);
     template.initialScan = parseInitialStaffScan_(requestedScan);
+    template.fixedEventId = parseStaffSelectionId_(event && event.parameter && event.parameter.fixedEventId);
+    template.fixedSessionId = parseStaffSelectionId_(event && event.parameter && event.parameter.fixedSessionId);
+    template.fixedCheckpointId = parseStaffSelectionId_(event && event.parameter && event.parameter.fixedCheckpointId);
     return template.evaluate()
       .setTitle('工作人员验票／参与者签到');
   } catch (_ignored) {
@@ -30,6 +33,11 @@ function doGet(event) {
       .createHtmlOutput('<!doctype html><html><body><main><h1>Staff access unavailable.</h1></main></body></html>')
       .setTitle('Staff access unavailable');
   }
+}
+
+function parseStaffSelectionId_(value) {
+  var text = typeof value === 'string' ? value.trim() : '';
+  return /^[A-Za-z0-9_-]{1,128}$/.test(text) ? text : '';
 }
 
 function parseInitialStaffScan_(value) {

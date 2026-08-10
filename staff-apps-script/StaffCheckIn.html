@@ -6,6 +6,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="initial-scan" content="<?= initialScan ?>">
     <meta name="staff-return-url" content="<?= staffReturnUrl ?>">
+    <meta name="fixed-event-id" content="<?= fixedEventId ?>">
+    <meta name="fixed-session-id" content="<?= fixedSessionId ?>">
+    <meta name="fixed-checkpoint-id" content="<?= fixedCheckpointId ?>">
     <style>
       body { margin:0; padding:24px; background:#18131d; color:#f8f0df; font:15px/1.5 Arial,sans-serif; }
       main { max-width:560px; margin:auto; } form, section { display:grid; gap:14px; padding:20px; border:1px solid #594463; border-radius:18px; background:#2b202f; }
@@ -94,6 +97,9 @@
       const fixedCheckInStatus = document.querySelector("#fixed-checkin-status");
       let checkInTargets = [];
       let fixedCheckInReady = false;
+      const initialParameters = new URLSearchParams(window.location.search);
+      let pendingReturnedScan = document.querySelector('meta[name="initial-scan"]')?.content ||
+        initialParameters.get("t") || initialParameters.get("token") || initialParameters.get("scan") || "";
       let activeToken = "";
       let lookupPending = false;
       let checkInPending = false;
@@ -181,12 +187,23 @@
               eventSelect.append(option);
             });
             const parameters = new URLSearchParams(window.location.search);
-            eventSelect.value = parameters.get("fixedEventId") || "";
+            const returnedEventId = document.querySelector('meta[name="fixed-event-id"]')?.content ||
+              parameters.get("fixedEventId") || "";
+            const returnedSessionId = document.querySelector('meta[name="fixed-session-id"]')?.content ||
+              parameters.get("fixedSessionId") || "";
+            const returnedCheckpointId = document.querySelector('meta[name="fixed-checkpoint-id"]')?.content ||
+              parameters.get("fixedCheckpointId") || "";
+            eventSelect.value = returnedEventId;
             populateFixedSessions_();
-            fixedCheckInForm.elements.sessionId.value = parameters.get("fixedSessionId") || "";
+            fixedCheckInForm.elements.sessionId.value = returnedSessionId;
             renderFixedCheckpoint_();
-            fixedCheckInForm.elements.checkpointId.value = parameters.get("fixedCheckpointId") || "";
+            fixedCheckInForm.elements.checkpointId.value = returnedCheckpointId;
             renderFixedCheckpoint_();
+            if (pendingReturnedScan) {
+              const scan = pendingReturnedScan;
+              pendingReturnedScan = "";
+              if (!submitFixedScan_(scan)) lookupTicketForCheckIn(scan);
+            }
           })
           .withFailureHandler(() => { fixedCheckInStatus.textContent = "无法读取签到活动，请刷新后重试。"; })
           .getStaffCheckInTargets();
@@ -493,10 +510,7 @@
           });
       });
 
-      const initialParameters = new URLSearchParams(window.location.search);
-      const initialScan = document.querySelector('meta[name="initial-scan"]')?.content ||
-        initialParameters.get("t") || initialParameters.get("token") || initialParameters.get("scan") || "";
-      if (initialScan) lookupTicketForCheckIn(initialScan);
+      if (pendingReturnedScan && !fixedCheckInForm) lookupTicketForCheckIn(pendingReturnedScan);
     </script>
   </body>
 </html>

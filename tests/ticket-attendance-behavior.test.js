@@ -358,13 +358,16 @@ test("staff check-in offers a mobile rear-camera scanner with a clear manual fal
 });
 
 test("standalone staff scanner returns a decoded ticket only to the protected staff page", async () => {
-  const [staffHtml, scannerHtml, scannerJs] = await Promise.all([
+  const [staffHtml, staffCode, scannerHtml, scannerJs] = await Promise.all([
     readFile(new URL("../staff-apps-script/StaffCheckIn.html", import.meta.url), "utf8"),
+    readFile(new URL("../staff-apps-script/Code.gs", import.meta.url), "utf8"),
     readFile(new URL("../public/staff-scanner.html", import.meta.url), "utf8"),
     readFile(new URL("../public/js/staff-scanner.js", import.meta.url), "utf8")
   ]);
 
   assert.match(staffHtml, /staff-scanner\.html\?returnUrl=/);
+  assert.match(staffHtml, /meta name="staff-return-url" content="<\?= staffReturnUrl \?>"/);
+  assert.match(staffCode, /template\.staffReturnUrl\s*=\s*ScriptApp\.getService\(\)\.getUrl\(\)\s*\+\s*'\?view=staff'/);
   assert.match(scannerHtml, /id="start-scanner"/);
   assert.match(scannerHtml, /js\/staff-scanner\.js/);
   assert.match(scannerJs, /function isSafeReturnUrl\(/);

@@ -5,6 +5,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="initial-scan" content="<?= initialScan ?>">
+    <meta name="staff-return-url" content="<?= staffReturnUrl ?>">
     <style>
       body { margin:0; padding:24px; background:#18131d; color:#f8f0df; font:15px/1.5 Arial,sans-serif; }
       main { max-width:560px; margin:auto; } form, section { display:grid; gap:14px; padding:20px; border:1px solid #594463; border-radius:18px; background:#2b202f; }
@@ -86,10 +87,8 @@
       let cameraScanFrame = 0;
 
       function standaloneScannerUrl_() {
-        const returnUrl = new URL(window.location.href);
-        returnUrl.searchParams.delete("scan");
-        returnUrl.searchParams.delete("t");
-        returnUrl.searchParams.delete("token");
+        const configuredUrl = document.querySelector('meta[name="staff-return-url"]')?.content || "";
+        const returnUrl = new URL(configuredUrl);
         return "https://austinmaterial2017-gif.github.io/event-registration/staff-scanner.html?returnUrl=" +
           encodeURIComponent(returnUrl.href);
       }

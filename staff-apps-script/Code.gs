@@ -19,6 +19,7 @@ function doGet(event) {
   try {
     requireAuthorizedStaffSession_();
     var template = HtmlService.createTemplateFromFile('StaffCheckIn');
+    template.staffReturnUrl = ScriptApp.getService().getUrl() + '?view=staff';
     var requestedScan = event && event.parameter &&
       (event.parameter.t || event.parameter.token || event.parameter.scan);
     template.initialScan = typeof requestedScan === 'string' &&

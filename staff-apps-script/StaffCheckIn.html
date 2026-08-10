@@ -25,6 +25,7 @@
       <form id="lookup-form">
         <div class="camera-actions">
           <button id="start-camera-scan" type="button">打开手机相机扫码</button>
+          <a id="standalone-scanner-link" class="secondary" href="#">iPhone 请使用独立手机扫码页</a>
           <p class="camera-help">也可以把二维码网址粘贴到下方，作为相机无法使用时的备用方式。</p>
         </div>
         <div id="camera-scanner" hidden>
@@ -72,6 +73,7 @@
       const stopCameraButton = document.querySelector("#stop-camera-scan");
       const cameraScanner = document.querySelector("#camera-scanner");
       const cameraPreview = document.querySelector("#camera-preview");
+      const standaloneScannerLink = document.querySelector("#standalone-scanner-link");
       const scanNextButton = document.querySelector("#scan-next-ticket");
       let activeToken = "";
       let lookupPending = false;
@@ -82,6 +84,15 @@
       let cameraDetector = null;
       let cameraReader = null;
       let cameraScanFrame = 0;
+
+      function standaloneScannerUrl_() {
+        const returnUrl = new URL(window.location.href);
+        returnUrl.searchParams.delete("scan");
+        returnUrl.searchParams.delete("t");
+        returnUrl.searchParams.delete("token");
+        return "https://austinmaterial2017-gif.github.io/event-registration/staff-scanner.html?returnUrl=" +
+          encodeURIComponent(returnUrl.href);
+      }
 
       function selectedSession_() {
         const sessionId = checkInForm.elements.sessionId.value;
@@ -188,6 +199,10 @@
 
       async function startCameraScan_() {
         if (!startCameraButton || cameraStream || cameraReader) return;
+        if (/iPhone|iPad|iPod/i.test(navigator.userAgent || "")) {
+          window.location.assign(standaloneScannerUrl_());
+          return;
+        }
         const supportsNativeScanner = typeof BarcodeDetector === "function";
         const supportsZxingScanner = Boolean(
           window.ZXingBrowser && typeof window.ZXingBrowser.BrowserQRCodeReader === "function"
@@ -300,6 +315,7 @@
         lookupTicketForCheckIn(lookupForm.elements.token.value);
       });
       if (startCameraButton) startCameraButton.addEventListener("click", startCameraScan_);
+      if (standaloneScannerLink) standaloneScannerLink.href = standaloneScannerUrl_();
       if (stopCameraButton) stopCameraButton.addEventListener("click", () => {
         stopCameraScan_();
         message.textContent = "已停止扫码；可以重新打开相机或粘贴二维码网址。";

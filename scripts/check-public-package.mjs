@@ -13,13 +13,13 @@ const approvedEndpoint = process.env.PUBLIC_APPS_SCRIPT_WEB_APP_URL || "";
 const attestedStaffEndpoint = process.env.STAFF_APPS_SCRIPT_WEB_APP_URL || "";
 const endpointPattern = /^https:\/\/script\.google\.com\/macros\/s\/[^/?#]+\/exec$/;
 const allowedFiles = new Set([
-  "404.html", "index.html", "register.html", "ticket.html", "verify.html", "v.html",
+  "404.html", "index.html", "register.html", "ticket.html", "verify.html", "v.html", "staff-scanner.html",
   "assets/owl-mascot.svg",
   "css/app.css",
   "js/activity-countdown-view.js", "js/activity-ticket-view.js", "js/api.js", "js/config.js", "js/domain.js",
   "js/event-list-flow.js", "js/index-page.js", "js/qr.js", "js/register-page.js",
   "js/registration-attempt-timer.js", "js/registration-flow.js", "js/registration-success.js",
-  "js/ticket-page.js", "js/verify-page.js"
+  "js/ticket-page.js", "js/verify-page.js", "js/staff-scanner.js"
 ]);
 
 async function filesIn(directory) {

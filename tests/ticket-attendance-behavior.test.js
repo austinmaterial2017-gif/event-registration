@@ -357,6 +357,24 @@ test("staff check-in offers a mobile rear-camera scanner with a clear manual fal
   assert.match(staffHtml, /继续扫描下一位/);
 });
 
+test("standalone staff scanner returns a decoded ticket only to the protected staff page", async () => {
+  const [staffHtml, scannerHtml, scannerJs] = await Promise.all([
+    readFile(new URL("../staff-apps-script/StaffCheckIn.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/staff-scanner.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/js/staff-scanner.js", import.meta.url), "utf8")
+  ]);
+
+  assert.match(staffHtml, /staff-scanner\.html\?returnUrl=/);
+  assert.match(scannerHtml, /id="start-scanner"/);
+  assert.match(scannerHtml, /js\/staff-scanner\.js/);
+  assert.match(scannerJs, /function isSafeReturnUrl\(/);
+  assert.match(scannerJs, /pathname\.startsWith\("\/macros\/s\/"\)/);
+  assert.match(scannerJs, /pathname\.endsWith\("\/exec"\)/);
+  assert.match(scannerJs, /searchParams\.set\("scan", scannedValue\)/);
+  assert.match(scannerJs, /location\.replace\(target\.href\)/);
+  assert.doesNotMatch(scannerJs, /google\.script\.run|checkIn\s*\(/);
+});
+
 test("the protected admin page links directly to the staff phone scanner without copying a URL", async () => {
   const adminHtml = await readFile(
     new URL("../staff-apps-script/Admin.html", import.meta.url),

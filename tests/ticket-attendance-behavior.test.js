@@ -364,9 +364,11 @@ test("the protected admin page links directly to the staff phone scanner without
     "utf8"
   );
 
-  assert.match(adminHtml, /href="<\?= staffScannerUrl \?>"/);
+  assert.match(
+    adminHtml,
+    /<a href="<\?= staffScannerUrl \?>" target="_blank" rel="noopener">手机扫码签到<\/a>/
+  );
   assert.match(adminHtml, /手机扫码签到/);
-  assert.match(adminHtml, /target="_top"/);
   assert.match(staffCode, /ScriptApp\.getService\(\)\.getUrl\(\)/);
   assert.match(staffCode, /adminTemplate\.staffScannerUrl\s*=\s*staffBaseUrl\s*\+\s*'\?view=staff'/);
 });

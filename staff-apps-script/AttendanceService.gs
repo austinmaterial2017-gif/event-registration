@@ -10,6 +10,16 @@ function getStaffTicketForCheckIn(payload) {
   });
 }
 
+/** Safe activity and session choices used before continuous QR check-in. */
+function getStaffCheckInTargets() {
+  return runStaffAttendanceService_(function() {
+    var staffIdentity = requireAuthorizedStaffSession_();
+    var result = invokeInternalBackend_('staff.getCheckInTargets', {}, staffIdentity);
+    if (!result.ok) staffAttendanceError_(result.code);
+    return result.data;
+  });
+}
+
 /** Records one server-timestamped row for one ticket and registered session. */
 function checkIn(payload) {
   return runStaffAttendanceService_(function() {

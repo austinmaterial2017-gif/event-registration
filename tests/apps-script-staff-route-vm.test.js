@@ -211,6 +211,7 @@ test("staff project exposes only the approved Apps Script server entry points", 
     ...ADMIN_RPC_NAMES,
     "checkIn",
     "doGet",
+    "getStaffCheckInTargets",
     "getStaffTicketForCheckIn"
   ].sort());
 });
@@ -347,6 +348,7 @@ test("authorized staff and administrator RPCs delegate state work to the signed 
   }
 
   assert.equal(context.getStaffTicketForCheckIn({ token: "ticket-token" }).ok, true);
+  assert.equal(context.getStaffCheckInTargets().ok, true);
   assert.equal(context.checkIn({ token: "ticket-token", sessionId: "session-1" }).ok, true);
   assert.equal(context.getAdminDashboard({ search: "Alice" }).ok, true);
   assert.equal(context.saveAdminDraft({ event: { title: "Draft" } }).ok, true);
@@ -369,6 +371,7 @@ test("authorized staff and administrator RPCs delegate state work to the signed 
     delegated.map(({ action }) => action),
     [
       "staff.getTicket",
+      "staff.getCheckInTargets",
       "staff.checkIn",
       "admin.getDashboard",
       "admin.saveDraft",

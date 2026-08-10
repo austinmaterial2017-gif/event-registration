@@ -6,7 +6,8 @@ var INTERNAL_NONCE_PREFIX_ = 'INTERNAL_NONCE_';
 var INTERNAL_IDEMPOTENCY_PREFIX_ = 'INTERNAL_IDEMPOTENCY_';
 var INTERNAL_UNCACHED_ACTIONS_ = {
   'admin.getDashboard': true,
-  'staff.getTicket': true
+  'staff.getTicket': true,
+  'staff.getCheckInTargets': true
 };
 
 function handleInternalRequest_(request) {

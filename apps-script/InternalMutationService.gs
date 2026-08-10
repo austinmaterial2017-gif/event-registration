@@ -140,6 +140,9 @@ function executeInternalActionLocked_(action, payload, actor) {
       projection.sessions = internalCheckpointSessions_(spreadsheet, match, policy);
       return projection;
     },
+    'staff.getCheckInTargets': function() {
+      return internalStaffCheckInTargets_();
+    },
     'staff.checkIn': function() {
       return internalStaffCheckInLocked_(payload, actor);
     },
@@ -184,6 +187,40 @@ function executeInternalActionLocked_(action, payload, actor) {
     }
     return internalMutationFailure_(error && error.publicCode ? error.publicCode : 'INTERNAL');
   }
+}
+
+function internalStaffCheckInTargets_() {
+  var registry = getRegistrySpreadsheet_();
+  var settings = getAdminSettings(registry);
+  var policies = settings && settings.registration && settings.registration.events || {};
+  return readRows(registry, '活动目录').filter(function(event) {
+    return ['upcoming', 'open', 'live'].indexOf(String(event.status || '').toLowerCase()) !== -1;
+  }).map(function(event) {
+    var eventId = String(event.eventId || '');
+    var eventPolicy = policies[eventId] || {};
+    var spreadsheet = getEventSpreadsheet_(registry, eventId);
+    var sessions = readRows(spreadsheet, '场次').filter(function(session) {
+      return String(session.eventId || '') === eventId &&
+        ['upcoming', 'open', 'live'].indexOf(String(session.status || '').toLowerCase()) !== -1;
+    }).map(function(session) {
+      var policy = adminCheckpointPolicy_(eventPolicy.sessions && eventPolicy.sessions[session.sessionId] || {});
+      var checkpoints = [];
+      if (policy.checkInMode === 'manual') {
+        for (var index = 0; index < policy.checkInCount; index += 1) {
+          checkpoints.push({ checkpointId: 'checkpoint-' + (index + 1), label: internalCheckpointLabel_(policy, index) });
+        }
+      }
+      return {
+        sessionId: String(session.sessionId || ''),
+        title: String(session.title || ''),
+        speaker: String(session.speaker || ''),
+        startsAt: String(session.startsAt || ''),
+        checkInMode: policy.checkInMode,
+        checkpoints: checkpoints
+      };
+    });
+    return { eventId: eventId, title: String(event.title || ''), sessions: sessions };
+  }).filter(function(event) { return event.sessions.length > 0; });
 }
 
 function withInternalActionScriptLock_(callback) {

@@ -15,7 +15,12 @@ function doGet(event) {
   }
   try {
     requireAuthorizedStaffSession_();
-    return HtmlService.createHtmlOutputFromFile('StaffCheckIn')
+    var template = HtmlService.createTemplateFromFile('StaffCheckIn');
+    var requestedScan = event && event.parameter &&
+      (event.parameter.t || event.parameter.token || event.parameter.scan);
+    template.initialScan = typeof requestedScan === 'string' &&
+      /^[a-f0-9]{64}$/i.test(requestedScan.trim()) ? requestedScan.trim() : '';
+    return template.evaluate()
       .setTitle('工作人员验票／参与者签到');
   } catch (_ignored) {
     return HtmlService

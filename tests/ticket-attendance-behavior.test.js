@@ -254,6 +254,10 @@ test("public verification stays read-only, ticket mutations require owner verifi
 });
 
 test("staff check-in accepts a raw token or scanned verification URL and auto-loads a token query", async () => {
+  const staffCode = await readFile(
+    new URL("../staff-apps-script/Code.gs", import.meta.url),
+    "utf8"
+  );
   const staffHtml = await readFile(
     new URL("../staff-apps-script/StaffCheckIn.html", import.meta.url),
     "utf8"
@@ -282,7 +286,8 @@ test("staff check-in accepts a raw token or scanned verification URL and auto-lo
     "#lookup-form": lookupForm,
     "#check-in-form": checkInForm,
     "#message": { textContent: "" },
-    "#ticket-summary": { textContent: "" }
+    "#ticket-summary": { textContent: "" },
+    'meta[name="initial-scan"]': { content: "server-token-123" }
   };
   const runner = {
     withSuccessHandler() { return this; },
@@ -300,7 +305,7 @@ test("staff check-in accepts a raw token or scanned verification URL and auto-lo
     window: {
       location: {
         href: "https://script.google.com/macros/s/staff/exec?token=query-token-123",
-        search: "?token=query-token-123"
+        search: ""
       }
     },
     google: { script: { run: runner } }
@@ -320,8 +325,11 @@ test("staff check-in accepts a raw token or scanned verification URL and auto-lo
     "legacy-token-456"
   );
   assert.equal(context.parseScannedTicketToken("raw-token-789"), "raw-token-789");
-  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ token: "query-token-123" }]);
-  assert.equal(lookupForm.elements.token.value, "query-token-123");
+  assert.match(staffCode, /createTemplateFromFile\('StaffCheckIn'\)/);
+  assert.match(staffCode, /template\.initialScan/);
+  assert.match(staffHtml, /meta name="initial-scan"/);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ token: "server-token-123" }]);
+  assert.equal(lookupForm.elements.token.value, "server-token-123");
   assert.equal(lookupButton.disabled, true);
   listeners["lookup:submit"]({ preventDefault() {} });
   listeners["lookup:submit"]({ preventDefault() {} });

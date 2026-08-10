@@ -199,7 +199,10 @@
       async function startCameraScan_() {
         if (!startCameraButton || cameraStream || cameraReader) return;
         if (/iPhone|iPad|iPod/i.test(navigator.userAgent || "")) {
-          window.location.assign(standaloneScannerUrl_());
+          // Apps Script is displayed in an iframe. iPhone blocks camera prompts
+          // from that frame, so leave it entirely and open the HTTPS scanner at
+          // the top level where Safari can ask for camera permission.
+          window.top.location.assign(standaloneScannerUrl_());
           return;
         }
         const supportsNativeScanner = typeof BarcodeDetector === "function";

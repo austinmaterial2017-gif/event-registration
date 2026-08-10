@@ -88,10 +88,9 @@ function getEvent(payload) {
       var registry = getRegistrySpreadsheet_();
       var eventId = payload.eventId.trim();
       var catalog = getPublicEventCatalogEntry_(registry, eventId);
-      var spreadsheet = getEventSpreadsheet_(registry, eventId);
-      var event = readRows(spreadsheet, '活动').filter(function(candidate) {
-        return candidate.eventId === eventId;
-      })[0];
+      var publicSource = getPublicEventSource_(catalog, eventId);
+      var spreadsheet = publicSource.spreadsheet;
+      var event = publicSource.event;
       if (!event || PUBLIC_EVENT_STATUSES_[String(event.status || '').toLowerCase()] !== true) {
         publicEventReadError_('EVENT_NOT_FOUND');
       }

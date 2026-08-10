@@ -566,6 +566,7 @@ async function createPublicRegistrationContext(
     }
   });
   const openedSpreadsheetIds = [];
+  const openedSheetNames = [];
   context.SpreadsheetApp.openById = (spreadsheetId) => {
     openedSpreadsheetIds.push(spreadsheetId);
     const sheets = spreadsheets[spreadsheetId];
@@ -573,10 +574,14 @@ async function createPublicRegistrationContext(
     return {
       getId: () => spreadsheetId,
       getName: () => spreadsheetId,
-      getSheetByName: (name) => sheets[name] || null
+      getSheetByName: (name) => {
+        openedSheetNames.push(name);
+        return sheets[name] || null;
+      }
     };
   };
   context.__openedSpreadsheetIds = openedSpreadsheetIds;
+  context.__openedSheetNames = openedSheetNames;
   context.__setNow = (value) => { serverNow = value; };
   for (const file of [
     "Repository.gs",
@@ -3139,6 +3144,26 @@ test("real public event reads expose only safe visible projections and authorita
 
   assert.equal(context.getEvent({ eventId: "draft-event" }).code, "EVENT_NOT_FOUND");
   assert.equal(context.getEvent({ eventId: "archived-event" }).code, "EVENT_NOT_FOUND");
+});
+
+test("public event detail does not inspect private registration or attendance sheets", async () => {
+  const rows = baseRows();
+  rows["活动目录"].push({
+    ...rows["活动"][0],
+    spreadsheetId: "event-1-sheet",
+    sheetName: "活动"
+  });
+  const harness = await createHarness({ rows });
+  const context = await createPublicRegistrationContext(harness.sourceSheets, {}, {
+    "event-1-sheet": eventSpreadsheetSheets("event-1", "Ideas Forum")
+  });
+
+  const detail = context.getEvent({ eventId: "event-1" });
+
+  assert.equal(detail.ok, true, JSON.stringify(detail));
+  const eventSheetReads = Array.from(new Set(context.__openedSheetNames))
+    .filter((name) => !["系统设置", "活动目录"].includes(name));
+  assert.deepEqual(eventSheetReads.sort(), ["活动", "场次", "报名问题", "座位"].sort());
 });
 
 test("public catalog lists safe visible activities and reads only the requested activity sheet", async () => {

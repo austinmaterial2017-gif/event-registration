@@ -419,6 +419,27 @@ function getEventSpreadsheet_(registry, eventId) {
   return spreadsheet;
 }
 
+/** Opens the participant-facing subset without inspecting private response history. */
+function getPublicEventSource_(catalog, eventId) {
+  var spreadsheet;
+  try {
+    spreadsheet = SpreadsheetApp.openById(catalog.spreadsheetId);
+  } catch (_ignored) {
+    routingError_('INTEGRITY_ERROR');
+  }
+  ['活动', '场次', '报名问题', '座位'].forEach(function(sheetName) {
+    var sheet = spreadsheet.getSheetByName(sheetName);
+    if (!sheet || !hasExactHeaderRow_(sheet, SHEET_DEFINITIONS[sheetName])) {
+      routingError_('INTEGRITY_ERROR');
+    }
+  });
+  var events = readRows(spreadsheet, '活动').filter(function(candidate) {
+    return normalizeRoutingValue_(candidate.eventId) === eventId;
+  });
+  if (events.length !== 1) routingError_('INTEGRITY_ERROR');
+  return { spreadsheet: spreadsheet, event: events[0] };
+}
+
 function getTicketRouteByNumber_(registry, ticketNumber) {
   var normalizedTicketNumber = normalizeRoutingValue_(ticketNumber);
   if (!normalizedTicketNumber) routingError_('TICKET_NOT_FOUND');

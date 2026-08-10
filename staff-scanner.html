@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>手机扫码验票</title>
+    <style>
+      :root { color-scheme: dark; font-family: Arial, sans-serif; }
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #18131d; color: #fff1c8; }
+      main { width: min(92vw, 560px); padding: 24px; box-sizing: border-box; }
+      section { display: grid; gap: 16px; padding: 22px; border: 1px solid #654b70; border-radius: 22px; background: #271c2b; }
+      h1 { margin: 0; font-size: clamp(1.7rem, 7vw, 2.4rem); } p { margin: 0; line-height: 1.6; color: #e5d4dc; }
+      video { width: 100%; min-height: 280px; border-radius: 16px; background: #070509; object-fit: cover; }
+      button { min-height: 54px; border: 0; border-radius: 12px; color: #fff; font-weight: 800; font-size: 1rem; background: linear-gradient(100deg,#f4499d,#8750f5); }
+      button:disabled { opacity: .6; } .notice { min-height: 1.5em; color: #80f0b5; } .error { color: #ff9a9a; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section>
+        <h1>手机扫码验票</h1>
+        <p>请按下方按钮并允许相机权限。扫到参与者电子票后，系统会自动回到工作人员页面读取凭证；不会自动签到。</p>
+        <button id="start-scanner" type="button">打开相机开始扫码</button>
+        <video id="camera-preview" playsinline muted hidden aria-label="二维码扫描画面"></video>
+        <p id="scanner-message" class="notice" role="status">准备就绪。</p>
+      </section>
+    </main>
+    <script src="https://unpkg.com/@zxing/browser@0.1.5/umd/zxing-browser.min.js"></script>
+    <script type="module" src="js/staff-scanner.js"></script>
+  </body>
+</html>

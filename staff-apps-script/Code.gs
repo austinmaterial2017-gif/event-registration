@@ -22,8 +22,7 @@ function doGet(event) {
     template.staffReturnUrl = ScriptApp.getService().getUrl() + '?view=staff';
     var requestedScan = event && event.parameter &&
       (event.parameter.t || event.parameter.token || event.parameter.scan);
-    template.initialScan = typeof requestedScan === 'string' &&
-      /^[a-f0-9]{64}$/i.test(requestedScan.trim()) ? requestedScan.trim() : '';
+    template.initialScan = parseInitialStaffScan_(requestedScan);
     return template.evaluate()
       .setTitle('工作人员验票／参与者签到');
   } catch (_ignored) {
@@ -31,4 +30,12 @@ function doGet(event) {
       .createHtmlOutput('<!doctype html><html><body><main><h1>Staff access unavailable.</h1></main></body></html>')
       .setTitle('Staff access unavailable');
   }
+}
+
+function parseInitialStaffScan_(value) {
+  var text = typeof value === 'string' ? value.trim() : '';
+  if (!text || text.length > 2048) return '';
+  if (/^[a-f0-9]{64}$/i.test(text)) return text;
+  var match = text.match(/[?&](?:t|token)=([a-f0-9]{64})(?:[&#]|$)/i);
+  return match ? match[1] : '';
 }

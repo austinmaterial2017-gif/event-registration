@@ -135,6 +135,21 @@ test("an allowlisted active Google session receives the StaffCheckIn template", 
   assert.equal(harness.templateLoads, 1);
 });
 
+test("staff scanner return accepts a ticket verification URL and keeps only its opaque token", async () => {
+  const harness = await createHarness({ sessionEmail: "staff@example.com" });
+  const token = "a".repeat(64);
+  const result = harness.context.doGet({
+    parameter: { scan: `https://events.example.org/v.html?t=${token}` }
+  });
+
+  assert.equal(result.kind, "file");
+  assert.equal(result.templateValues.initialScan, token);
+  assert.equal(
+    result.templateValues.staffReturnUrl,
+    "https://script.google.com/macros/s/staff-deployment/exec?view=staff"
+  );
+});
+
 test("staff membership does not grant the protected administrator view", async () => {
   const blank = await createHarness({ staffAllowlist: ["staff@example.com"], adminAllowlist: [] });
   const staffOnly = await createHarness({

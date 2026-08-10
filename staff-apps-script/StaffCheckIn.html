@@ -19,6 +19,10 @@
       #camera-scanner { display:grid; gap:10px; } #camera-preview { width:100%; max-height:54vh; border-radius:14px; background:#080609; object-fit:cover; }
       #stop-camera-scan, #scan-next-ticket { background:#4a3b51; }
       [hidden] { display:none !important; }
+      body.returning-scan { min-height:100vh; display:grid; place-items:center; background:#111018; }
+      body.returning-scan main { width:min(92vw,680px); text-align:center; }
+      body.returning-scan main > :not(#message) { display:none; }
+      body.returning-scan #message { min-height:0; padding:42px 24px; border:2px solid #ffcc73; border-radius:24px; background:linear-gradient(135deg,#4f1028,#2d1745); color:#fff1c8; font-size:clamp(26px,8vw,52px); font-weight:800; }
     </style>
   </head>
   <body>
@@ -100,6 +104,9 @@
       const initialParameters = new URLSearchParams(window.location.search);
       let pendingReturnedScan = document.querySelector('meta[name="initial-scan"]')?.content ||
         initialParameters.get("t") || initialParameters.get("token") || initialParameters.get("scan") || "";
+      const returnedFixedEventId = document.querySelector('meta[name="fixed-event-id"]')?.content || "";
+      const returnedFixedSessionId = document.querySelector('meta[name="fixed-session-id"]')?.content || "";
+      const returnedFixedCheckpointId = document.querySelector('meta[name="fixed-checkpoint-id"]')?.content || "";
       let activeToken = "";
       let lookupPending = false;
       let checkInPending = false;
@@ -113,11 +120,14 @@
       function standaloneScannerUrl_() {
         const configuredUrl = document.querySelector('meta[name="staff-return-url"]')?.content || "";
         const returnUrl = new URL(configuredUrl);
-        if (fixedCheckInReady) {
-          returnUrl.searchParams.set("fixedEventId", fixedCheckInForm.elements.eventId.value);
-          returnUrl.searchParams.set("fixedSessionId", fixedCheckInForm.elements.sessionId.value);
-          if (fixedCheckInForm.elements.checkpointId.value) {
-            returnUrl.searchParams.set("fixedCheckpointId", fixedCheckInForm.elements.checkpointId.value);
+        const eventId = fixedCheckInReady ? fixedCheckInForm.elements.eventId.value : returnedFixedEventId;
+        const sessionId = fixedCheckInReady ? fixedCheckInForm.elements.sessionId.value : returnedFixedSessionId;
+        const checkpointId = fixedCheckInReady ? fixedCheckInForm.elements.checkpointId.value : returnedFixedCheckpointId;
+        if (eventId && sessionId) {
+          returnUrl.searchParams.set("fixedEventId", eventId);
+          returnUrl.searchParams.set("fixedSessionId", sessionId);
+          if (checkpointId) {
+            returnUrl.searchParams.set("fixedCheckpointId", checkpointId);
           }
         }
         return "https://austinmaterial2017-gif.github.io/event-registration/staff-scanner.html?returnUrl=" +
@@ -199,7 +209,7 @@
             renderFixedCheckpoint_();
             fixedCheckInForm.elements.checkpointId.value = returnedCheckpointId;
             renderFixedCheckpoint_();
-            if (pendingReturnedScan) {
+            if (pendingReturnedScan && !returnedFixedSessionId) {
               const scan = pendingReturnedScan;
               pendingReturnedScan = "";
               if (!submitFixedScan_(scan)) lookupTicketForCheckIn(scan);
@@ -229,6 +239,34 @@
             token: token,
             sessionId: fixedCheckInForm.elements.sessionId.value,
             checkpointId: fixedCheckInForm.elements.checkpointId.value || undefined
+          });
+        return true;
+      }
+
+      function submitReturnedFixedScan_() {
+        const token = parseScannedTicketToken(pendingReturnedScan);
+        if (!token || !returnedFixedSessionId || checkInPending) return false;
+        pendingReturnedScan = "";
+        checkInPending = true;
+        document.body.classList.add("returning-scan");
+        message.textContent = "正在签到…";
+        google.script.run
+          .withSuccessHandler((result) => {
+            checkInPending = false;
+            message.textContent = result && result.ok === true
+              ? "签到成功，正在准备下一张票…"
+              : (result && result.message ? result.message : "本票不能签到，正在准备下一张票…");
+            window.setTimeout(() => window.top.location.assign(standaloneScannerUrl_()), 1100);
+          })
+          .withFailureHandler(() => {
+            checkInPending = false;
+            message.textContent = "签到未完成，正在准备下一张票…";
+            window.setTimeout(() => window.top.location.assign(standaloneScannerUrl_()), 1500);
+          })
+          .checkIn({
+            token: token,
+            sessionId: returnedFixedSessionId,
+            checkpointId: returnedFixedCheckpointId || undefined
           });
         return true;
       }
@@ -510,7 +548,10 @@
           });
       });
 
-      if (pendingReturnedScan && !fixedCheckInForm) lookupTicketForCheckIn(pendingReturnedScan);
+      if (!submitReturnedFixedScan_()) {
+        if (pendingReturnedScan && !fixedCheckInForm) lookupTicketForCheckIn(pendingReturnedScan);
+        if (!pendingReturnedScan) loadFixedCheckInTargets_();
+      }
     </script>
   </body>
 </html>

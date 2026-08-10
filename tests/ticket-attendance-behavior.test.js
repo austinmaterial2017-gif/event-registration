@@ -359,10 +359,16 @@ test("the protected admin page links directly to the staff phone scanner without
     new URL("../staff-apps-script/Admin.html", import.meta.url),
     "utf8"
   );
+  const staffCode = await readFile(
+    new URL("../staff-apps-script/Code.gs", import.meta.url),
+    "utf8"
+  );
 
-  assert.match(adminHtml, /href="\?view=staff"/);
+  assert.match(adminHtml, /href="<\?= staffScannerUrl \?>"/);
   assert.match(adminHtml, /手机扫码签到/);
   assert.match(adminHtml, /target="_top"/);
+  assert.match(staffCode, /ScriptApp\.getService\(\)\.getUrl\(\)/);
+  assert.match(staffCode, /adminTemplate\.staffScannerUrl\s*=\s*staffBaseUrl\s*\+\s*'\?view=staff'/);
 });
 
 test("staff mobile camera sends the first decoded QR URL into the protected lookup flow", async () => {

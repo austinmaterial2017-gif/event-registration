@@ -43,6 +43,7 @@ async function createHarness({
 } = {}) {
   let templateLoads = 0;
   let propertyReads = 0;
+  const staffWebAppUrl = "https://script.google.com/macros/s/staff-deployment/exec";
   const htmlOutput = (kind, content) => ({
     kind,
     content,
@@ -70,12 +71,21 @@ async function createHarness({
         templateLoads += 1;
         return htmlOutput("file", name);
       },
-      createTemplateFromFile: (name) => ({
-        evaluate: () => {
-          templateLoads += 1;
-          return htmlOutput("file", name);
-        }
-      })
+      createTemplateFromFile: (name) => {
+        const template = {
+          evaluate: () => {
+            templateLoads += 1;
+            const output = htmlOutput("file", name);
+            output.templateValues = { ...template };
+            delete output.templateValues.evaluate;
+            return output;
+          }
+        };
+        return template;
+      }
+    },
+    ScriptApp: {
+      getService: () => ({ getUrl: () => staffWebAppUrl })
     },
     Utilities: {
       getUuid: () => "uuid"
@@ -155,6 +165,10 @@ test("an administrator session receives only the protected Admin template", asyn
   assert.equal(result.kind, "file");
   assert.equal(result.content, "Admin");
   assert.equal(result.title, "活动管理后台");
+  assert.equal(
+    result.templateValues.staffScannerUrl,
+    "https://script.google.com/macros/s/staff-deployment/exec?view=staff"
+  );
   assert.equal(harness.templateLoads, 1);
 });
 

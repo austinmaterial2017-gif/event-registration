@@ -4,7 +4,10 @@ function doGet(event) {
   if (view === 'admin') {
     try {
       requireAuthorizedAdminSession_();
-      return HtmlService.createTemplateFromFile('Admin')
+      var adminTemplate = HtmlService.createTemplateFromFile('Admin');
+      var staffBaseUrl = ScriptApp.getService().getUrl();
+      adminTemplate.staffScannerUrl = staffBaseUrl + '?view=staff';
+      return adminTemplate
         .evaluate()
         .setTitle('活动管理后台');
     } catch (_ignored) {

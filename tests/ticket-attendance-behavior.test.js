@@ -344,8 +344,11 @@ test("staff check-in offers a mobile rear-camera scanner with a clear manual fal
 
   assert.match(staffHtml, /id="start-camera-scan"/);
   assert.match(staffHtml, /打开手机相机扫码/);
+  assert.match(staffHtml, /https:\/\/unpkg\.com\/@zxing\/browser@0\.1\.5\/umd\/zxing-browser\.min\.js/);
   assert.match(staffHtml, /facingMode:\s*\{\s*ideal:\s*["']environment["']/);
   assert.match(staffHtml, /new BarcodeDetector\(\{\s*formats:\s*\["qr_code"\]/);
+  assert.match(staffHtml, /ZXingBrowser\.BrowserQRCodeReader/);
+  assert.match(staffHtml, /decodeFromVideoDevice/);
   assert.match(staffHtml, /lookupTicketForCheckIn\(scannedValue\)/);
   assert.match(staffHtml, /也可以把二维码网址粘贴到下方/);
   assert.match(staffHtml, /停止扫码/);

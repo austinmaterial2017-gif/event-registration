@@ -61,7 +61,12 @@ function requireAuthorizedStaffSession_() {
   } catch (_ignored) {
     identity = '';
   }
-  if (!identity || !isAllowlistedStaffIdentity_(identity)) {
+  // Administrators manage the event and must also be able to check attendees in.
+  // Keep the staff allowlist for ordinary check-in volunteers, while treating the
+  // existing protected administrator allowlist as an additional staff role.
+  var isAdministrator = typeof isAllowlistedAdminIdentity_ === 'function' &&
+    isAllowlistedAdminIdentity_(identity);
+  if (!identity || (!isAllowlistedStaffIdentity_(identity) && !isAdministrator)) {
     staffAttendanceError_('STAFF_ACTION_DENIED');
   }
   return identity;

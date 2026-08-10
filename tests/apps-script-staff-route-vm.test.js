@@ -135,6 +135,19 @@ test("an allowlisted active Google session receives the StaffCheckIn template", 
   assert.equal(harness.templateLoads, 1);
 });
 
+test("an allowlisted administrator can also open the staff check-in page", async () => {
+  const harness = await createHarness({
+    sessionEmail: "admin@example.com",
+    staffAllowlist: [],
+    adminAllowlist: ["admin@example.com"]
+  });
+  const result = harness.context.doGet({});
+
+  assert.equal(result.kind, "file");
+  assert.equal(result.content, "StaffCheckIn");
+  assert.equal(harness.templateLoads, 1);
+});
+
 test("staff scanner return accepts a ticket verification URL and keeps only its opaque token", async () => {
   const harness = await createHarness({ sessionEmail: "staff@example.com" });
   const token = "a".repeat(64);

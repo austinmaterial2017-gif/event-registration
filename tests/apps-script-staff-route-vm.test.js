@@ -195,7 +195,7 @@ test("an administrator session receives only the protected Admin template", asyn
   assert.equal(result.title, "活动管理后台");
   assert.equal(
     result.templateValues.staffScannerUrl,
-    "https://script.google.com/macros/s/staff-deployment/exec?view=staff"
+    "https://austinmaterial2017-gif.github.io/event-registration/staff-checkin.html"
   );
   assert.equal(harness.templateLoads, 1);
 });

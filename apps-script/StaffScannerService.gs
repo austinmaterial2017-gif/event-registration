@@ -1,5 +1,35 @@
 var STAFF_SCANNER_PASS_PREFIX_ = 'STAFF_SCANNER_PASS_';
 var STAFF_SCANNER_PASS_TTL_MS_ = 7200000;
+var STAFF_CHECKIN_PIN_DIGEST_PROPERTY_ = 'STAFF_CHECKIN_PIN_DIGEST';
+
+/** Starts a phone scanner without relying on a Google account in the browser. */
+function staffScannerBootstrap(payload) {
+  return withInternalActionScriptLock_(function() {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload) ||
+        !staffPinMatches_(payload.staffPin)) {
+      return internalMutationFailure_('STAFF_ACTION_DENIED');
+    }
+    var hasEvent = typeof payload.eventId === 'string' && payload.eventId.trim();
+    var hasSession = typeof payload.sessionId === 'string' && payload.sessionId.trim();
+    if (!hasEvent && !hasSession) {
+      return { ok: true, data: { targets: internalStaffCheckInTargets_() } };
+    }
+    if (!hasEvent || !hasSession) return internalMutationFailure_('INVALID_REQUEST');
+    try {
+      return { ok: true, data: createInternalStaffScannerPass_(payload, 'phone-staff') };
+    } catch (error) {
+      return internalMutationFailure_(error && error.publicCode ? error.publicCode : 'INTERNAL');
+    }
+  });
+}
+
+function staffPinMatches_(staffPin) {
+  if (typeof staffPin !== 'string' || !staffPin.trim()) return false;
+  var expected = PropertiesService.getScriptProperties()
+    .getProperty(STAFF_CHECKIN_PIN_DIGEST_PROPERTY_);
+  if (typeof expected !== 'string' || !/^[a-f0-9]{64}$/i.test(expected)) return false;
+  return constantTimeInternalEquals_(digestTicketToken_(staffPin), expected.toLowerCase());
+}
 
 /** Returns only the activity/session metadata needed to start a staff scanner. */
 function internalStaffCheckInTargets_() {
@@ -18,10 +48,8 @@ function internalStaffCheckInTargets_() {
     }).map(function(session) {
       var policy = adminCheckpointPolicy_(eventPolicy.sessions && eventPolicy.sessions[session.sessionId] || {});
       var checkpoints = [];
-      if (policy.checkInMode === 'manual') {
-        for (var index = 0; index < policy.checkInCount; index += 1) {
-          checkpoints.push({ checkpointId: 'checkpoint-' + (index + 1), label: internalCheckpointLabel_(policy, index) });
-        }
+      for (var index = 0; index < policy.checkInCount; index += 1) {
+        checkpoints.push({ checkpointId: 'checkpoint-' + (index + 1), label: internalCheckpointLabel_(policy, index) });
       }
       return {
         sessionId: String(session.sessionId || ''), title: String(session.title || ''),
@@ -45,7 +73,8 @@ function staffScannerCheckIn(payload) {
       var data = internalStaffCheckInLocked_({
         token: payload.token,
         sessionId: pass.sessionId,
-        checkpointId: pass.checkpointId || undefined
+        checkpointId: pass.mode === 'manual' ? pass.checkpointId : undefined,
+        staffCheckpointMode: pass.mode
       }, pass.actor);
       return { ok: true, data: data };
     } catch (error) {
@@ -68,10 +97,10 @@ function createInternalStaffScannerPass_(payload, actor) {
   var session = target && target.sessions.filter(function(candidate) {
     return candidate.sessionId === sessionId;
   })[0];
-  if (!session || (session.checkInMode === 'manual' && !checkpointId) ||
-      (session.checkInMode !== 'manual' && checkpointId)) {
-    adminError_('INVALID_REQUEST');
-  }
+  if (!session) adminError_('INVALID_REQUEST');
+  var mode = scannerPassMode_(payload.mode, session.checkInMode);
+  if (mode === 'manual' && !checkpointId) adminError_('INVALID_REQUEST');
+  if (mode === 'next') checkpointId = '';
   if (checkpointId && !session.checkpoints.some(function(checkpoint) {
     return checkpoint.checkpointId === checkpointId;
   })) adminError_('INVALID_REQUEST');
@@ -81,7 +110,7 @@ function createInternalStaffScannerPass_(payload, actor) {
     STAFF_SCANNER_PASS_PREFIX_ + digestTicketToken_(rawPass),
     JSON.stringify({
       actor: String(actor || '').trim().toLowerCase(), eventId: eventId,
-      sessionId: sessionId, checkpointId: checkpointId, expiresAt: expiresAt
+      sessionId: sessionId, checkpointId: checkpointId, mode: mode, expiresAt: expiresAt
     })
   );
   return { scannerPass: rawPass, expiresAt: new Date(expiresAt).toISOString() };
@@ -99,7 +128,15 @@ function readStaffScannerPass_(rawPass) {
     if (serialized) PropertiesService.getScriptProperties().deleteProperty(key);
     return null;
   }
+  pass.mode = scannerPassMode_(pass.mode, pass.checkpointId ? 'manual' : 'automatic');
+  if (pass.mode === 'manual' && !scannerPassId_(pass.checkpointId)) return null;
   return pass;
+}
+
+function scannerPassMode_(value, fallback) {
+  var requested = String(value || '').trim().toLowerCase();
+  if (requested === 'manual' || requested === 'next') return requested;
+  return String(fallback || '').toLowerCase() === 'manual' ? 'manual' : 'next';
 }
 
 function scannerPassId_(value) {

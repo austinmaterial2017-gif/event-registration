@@ -424,7 +424,12 @@ function internalStaffCheckInLocked_(payload, actor) {
     completed[String(record.checkpointId || 'checkpoint-1')] = true;
   });
   var checkpointId = 'checkpoint-1';
-  if (checkInMode === 'session' && checkpointPolicy.checkInMode === 'manual') {
+  var staffCheckpointMode = String(payload.staffCheckpointMode || '').toLowerCase();
+  if (staffCheckpointMode && staffCheckpointMode !== 'manual' && staffCheckpointMode !== 'next') {
+    adminError_('INVALID_REQUEST');
+  }
+  if (checkInMode === 'session' &&
+      (checkpointPolicy.checkInMode === 'manual' || staffCheckpointMode === 'manual')) {
     if (typeof payload.checkpointId !== 'string' || !payload.checkpointId.trim()) {
       adminError_('CHECKPOINT_REQUIRED');
     }
@@ -432,7 +437,8 @@ function internalStaffCheckInLocked_(payload, actor) {
     if (!internalCheckpointIndex_(checkpointId, checkpointPolicy.checkInCount)) {
       adminError_('CHECKPOINT_INVALID');
     }
-  } else if (checkInMode === 'session' && checkpointPolicy.checkInMode === 'automatic') {
+  } else if (checkInMode === 'session' &&
+      (checkpointPolicy.checkInMode === 'automatic' || staffCheckpointMode === 'next')) {
     checkpointId = '';
     for (var checkpointNumber = 1; checkpointNumber <= checkpointPolicy.checkInCount; checkpointNumber += 1) {
       var candidateId = 'checkpoint-' + checkpointNumber;

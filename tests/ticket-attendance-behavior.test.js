@@ -406,5 +406,5 @@ test("the protected admin page links directly to the staff phone scanner without
   );
   assert.match(adminHtml, /手机扫码签到/);
   assert.match(staffCode, /ScriptApp\.getService\(\)\.getUrl\(\)/);
-  assert.match(staffCode, /adminTemplate\.staffScannerUrl\s*=\s*staffBaseUrl\s*\+\s*'\?view=staff'/);
+  assert.match(staffCode, /event-registration\/staff-checkin\.html/);
 });

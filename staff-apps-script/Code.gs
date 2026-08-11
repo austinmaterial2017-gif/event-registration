@@ -6,7 +6,10 @@ function doGet(event) {
       requireAuthorizedAdminSession_();
       var adminTemplate = HtmlService.createTemplateFromFile('Admin');
       var staffBaseUrl = ScriptApp.getService().getUrl();
-      adminTemplate.staffScannerUrl = staffBaseUrl + '?view=staff';
+      // Camera access must be requested by the top-level HTTPS Pages origin.
+      // The Apps Script iframe is unreliable for iPhone camera permission.
+      adminTemplate.staffScannerUrl =
+        'https://austinmaterial2017-gif.github.io/event-registration/staff-checkin.html';
       return adminTemplate
         .evaluate()
         .setTitle('活动管理后台');

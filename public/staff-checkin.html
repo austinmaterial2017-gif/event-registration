@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>&#x624B;&#x673A;&#x626B;&#x7801;&#x7b7e;&#x5230;</title>
+  <style>
+    :root{color-scheme:dark;font-family:Arial,sans-serif}body{margin:0;background:#111018;color:#fff5dc}main{max-width:680px;margin:auto;padding:20px max(16px,env(safe-area-inset-right)) 36px max(16px,env(safe-area-inset-left))}h1{margin:4px 0 8px;font-size:1.7rem}.hint{color:#cdbed2;line-height:1.6}.card{margin-top:16px;padding:16px;border:1px solid #5a4863;border-radius:20px;background:#241a2a}label{display:grid;gap:7px;margin-top:12px;font-weight:700}input,select,button{min-height:50px;border-radius:12px;font:inherit}input,select{box-sizing:border-box;padding:10px;border:1px solid #796584;background:#120f15;color:#fff5dc}button{width:100%;margin-top:16px;border:0;padding:10px;color:#fff;font-weight:800;background:linear-gradient(100deg,#f4499d,#8750f5)}button:disabled{opacity:.52}#camera-wrap{position:relative;min-height:52vh;margin-top:16px;overflow:hidden;border:1px solid #5a4863;border-radius:20px;background:#050407}video{display:block;width:100%;min-height:52vh;object-fit:cover}#result{position:absolute;inset:0;display:grid;place-items:center;padding:24px;background:rgba(8,7,12,.86);opacity:0;pointer-events:none;transition:opacity .14s}#result.visible{opacity:1}#result strong{padding:22px;border:2px solid #ffcf70;border-radius:18px;text-align:center;font-size:1.8rem}#result.success strong{background:#145738;border-color:#6df2af}#result.error strong{background:#6b1830;border-color:#ff9a9a}#status{min-height:1.4em;color:#8ff3bb}#status.error{color:#ffacac}.hidden{display:none}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>&#x5de5;&#x4f5c;&#x4eba;&#x5458;&#x626b;&#x7801;&#x7b7e;&#x5230;</h1>
+    <p class="hint">&#x5148;&#x9009;&#x6d3b;&#x52a8;&#x548c;&#x8bb2;&#x5ea7;&#xff0c;&#x518d;&#x8fde;&#x7eed;&#x626b;&#x6bcf;&#x4e00;&#x4f4d;&#x53c2;&#x4e0e;&#x8005;&#x7684;&#x7535;&#x5b50;&#x7968;&#x3002;</p>
+    <section class="card">
+      <label>&#x5de5;&#x4f5c;&#x4eba;&#x5458;&#x5bc6;&#x7801;<input id="staff-pin" type="tel" inputmode="numeric" autocomplete="one-time-code" style="-webkit-text-security:disc"></label>
+      <button id="unlock-targets" type="button">&#x8bfb;&#x53d6;&#x7b7e;&#x5230;&#x6d3b;&#x52a8;</button>
+      <label>&#x6d3b;&#x52a8;<select id="staff-event" disabled><option value="">&#x8bf7;&#x5148;&#x8f93;&#x5165;&#x5bc6;&#x7801;</option></select></label>
+      <label>&#x8bb2;&#x5ea7; / &#x8001;&#x5e08;<select id="staff-session" disabled><option value="">&#x8bf7;&#x5148;&#x9009;&#x6d3b;&#x52a8;</option></select></label>
+      <label>&#x7b7e;&#x5230;&#x6b21;&#x6570;<select id="staff-occurrence" disabled><option value="">&#x8bf7;&#x5148;&#x9009;&#x8bb2;&#x5ea7;</option></select></label>
+      <button id="start-continuous-scan" type="button" disabled>&#x5f00;&#x59cb;&#x8fde;&#x7eed;&#x626b;&#x7801;</button>
+      <p id="status" role="status">&#x8bf7;&#x8f93;&#x5165;&#x5de5;&#x4f5c;&#x4eba;&#x5458;&#x5bc6;&#x7801;&#x3002;</p>
+    </section>
+    <section id="camera-wrap" class="hidden" aria-label="QR scanner">
+      <video id="camera-preview" playsinline muted></video>
+      <div id="result" role="status" aria-live="assertive"><strong></strong></div>
+    </section>
+  </main>
+  <script src="https://unpkg.com/@zxing/browser@0.1.5/umd/zxing-browser.min.js"></script>
+  <script type="module" src="js/staff-checkin.js"></script>
+</body>
+</html>

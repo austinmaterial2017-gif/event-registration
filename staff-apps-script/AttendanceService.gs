@@ -20,6 +20,16 @@ function getStaffCheckInTargets() {
   });
 }
 
+/** Creates a short-lived, single-session pass for the standalone phone scanner. */
+function createStaffScannerPass(payload) {
+  return runStaffAttendanceService_(function() {
+    var staffIdentity = requireAuthorizedStaffSession_();
+    var result = invokeInternalBackend_('staff.createScannerPass', payload || {}, staffIdentity);
+    if (!result.ok) staffAttendanceError_(result.code);
+    return result.data;
+  });
+}
+
 /** Records one server-timestamped row for one ticket and registered session. */
 function checkIn(payload) {
   return runStaffAttendanceService_(function() {

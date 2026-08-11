@@ -47,6 +47,7 @@ var PUBLIC_ROUTES = {
   'exchangeSeat': function(payload) { return exchangeSeat(payload); },
   'updateRegistrationSessions': function(payload) { return updateRegistrationSessions(payload); },
   'probeSheetSwitch': function(payload) { return probeSheetSwitch(payload); },
+  'staffScannerCheckIn': function(payload) { return staffScannerCheckIn(payload); },
   'internalRequest': function(payload) { return handleInternalRequest_(payload); }
 };
 

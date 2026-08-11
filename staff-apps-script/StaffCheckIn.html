@@ -117,21 +117,40 @@
       let cameraReader = null;
       let cameraScanFrame = 0;
 
-      function standaloneScannerUrl_() {
-        const configuredUrl = document.querySelector('meta[name="staff-return-url"]')?.content || "";
-        const returnUrl = new URL(configuredUrl);
-        const eventId = fixedCheckInReady ? fixedCheckInForm.elements.eventId.value : returnedFixedEventId;
-        const sessionId = fixedCheckInReady ? fixedCheckInForm.elements.sessionId.value : returnedFixedSessionId;
-        const checkpointId = fixedCheckInReady ? fixedCheckInForm.elements.checkpointId.value : returnedFixedCheckpointId;
-        if (eventId && sessionId) {
-          returnUrl.searchParams.set("fixedEventId", eventId);
-          returnUrl.searchParams.set("fixedSessionId", sessionId);
-          if (checkpointId) {
-            returnUrl.searchParams.set("fixedCheckpointId", checkpointId);
-          }
+      function standaloneScannerUrl_(scannerPass) {
+        return "https://austinmaterial2017-gif.github.io/event-registration/staff-scanner.html?scannerPass=" +
+          encodeURIComponent(scannerPass || "");
+      }
+
+      function openContinuousScanner_() {
+        if (!fixedCheckInReady) {
+          fixedCheckInStatus.textContent = "请先选择活动、讲座；如有签到次数，也请先选择。";
+          return;
         }
-        return "https://austinmaterial2017-gif.github.io/event-registration/staff-scanner.html?returnUrl=" +
-          encodeURIComponent(returnUrl.href);
+        startCameraButton.disabled = true;
+        startCameraButton.textContent = "正在开启现场扫码…";
+        fixedCheckInStatus.textContent = "正在建立本场临时扫码权限…";
+        google.script.run
+          .withSuccessHandler((result) => {
+            const scannerPass = result && result.ok && result.data && result.data.scannerPass;
+            if (!scannerPass) {
+              startCameraButton.disabled = false;
+              startCameraButton.textContent = "打开手机相机扫码";
+              fixedCheckInStatus.textContent = result && result.message || "无法开启扫码，请稍后重试。";
+              return;
+            }
+            window.top.location.assign(standaloneScannerUrl_(scannerPass));
+          })
+          .withFailureHandler(() => {
+            startCameraButton.disabled = false;
+            startCameraButton.textContent = "打开手机相机扫码";
+            fixedCheckInStatus.textContent = "无法开启扫码，请检查网络后重试。";
+          })
+          .createStaffScannerPass({
+            eventId: fixedCheckInForm.elements.eventId.value,
+            sessionId: fixedCheckInForm.elements.sessionId.value,
+            checkpointId: fixedCheckInForm.elements.checkpointId.value || undefined
+          });
       }
 
       function selectedFixedEvent_() {
@@ -176,7 +195,7 @@
         fixedCheckInStatus.textContent = fixedCheckInReady
           ? `已固定：${selectedFixedEvent_().title} · ${session.title}${session.speaker ? " · " + session.speaker : ""}。现在可连续扫码自动签到。`
           : "请选择今天要签到的活动和讲座。";
-        if (standaloneScannerLink) standaloneScannerLink.href = standaloneScannerUrl_();
+        if (standaloneScannerLink) standaloneScannerLink.href = "#fixed-checkin-form";
       }
 
       function loadFixedCheckInTargets_() {
@@ -500,8 +519,8 @@
         fixedCheckInForm.elements.checkpointId.addEventListener("change", renderFixedCheckpoint_);
         loadFixedCheckInTargets_();
       }
-      if (startCameraButton) startCameraButton.addEventListener("click", startCameraScan_);
-      if (standaloneScannerLink) standaloneScannerLink.href = standaloneScannerUrl_();
+      if (startCameraButton) startCameraButton.addEventListener("click", openContinuousScanner_);
+      if (standaloneScannerLink) standaloneScannerLink.href = "#fixed-checkin-form";
       if (stopCameraButton) stopCameraButton.addEventListener("click", () => {
         stopCameraScan_();
         message.textContent = "已停止扫码；可以重新打开相机或粘贴二维码网址。";

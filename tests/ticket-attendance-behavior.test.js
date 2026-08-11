@@ -357,25 +357,37 @@ test("staff check-in offers a mobile rear-camera scanner with a clear manual fal
   assert.match(staffHtml, /继续扫描下一位/);
 });
 
-test("standalone staff scanner returns a decoded ticket only to the protected staff page", async () => {
-  const [staffHtml, staffCode, scannerHtml, scannerJs] = await Promise.all([
+test("standalone staff scanner is launched with a short-lived pass instead of a return URL", async () => {
+  const [staffHtml, scannerHtml, scannerJs] = await Promise.all([
     readFile(new URL("../staff-apps-script/StaffCheckIn.html", import.meta.url), "utf8"),
-    readFile(new URL("../staff-apps-script/Code.gs", import.meta.url), "utf8"),
     readFile(new URL("../public/staff-scanner.html", import.meta.url), "utf8"),
     readFile(new URL("../public/js/staff-scanner.js", import.meta.url), "utf8")
   ]);
 
-  assert.match(staffHtml, /staff-scanner\.html\?returnUrl=/);
-  assert.match(staffHtml, /meta name="staff-return-url" content="<\?= staffReturnUrl \?>"/);
-  assert.match(staffCode, /template\.staffReturnUrl\s*=\s*ScriptApp\.getService\(\)\.getUrl\(\)\s*\+\s*'\?view=staff'/);
+  assert.match(staffHtml, /staff-scanner\.html\?scannerPass=/);
+  assert.match(staffHtml, /createStaffScannerPass/);
   assert.match(scannerHtml, /id="start-scanner"/);
   assert.match(scannerHtml, /js\/staff-scanner\.js/);
-  assert.match(scannerJs, /function isSafeReturnUrl\(/);
-  assert.match(scannerJs, /pathname\.startsWith\("\/macros\/s\/"\)/);
-  assert.match(scannerJs, /pathname\.endsWith\("\/exec"\)/);
-  assert.match(scannerJs, /searchParams\.set\("scan", scannedValue\)/);
-  assert.match(scannerJs, /location\.replace\(target\.href\)/);
-  assert.doesNotMatch(scannerJs, /google\.script\.run|checkIn\s*\(/);
+  assert.match(scannerJs, /handleScan/);
+  assert.doesNotMatch(scannerJs, /returnUrl|location\.replace/);
+});
+
+test("continuous phone scanner keeps the camera page open and submits only its temporary scanner pass", async () => {
+  const [staffHtml, scannerHtml, scannerJs, publicCode] = await Promise.all([
+    readFile(new URL("../staff-apps-script/StaffCheckIn.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/staff-scanner.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/js/staff-scanner.js", import.meta.url), "utf8"),
+    readFile(new URL("../apps-script/Code.gs", import.meta.url), "utf8")
+  ]);
+
+  assert.match(staffHtml, /createStaffScannerPass/);
+  assert.match(staffHtml, /scannerPass/);
+  assert.match(scannerHtml, /现场连续扫码签到/);
+  assert.match(scannerJs, /staffScannerCheckIn/);
+  assert.match(scannerJs, /scannerPass/);
+  assert.match(scannerJs, /继续扫描下一位/);
+  assert.doesNotMatch(scannerJs, /location\.replace\(target\.href\)/);
+  assert.match(publicCode, /'staffScannerCheckIn'/);
 });
 
 test("the protected admin page links directly to the staff phone scanner without copying a URL", async () => {
@@ -395,89 +407,4 @@ test("the protected admin page links directly to the staff phone scanner without
   assert.match(adminHtml, /手机扫码签到/);
   assert.match(staffCode, /ScriptApp\.getService\(\)\.getUrl\(\)/);
   assert.match(staffCode, /adminTemplate\.staffScannerUrl\s*=\s*staffBaseUrl\s*\+\s*'\?view=staff'/);
-});
-
-test("staff mobile camera sends the first decoded QR URL into the protected lookup flow", async () => {
-  const staffHtml = await readFile(
-    new URL("../staff-apps-script/StaffCheckIn.html", import.meta.url),
-    "utf8"
-  );
-  const script = [...staffHtml.matchAll(/<script>([\s\S]*?)<\/script>/g)].at(-1)?.[1];
-  assert.ok(script, "staff script missing");
-
-  const calls = [];
-  const listeners = {};
-  const tracks = [{ stopped: false, stop() { this.stopped = true; } }];
-  const stream = { getTracks: () => tracks };
-  const lookupButton = { disabled: false, textContent: "读取凭证" };
-  const cameraButton = {
-    disabled: false,
-    textContent: "打开手机相机扫码",
-    addEventListener: (type, handler) => { listeners[`camera:${type}`] = handler; }
-  };
-  const cameraPreview = {
-    srcObject: null,
-    async play() {}
-  };
-  const lookupForm = {
-    elements: { token: { value: "" } },
-    querySelector: (selector) => selector === 'button[type="submit"]' ? lookupButton : null,
-    addEventListener() {}
-  };
-  const checkInForm = {
-    hidden: true,
-    elements: {
-      sessionId: { value: "", length: 1, append() {}, addEventListener() {} },
-      confirmCheckIn: { checked: false }
-    },
-    querySelector: () => ({ disabled: false, textContent: "确认本场签到" }),
-    addEventListener() {}
-  };
-  const nodes = {
-    "#lookup-form": lookupForm,
-    "#check-in-form": checkInForm,
-    "#message": { textContent: "" },
-    "#ticket-summary": { textContent: "" },
-    "#checkpoint-controls": { hidden: true },
-    "#checkpoint-options": { textContent: "", append() {} },
-    "#checkpoint-status": { textContent: "" },
-    "#start-camera-scan": cameraButton,
-    "#stop-camera-scan": { addEventListener() {} },
-    "#camera-scanner": { hidden: true },
-    "#camera-preview": cameraPreview
-  };
-  const runner = {
-    withSuccessHandler() { return this; },
-    withFailureHandler() { return this; },
-    getStaffTicketForCheckIn(payload) { calls.push(payload); return this; },
-    checkIn() { return this; }
-  };
-  class FakeBarcodeDetector {
-    async detect() {
-      return [{ rawValue: "https://events.example.org/v.html?t=phone-camera-token" }];
-    }
-  }
-  const context = vm.createContext({
-    URL,
-    URLSearchParams,
-    BarcodeDetector: FakeBarcodeDetector,
-    navigator: { mediaDevices: { getUserMedia: async () => stream } },
-    requestAnimationFrame: (callback) => { Promise.resolve().then(callback); return 1; },
-    cancelAnimationFrame() {},
-    document: {
-      querySelector: (selector) => nodes[selector],
-      createElement: () => ({ value: "", textContent: "" })
-    },
-    window: { location: { href: "https://script.google.com/macros/s/staff/exec", search: "" } },
-    google: { script: { run: runner } }
-  });
-  vm.runInContext(script, context, { filename: "StaffCheckIn.inline.js" });
-
-  await listeners["camera:click"]();
-  await new Promise((resolve) => setImmediate(resolve));
-
-  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ token: "phone-camera-token" }]);
-  assert.equal(lookupForm.elements.token.value, "phone-camera-token");
-  assert.equal(tracks[0].stopped, true);
-  assert.equal(cameraPreview.srcObject, null);
 });

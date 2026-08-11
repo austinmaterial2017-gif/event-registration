@@ -210,6 +210,7 @@ test("staff project exposes only the approved Apps Script server entry points", 
   assert.deepEqual(remotelyCallable, [
     ...ADMIN_RPC_NAMES,
     "checkIn",
+    "createStaffScannerPass",
     "doGet",
     "getStaffCheckInTargets",
     "getStaffTicketForCheckIn"

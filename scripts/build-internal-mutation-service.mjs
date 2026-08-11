@@ -72,6 +72,12 @@ function executeInternalActionLocked_(action, payload, actor) {
       projection.sessions = internalCheckpointSessions_(spreadsheet, match, policy);
       return projection;
     },
+    'staff.getCheckInTargets': function() {
+      return internalStaffCheckInTargets_();
+    },
+    'staff.createScannerPass': function() {
+      return createInternalStaffScannerPass_(payload, actor);
+    },
     'staff.checkIn': function() {
       return internalStaffCheckInLocked_(payload, actor);
     },

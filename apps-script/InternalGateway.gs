@@ -7,7 +7,8 @@ var INTERNAL_IDEMPOTENCY_PREFIX_ = 'INTERNAL_IDEMPOTENCY_';
 var INTERNAL_UNCACHED_ACTIONS_ = {
   'admin.getDashboard': true,
   'staff.getTicket': true,
-  'staff.getCheckInTargets': true
+  'staff.getCheckInTargets': true,
+  'staff.createScannerPass': true
 };
 
 function handleInternalRequest_(request) {

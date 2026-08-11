@@ -2,28 +2,31 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>手机扫码验票</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>现场连续扫码签到</title>
     <style>
       :root { color-scheme: dark; font-family: Arial, sans-serif; }
-      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #18131d; color: #fff1c8; }
-      main { width: min(92vw, 560px); padding: 24px; box-sizing: border-box; }
-      section { display: grid; gap: 16px; padding: 22px; border: 1px solid #654b70; border-radius: 22px; background: #271c2b; }
-      h1 { margin: 0; font-size: clamp(1.7rem, 7vw, 2.4rem); } p { margin: 0; line-height: 1.6; color: #e5d4dc; }
-      video { width: 100%; min-height: 280px; border-radius: 16px; background: #070509; object-fit: cover; }
-      button { min-height: 54px; border: 0; border-radius: 12px; color: #fff; font-weight: 800; font-size: 1rem; background: linear-gradient(100deg,#f4499d,#8750f5); }
-      button:disabled { opacity: .6; } .notice { min-height: 1.5em; color: #80f0b5; } .error { color: #ff9a9a; }
+      body { margin:0; min-height:100vh; background:#111018; color:#fff5dc; }
+      main { min-height:100vh; box-sizing:border-box; padding:max(18px,env(safe-area-inset-top)) 18px max(18px,env(safe-area-inset-bottom)); display:grid; grid-template-rows:auto 1fr auto; gap:14px; }
+      header { display:flex; align-items:baseline; justify-content:space-between; gap:12px; } h1 { margin:0; font-size:clamp(1.25rem,5vw,1.8rem); } .hint { margin:0; color:#d9cadc; font-size:.88rem; }
+      #camera-wrap { position:relative; min-height:58vh; overflow:hidden; border:1px solid #5a4863; border-radius:24px; background:#050407; } video { width:100%; height:100%; min-height:58vh; object-fit:cover; }
+      #result { position:absolute; inset:0; display:grid; place-items:center; padding:28px; text-align:center; background:rgba(8,7,12,.84); opacity:0; pointer-events:none; transition:opacity .16s ease; } #result.visible { opacity:1; }
+      #result strong { display:block; max-width:90%; padding:26px 20px; border:2px solid #ffcf70; border-radius:22px; font-size:clamp(2rem,10vw,4rem); line-height:1.15; } #result.success strong { background:#145738; border-color:#6df2af; } #result.error strong { background:#6b1830; border-color:#ff9a9a; }
+      button { min-height:56px; border:0; border-radius:14px; padding:12px 16px; color:#fff; font:800 1rem Arial,sans-serif; background:linear-gradient(100deg,#f4499d,#8750f5); } button:disabled { opacity:.6; }
+      #scanner-message { min-height:1.5em; margin:0; text-align:center; color:#8ff3bb; } #scanner-message.error { color:#ffacac; }
     </style>
   </head>
   <body>
     <main>
-      <section>
-        <h1>手机扫码验票</h1>
-        <p>请按下方按钮并允许相机权限。扫到参与者电子票后，系统会自动回到工作人员页面读取凭证；不会自动签到。</p>
-        <button id="start-scanner" type="button">打开相机开始扫码</button>
-        <video id="camera-preview" playsinline muted hidden aria-label="二维码扫描画面"></video>
-        <p id="scanner-message" class="notice" role="status">准备就绪。</p>
+      <header><h1>现场连续扫码签到</h1><p class="hint">扫一张，自动继续下一张</p></header>
+      <section id="camera-wrap" aria-label="二维码扫描画面">
+        <video id="camera-preview" playsinline muted aria-label="二维码扫描画面"></video>
+        <div id="result" role="status" aria-live="assertive"><strong></strong></div>
       </section>
+      <div>
+        <button id="start-scanner" type="button">打开相机开始连续扫码</button>
+        <p id="scanner-message" role="status">请选择已设置好的活动和讲座后打开此页。</p>
+      </div>
     </main>
     <script src="https://unpkg.com/@zxing/browser@0.1.5/umd/zxing-browser.min.js"></script>
     <script type="module" src="js/staff-scanner.js"></script>

@@ -1,73 +1,95 @@
+import { APPS_SCRIPT_WEB_APP_URL } from "./config.js";
+
 const startButton = document.querySelector("#start-scanner");
 const preview = document.querySelector("#camera-preview");
 const message = document.querySelector("#scanner-message");
-const parameters = new URLSearchParams(window.location.search);
-const returnUrl = parameters.get("returnUrl") || "";
+const resultPanel = document.querySelector("#result");
+const resultText = resultPanel.querySelector("strong");
+const scannerPass = new URLSearchParams(window.location.search).get("scannerPass") || "";
 let reader = null;
-
-function isSafeReturnUrl(value) {
-  try {
-    const parsed = new URL(String(value || ""));
-    return parsed.protocol === "https:" && parsed.hostname === "script.google.com" &&
-      parsed.pathname.startsWith("/macros/s/") && parsed.pathname.endsWith("/exec");
-  } catch (_ignored) {
-    return false;
-  }
-}
+let processing = false;
+let lastValue = "";
+let lastValueAt = 0;
 
 function setMessage(text, error = false) {
   message.textContent = text;
   message.classList.toggle("error", error);
 }
 
-function stopScanner() {
-  if (reader && typeof reader.reset === "function") {
-    try { reader.reset(); } catch (_ignored) { /* camera is already closed */ }
+function ticketToken(value) {
+  const text = String(value || "").trim();
+  if (!text || text.length > 2048) return "";
+  try {
+    const url = new URL(text, window.location.href);
+    return (url.searchParams.get("t") || url.searchParams.get("token") || "").trim();
+  } catch (_ignored) {
+    return /^[a-f0-9]{64}$/i.test(text) ? text : "";
   }
-  reader = null;
 }
 
-function returnWithScan(scannedValue) {
-  if (!scannedValue || String(scannedValue).length > 2048 || !isSafeReturnUrl(returnUrl)) return;
-  stopScanner();
-  const target = new URL(returnUrl);
-  target.searchParams.set("scan", scannedValue);
-  setMessage("已读取二维码，正在返回工作人员页面…");
-  window.location.replace(target.href);
+async function requestCheckIn(token) {
+  const response = await fetch(APPS_SCRIPT_WEB_APP_URL, {
+    method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify({ action: "staffScannerCheckIn", payload: { scannerPass, token } })
+  });
+  if (!response.ok) throw new Error("network");
+  return response.json();
+}
+
+function showResult(text, ok) {
+  resultText.textContent = text;
+  resultPanel.className = `visible ${ok ? "success" : "error"}`;
+  window.setTimeout(() => { resultPanel.className = ""; }, ok ? 850 : 1250);
+}
+
+async function handleScan(scannedValue) {
+  const token = ticketToken(scannedValue);
+  if (!token || processing) return;
+  const now = Date.now();
+  if (token === lastValue && now - lastValueAt < 1800) return;
+  processing = true; lastValue = token; lastValueAt = now;
+  setMessage("正在签到…");
+  try {
+    const result = await requestCheckIn(token);
+    if (result && result.ok) {
+      showResult("签到成功", true);
+      setMessage("成功，继续扫描下一位。");
+    } else {
+      showResult(result && result.message || "本票不能签到", false);
+      setMessage("未签到，请继续扫描下一位。", true);
+    }
+  } catch (_ignored) {
+    showResult("网络未完成，请再试一次", false);
+    setMessage("网络未完成，请继续扫描或检查网络。", true);
+  } finally {
+    window.setTimeout(() => { processing = false; }, 900);
+  }
 }
 
 async function startScanner() {
-  if (reader) return;
-  if (!isSafeReturnUrl(returnUrl)) {
-    setMessage("此扫码入口无效，请从工作人员页面重新打开。", true);
+  if (reader || !/^[a-f0-9]{64}$/i.test(scannerPass)) {
+    if (!/^[a-f0-9]{64}$/i.test(scannerPass)) setMessage("此签到页已失效，请回到工作人员页重新开启。", true);
     return;
   }
   if (!window.ZXingBrowser || typeof window.ZXingBrowser.BrowserQRCodeReader !== "function") {
-    setMessage("扫码组件未加载，请检查网络后重新打开此页。", true);
-    return;
+    setMessage("扫码组件未载入，请检查网络后重新打开。", true); return;
   }
-  startButton.disabled = true;
-  startButton.textContent = "正在请求相机权限…";
-  setMessage("请在手机提示中按“允许”使用相机。");
+  startButton.disabled = true; startButton.textContent = "相机已开启，正在连续扫码";
   try {
     reader = new window.ZXingBrowser.BrowserQRCodeReader();
-    preview.hidden = false;
     await reader.decodeFromVideoDevice(undefined, preview, (result) => {
-      const scannedValue = result && (typeof result.getText === "function" ? result.getText() : result.text);
-      if (scannedValue) returnWithScan(scannedValue);
+      const text = result && (typeof result.getText === "function" ? result.getText() : result.text);
+      if (text) handleScan(text);
     });
-    setMessage("相机已打开，请对准参与者电子票的二维码。");
+    setMessage("相机已开启，请对准电子票二维码。");
   } catch (_ignored) {
-    stopScanner();
-    setMessage("无法开启相机。请在 iPhone 的 Safari 相机权限中允许，或关闭此页后重新从工作人员页面打开。", true);
-  } finally {
-    startButton.disabled = false;
-    startButton.textContent = "打开相机开始扫码";
+    reader = null; startButton.disabled = false; startButton.textContent = "重新打开相机";
+    setMessage("无法打开相机，请在 iPhone Safari 允许相机权限后再按一次。", true);
   }
 }
 
-if (!isSafeReturnUrl(returnUrl)) {
-  setMessage("此扫码入口无效，请返回工作人员页面重新开始。", true);
+if (!/^[a-f0-9]{64}$/i.test(scannerPass)) {
+  setMessage("此签到页已失效，请回到工作人员页重新开启。", true);
   startButton.disabled = true;
 } else {
   startButton.addEventListener("click", startScanner);

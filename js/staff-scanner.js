@@ -77,7 +77,7 @@ async function startScanner() {
   startButton.disabled = true; startButton.textContent = "相机已开启，正在连续扫码";
   try {
     reader = new window.ZXingBrowser.BrowserQRCodeReader();
-    await reader.decodeFromVideoDevice(undefined, preview, (result) => {
+    await reader.decodeFromConstraints({ video: { facingMode: { ideal: "environment" } }, audio: false }, preview, (result) => {
       const text = result && (typeof result.getText === "function" ? result.getText() : result.text);
       if (text) handleScan(text);
     });

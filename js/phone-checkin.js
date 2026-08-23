@@ -18,6 +18,8 @@ let controls = null;
 let busy = false;
 let lastTicket = "";
 let lastTicketAt = 0;
+let progressTimer = 0;
+let audioContext = null;
 
 function setStatus(text, isError = false) {
   status.textContent = text;
@@ -77,9 +79,43 @@ function fillCheckpoints() {
 }
 
 function showResult(message, ok) {
+  window.clearTimeout(progressTimer);
   resultText.textContent = message;
   result.className = `visible ${ok ? "success" : "error"}`;
   window.setTimeout(() => { result.className = ""; }, ok ? 900 : 1400);
+}
+
+function playTone(frequency = 880, duration = 70) {
+  try {
+    audioContext ||= new (window.AudioContext || window.webkitAudioContext)();
+    const oscillator = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+    oscillator.frequency.value = frequency;
+    gain.gain.setValueAtTime(0.08, audioContext.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + duration / 1000);
+    oscillator.connect(gain).connect(audioContext.destination);
+    oscillator.start();
+    oscillator.stop(audioContext.currentTime + duration / 1000);
+  } catch {
+    // Sound is optional; visible feedback remains available.
+  }
+}
+
+function showScanningFeedback() {
+  resultText.textContent = "已扫到二维码，正在核对报名资料…";
+  result.className = "visible processing";
+  setStatus("已扫到二维码，正在核对报名资料…");
+  navigator.vibrate?.(45);
+  playTone();
+}
+
+function startProgressFeedback() {
+  window.clearTimeout(progressTimer);
+  progressTimer = window.setTimeout(() => {
+    if (!busy) return;
+    resultText.textContent = "资料已找到，正在写入签到记录…";
+    setStatus("资料已找到，正在写入签到记录…");
+  }, 2300);
 }
 
 function ticketValue(value) {
@@ -118,6 +154,8 @@ async function recordScan(rawValue) {
   busy = true;
   lastTicket = ticket;
   lastTicketAt = now;
+  showScanningFeedback();
+  startProgressFeedback();
   try {
     const response = await jsonp({
       action: "checkin", session: staffSession, ticket,
@@ -128,6 +166,10 @@ async function recordScan(rawValue) {
       ? `${response.data.name || "参与者"}：${response.data.checkpointLabel || "签到成功"}`
       : (response?.message || "本票无法签到。");
     showResult(message, Boolean(response?.ok));
+    if (response?.ok) {
+      navigator.vibrate?.([55, 35, 55]);
+      playTone(1180, 95);
+    }
     setStatus(response?.ok ? "签到成功，请继续扫下一位。" : message, !response?.ok);
   } catch {
     showResult("网络未完成，请再试一次。", false);
@@ -147,9 +189,19 @@ async function startCamera() {
   try {
     controls?.stop?.();
     reader?.reset?.();
-    reader = new window.ZXingBrowser.BrowserQRCodeReader();
+    reader = new window.ZXingBrowser.BrowserQRCodeReader(undefined, {
+      delayBetweenScanAttempts: 80,
+      delayBetweenScanSuccess: 250
+    });
     controls = await reader.decodeFromConstraints(
-      { video: { facingMode: { ideal: "environment" } }, audio: false },
+      {
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
+        audio: false
+      },
       video,
       (scan) => {
         const text = scan && (typeof scan.getText === "function" ? scan.getText() : scan.text);

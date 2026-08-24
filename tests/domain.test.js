@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { validateSelection, validateAnswers, getEventCapability } from "../public/js/domain.js";
+import { getFieldControlSpec } from "../public/js/registration-flow.js";
 
 test("required and optional fields are enforced", () => {
   const fields = [
@@ -127,4 +128,14 @@ test("question constraints and session topic groups match the server contract", 
   assert.equal(validateSelection({ minChoices: 1, maxChoices: 2 }, sessions, []).valid, false);
   assert.equal(validateSelection({ minChoices: 1, maxChoices: 2 }, sessions, ["a1", "a2"]).valid, false);
   assert.equal(validateSelection({ minChoices: 1, maxChoices: 2 }, sessions, ["a2"]).valid, true);
+});
+
+test("required photo answers need stored file metadata and use a file control", () => {
+  const field = { id: "receipt", label: "收据", required: true, type: "photo" };
+
+  assert.equal(validateAnswers([field], { receipt: [] }).valid, false);
+  assert.equal(validateAnswers([field], {
+    receipt: [{ originalName: "receipt.jpg", mimeType: "image/jpeg", size: 12 }]
+  }).valid, true);
+  assert.deepEqual(getFieldControlSpec("photo"), { tag: "input", inputType: "file" });
 });

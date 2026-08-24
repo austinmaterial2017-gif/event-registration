@@ -171,11 +171,13 @@ async function createHarness() {
   eventForm.elements.checkInMode.value = "session";
   const sessionForm = add("#session-form", form(["eventId", "sessionId", "title", "speaker", "startsAt", "endsAt", "location", "capacity", "required", "groupRule", "status"]));
   const seatForm = add("#seat-form", form(["eventId", "sessionId", "mode", "zoneName", "rows", "seatsPerRow"]));
-  const questionForm = add("#question-form", form(["eventId", "questionId", "label", "type", "options", "validation", "sortOrder", "status", "required", "showOnTicket", "duplicateIdentity", "semanticRole"]));
+  const questionForm = add("#question-form", form(["eventId", "questionId", "label", "type", "options", "validation", "sortOrder", "status", "required", "showOnTicket", "duplicateIdentity", "semanticRole", "maxFiles", "maxMegabytes", "promptImageAlt", "promptImageFile"]));
+  questionForm.elements.maxFiles.value = "3";
+  questionForm.elements.maxMegabytes.value = "5";
   const recordSearch = add("#record-search-form", form(["search"]));
   const recordAction = add("#record-action-form", form(["registrationId", "seatId"]));
   const sheetForm = add("#sheet-form", form(["spreadsheetId"]));
-  for (const selector of ["#admin-status", "#connection-status", "#event-list", "#session-list", "#seat-list", "#question-list", "#record-list", "#attendance-list", "#selected-activity", "#selected-activity-title", "#selected-activity-meta", "#selected-activity-sheet", "#finalize-draft", "#delete-draft", "#delete-empty-event", "#min-session-field", "#max-session-field", "#seat-zone-field", "#activity-empty-state", "#clear-search", "#refresh-readable-views", "#test-sheet", "#switch-sheet", "#new-activity", "#new-session", "#session-editor-mode", "#save-event", "#save-session", "#save-seat-plan", "#save-question", "#seat-preview", "#seat-preview-stage", "#seat-preview-floor", "#seat-preview-message", "#expand-seat-preview"]) add(selector);
+  for (const selector of ["#admin-status", "#connection-status", "#event-list", "#session-list", "#seat-list", "#question-list", "#record-list", "#attendance-list", "#selected-activity", "#selected-activity-title", "#selected-activity-meta", "#selected-activity-sheet", "#finalize-draft", "#delete-draft", "#delete-empty-event", "#min-session-field", "#max-session-field", "#seat-zone-field", "#activity-empty-state", "#clear-search", "#refresh-readable-views", "#test-sheet", "#switch-sheet", "#new-activity", "#new-session", "#session-editor-mode", "#save-event", "#save-session", "#save-seat-plan", "#save-question", "#seat-preview", "#seat-preview-stage", "#seat-preview-floor", "#seat-preview-message", "#expand-seat-preview", "#photo-question-settings", "#question-image-preview", "#upload-question-image", "#remove-question-image"]) add(selector);
   const selector = add("#activity-selector", new FakeElement("select"));
   const sections = ["#sessions", "#seats", "#questions", "#records", "#attendance"].map((id) => add(id));
   const navLinks = ["#events", "#sessions", "#seats", "#questions", "#records", "#attendance"].map((href) => {
@@ -241,6 +243,12 @@ async function createHarness() {
     saveAdminQuestion(payload) {
       mutations.push({ kind: "question", payload, success: this.success, failure: this.failure });
     }
+    uploadAdminQuestionImage(payload) {
+      mutations.push({ kind: "questionImageUpload", payload, success: this.success, failure: this.failure });
+    }
+    removeAdminQuestionImage(payload) {
+      mutations.push({ kind: "questionImageRemove", payload, success: this.success, failure: this.failure });
+    }
     adminRecordAction(payload) {
       mutations.push({ kind: "record", payload, success: this.success, failure: this.failure });
     }
@@ -252,6 +260,12 @@ async function createHarness() {
   const context = vm.createContext({
     document,
     FormData: FakeFormData,
+    FileReader: class {
+      readAsDataURL(file) {
+        this.result = `data:${file.type};base64,AQID`;
+        queueMicrotask(() => this.onload());
+      }
+    },
     URL,
     console,
     google: { script: { get run() { return new Runner(); } } },
@@ -735,6 +749,72 @@ test("question form explains duplicate identity requirements before sending", as
     ui.elements.get("#admin-status").textContent,
     "用于重复身份判断的问题必须设为“显示”并勾选“必填”。"
   );
+});
+
+test("photo question saves bounded upload settings without identity or ticket flags", async () => {
+  const ui = await createHarness();
+  ui.selector.value = "B";
+  ui.selector.dispatch("change");
+  ui.requests.at(-1).success({ ok: true, data: dashboard("B", "Activity B") });
+
+  ui.questionForm.elements.label.value = "上传付款证明";
+  ui.questionForm.elements.type.value = "photo";
+  ui.questionForm.elements.semanticRole.value = "";
+  ui.questionForm.elements.status.value = "active";
+  ui.questionForm.elements.required.checked = true;
+  ui.questionForm.elements.showOnTicket.checked = true;
+  ui.questionForm.elements.duplicateIdentity.checked = true;
+  ui.questionForm.elements.sortOrder.value = "3";
+  ui.questionForm.elements.validation.value = "{}";
+  ui.questionForm.elements.maxFiles.value = "4";
+  ui.questionForm.elements.maxMegabytes.value = "5";
+  ui.questionForm.dispatch("submit");
+
+  const mutation = ui.mutations.at(-1);
+  assert.equal(mutation.kind, "question");
+  assert.deepEqual(JSON.parse(JSON.stringify(mutation.payload.upload)), {
+    maxFiles: 4,
+    maxBytes: 5 * 1024 * 1024,
+    acceptedMimeTypes: ["image/jpeg", "image/png", "image/heic", "image/heif"]
+  });
+  assert.equal(mutation.payload.showOnTicket, false);
+  assert.equal(mutation.payload.duplicateIdentity, false);
+  assert.equal(mutation.payload.semanticRole, "");
+});
+
+test("question image upload and remove buttons send one mutation and show explicit feedback", async () => {
+  const ui = await createHarness();
+  ui.selector.value = "B";
+  ui.selector.dispatch("change");
+  ui.requests.at(-1).success({ ok: true, data: dashboard("B", "Activity B") });
+  ui.questionForm.elements.questionId.value = "question-photo";
+  ui.questionForm.elements.promptImageAlt.value = "付款说明";
+  ui.questionForm.elements.promptImageFile.files = [{
+    name: "guide.png", type: "image/png", size: 3
+  }];
+
+  ui.elements.get("#upload-question-image").dispatch("click");
+  await new Promise((resolve) => setImmediate(resolve));
+  const upload = ui.mutations.at(-1);
+  assert.equal(upload.kind, "questionImageUpload");
+  assert.equal(upload.payload.eventId, "B");
+  assert.equal(upload.payload.questionId, "question-photo");
+  assert.equal(upload.payload.file.dataUrl, "data:image/png;base64,AQID");
+  assert.equal(ui.elements.get("#upload-question-image").disabled, true);
+  upload.success({
+    ok: true,
+    data: { url: "https://drive.google.com/uc?id=safe", alt: "付款说明" }
+  });
+  assert.equal(ui.elements.get("#admin-status").textContent, "题目图片上传成功。");
+
+  ui.elements.get("#remove-question-image").dispatch("click");
+  const remove = ui.mutations.at(-1);
+  assert.equal(remove.kind, "questionImageRemove");
+  assert.deepEqual(JSON.parse(JSON.stringify(remove.payload)), {
+    eventId: "B", questionId: "question-photo", confirm: true
+  });
+  remove.success({ ok: true, data: { removed: true } });
+  assert.equal(ui.elements.get("#admin-status").textContent, "题目图片已移除。");
 });
 
 test("question form automatically keeps semantic role and identity settings compatible", async () => {

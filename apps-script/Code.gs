@@ -269,7 +269,7 @@ function publicQuestionProjection_(question, policy) {
     semanticRole = role;
     return true;
   });
-  return {
+  var projection = {
     id: String(question.questionId || ''),
     label: String(question.label || ''),
     type: String(question.type || '').toLowerCase(),
@@ -279,6 +279,9 @@ function publicQuestionProjection_(question, policy) {
     sortOrder: publicNonNegativeNumber_(question.sortOrder, 0),
     semanticRole: semanticRole
   };
+  if (parsed.promptImage) projection.promptImage = parsed.promptImage;
+  if (projection.type === 'photo') projection.upload = parsed.upload;
+  return projection;
 }
 
 function publicQuestionConfiguration_(serialized) {
@@ -299,12 +302,46 @@ function publicQuestionConfiguration_(serialized) {
       if (parsed[key] !== undefined) constraints[key] = parsed[key];
       else if (legacy[key] !== undefined) constraints[key] = legacy[key];
     });
+  var promptImage = publicPromptImage_(parsed.promptImage);
   return {
     choices: Array.isArray(parsed.choices) ? parsed.choices.filter(function(value) {
       return typeof value === 'string';
     }) : [],
-    constraints: constraints
+    constraints: constraints,
+    promptImage: promptImage,
+    upload: publicPhotoUploadConfiguration_(parsed.upload)
   };
+}
+
+function publicPromptImage_(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  var url = String(value.url || '').trim();
+  if (!/^https:\/\//i.test(url)) return null;
+  return {
+    url: url,
+    alt: String(value.alt || '').trim().slice(0, 200)
+  };
+}
+
+function publicPhotoUploadConfiguration_(value) {
+  var source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  var allowed = {
+    'image/jpeg': true,
+    'image/png': true,
+    'image/heic': true,
+    'image/heif': true
+  };
+  var accept = Array.isArray(source.accept) ? source.accept.filter(function(type, index, list) {
+    return allowed[type] === true && list.indexOf(type) === index;
+  }) : Object.keys(allowed);
+  if (!accept.length) accept = Object.keys(allowed);
+  var maxFiles = Math.floor(Number(source.maxFiles));
+  if (!isFinite(maxFiles)) maxFiles = 3;
+  maxFiles = Math.max(1, Math.min(5, maxFiles));
+  var maxBytes = Math.floor(Number(source.maxBytes));
+  if (!isFinite(maxBytes)) maxBytes = 5 * 1024 * 1024;
+  maxBytes = Math.max(1024, Math.min(5 * 1024 * 1024, maxBytes));
+  return { maxFiles: maxFiles, maxBytes: maxBytes, accept: accept };
 }
 
 function publicGroupRule_(value) {

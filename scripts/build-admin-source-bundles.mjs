@@ -15,6 +15,7 @@ const publicFiles = [
   "apps-script/appsscript.json",
   "apps-script/Repository.gs",
   "apps-script/ReadableViews.gs",
+  "apps-script/PhotoUploadService.gs",
   "apps-script/RegistrationService.gs",
   "apps-script/TicketService.gs",
   "apps-script/AttendanceService.gs",

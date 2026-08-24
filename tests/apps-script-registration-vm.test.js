@@ -231,7 +231,7 @@ async function createHarness({
       finally { lockDepth -= 1; locks.push("release"); }
     }
   });
-  for (const file of ["ReadableViews.gs", "RegistrationService.gs", "TicketService.gs"]) {
+  for (const file of ["ReadableViews.gs", "PhotoUploadService.gs", "RegistrationService.gs", "TicketService.gs"]) {
     vm.runInContext(await readFile(new URL(file, serviceRoot), "utf8"), context, { filename: file });
   }
   return {
@@ -259,6 +259,193 @@ function sheetObjects(sheet) {
   return sheet.rows.slice(1).map((values) =>
     Object.fromEntries(headers[sheet.name].map((key, index) => [key, values[index]])));
 }
+
+async function createPhotoStorageHarness() {
+  let nextId = 0;
+  const items = new Map();
+  class FakeFile {
+    constructor(name, blob) {
+      this.id = `file-${++nextId}`;
+      this.name = name;
+      this.blob = blob;
+      this.trashed = false;
+      this.sharing = "PRIVATE";
+      items.set(this.id, this);
+    }
+    getId() { return this.id; }
+    getUrl() { return `https://drive.google.com/file/d/${this.id}/view`; }
+    setSharing(access) { this.sharing = access; return this; }
+    setTrashed(value) { this.trashed = value; return this; }
+  }
+  class FakeFolder {
+    constructor(name) {
+      this.id = `folder-${++nextId}`;
+      this.name = name;
+      this.files = [];
+      this.folders = [];
+      this.trashed = false;
+      items.set(this.id, this);
+    }
+    getId() { return this.id; }
+    createFolder(name) { const folder = new FakeFolder(name); this.folders.push(folder); return folder; }
+    createFile(blob) { const file = new FakeFile(blob.name, blob); this.files.push(file); return file; }
+    setTrashed(value) { this.trashed = value; return this; }
+  }
+  const promptRoot = new FakeFolder("prompt-root");
+  const answerRoot = new FakeFolder("answer-root");
+  const properties = new Map([
+    ["QUESTION_IMAGE_ROOT_FOLDER_ID", promptRoot.getId()],
+    ["REGISTRATION_UPLOAD_ROOT_FOLDER_ID", answerRoot.getId()]
+  ]);
+  const context = vm.createContext({
+    console, Date, JSON, Math, Object, Array, String, Number, RegExp, Error, isFinite,
+    PropertiesService: { getScriptProperties: () => ({ getProperty: (key) => properties.get(key) || "" }) },
+    DriveApp: {
+      Access: { ANYONE_WITH_LINK: "ANYONE_WITH_LINK", PRIVATE: "PRIVATE" },
+      Permission: { VIEW: "VIEW" },
+      getFolderById: (id) => items.get(id),
+      getFileById: (id) => items.get(id)
+    },
+    Utilities: {
+      base64Decode: (value) => [...Buffer.from(value, "base64")],
+      newBlob: (bytes, mimeType, name) => ({ bytes, mimeType, name })
+    }
+  });
+  vm.runInContext(await readFile(new URL("PhotoUploadService.gs", serviceRoot), "utf8"), context, {
+    filename: "PhotoUploadService.gs"
+  });
+  return { context, promptRoot, answerRoot, items };
+}
+
+test("photo storage validates first, keeps answer files private, and rolls back every created item", async () => {
+  const harness = await createPhotoStorageHarness();
+  const questions = [{
+    questionId: "receipt", type: "photo", status: "active", required: true,
+    options: JSON.stringify({ upload: { maxFiles: 2, maxBytes: 1024 } })
+  }];
+  const uploads = {
+    receipt: [{
+      originalName: "../receipt.jpg", mimeType: "image/jpeg", size: 4,
+      base64: Buffer.from([1, 2, 3, 4]).toString("base64")
+    }]
+  };
+  const normalized = harness.context.validateRegistrationUploads_(questions, uploads);
+  const saved = harness.context.saveRegistrationUploads_("event/1", "registration/1", normalized);
+
+  assert.equal(saved.answersByQuestion.receipt[0].originalName, "receipt.jpg");
+  assert.equal(saved.answersByQuestion.receipt[0].mimeType, "image/jpeg");
+  assert.equal(saved.answersByQuestion.receipt[0].size, 4);
+  assert.match(saved.answersByQuestion.receipt[0].adminUrl, /^https:\/\/drive\.google\.com\/file\/d\//);
+  assert.equal(harness.answerRoot.folders[0].folders[0].files[0].sharing, "PRIVATE");
+  assert.doesNotMatch(harness.answerRoot.folders[0].name, /\//);
+  assert.doesNotMatch(harness.answerRoot.folders[0].folders[0].name, /\//);
+
+  harness.context.rollbackRegistrationUploads_(saved.receipt);
+  assert.equal(harness.answerRoot.folders[0].folders[0].files[0].trashed, true);
+  assert.equal(harness.answerRoot.folders[0].folders[0].trashed, true);
+});
+
+test("photo validation rejects unsafe type, size, count, and unknown question before Drive writes", async () => {
+  const harness = await createPhotoStorageHarness();
+  const questions = [{
+    questionId: "receipt", type: "photo", status: "active", required: false,
+    options: JSON.stringify({ upload: { maxFiles: 1, maxBytes: 5 } })
+  }];
+  const file = (mimeType, size = 4) => ({
+    originalName: "x.jpg", mimeType, size,
+    base64: Buffer.alloc(size).toString("base64")
+  });
+  for (const uploads of [
+    { receipt: [file("application/pdf")] },
+    { receipt: [file("image/jpeg", 6)] },
+    { receipt: [file("image/jpeg"), file("image/jpeg")] },
+    { unknown: [file("image/jpeg")] }
+  ]) {
+    assert.throws(() => harness.context.validateRegistrationUploads_(questions, uploads));
+  }
+  assert.equal(harness.answerRoot.folders.length, 0);
+});
+
+test("prompt image storage is link-readable and replacement metadata contains no root ID", async () => {
+  const harness = await createPhotoStorageHarness();
+  const result = harness.context.savePromptImageFile_({
+    originalName: "guide.webp", mimeType: "image/webp", size: 3,
+    base64: Buffer.from([7, 8, 9]).toString("base64")
+  }, "Question guide");
+  const file = harness.promptRoot.files[0];
+  assert.equal(file.sharing, "ANYONE_WITH_LINK");
+  assert.deepEqual(JSON.parse(JSON.stringify(result.publicValue)), {
+    url: `https://drive.google.com/uc?export=view&id=${file.id}`,
+    alt: "Question guide"
+  });
+  assert.equal(JSON.stringify(result).includes(harness.promptRoot.id), false);
+});
+
+test("registration stores photo metadata transactionally and excludes it from ticket display", async () => {
+  const rows = baseRows({
+    questions: [
+      ...baseRows()["报名问题"],
+      { questionId: "receipt", eventId: "event-1", label: "Receipt", type: "photo", required: true,
+        options: JSON.stringify({ upload: { maxFiles: 1, maxBytes: 1024 } }), status: "active" }
+    ]
+  });
+  const harness = await createHarness({ rows });
+  let rollbackCount = 0;
+  harness.context.validateRegistrationUploads_ = () => ({
+    receipt: [{ originalName: "a.jpg", mimeType: "image/jpeg", size: 3 }]
+  });
+  harness.context.saveRegistrationUploads_ = () => ({
+    answersByQuestion: { receipt: [{ originalName: "a.jpg", mimeType: "image/jpeg", size: 3,
+      adminUrl: "https://drive.google.com/file/d/private/view", storageKey: "private-file" }] },
+    receipt: { files: ["private-file"], folders: ["private-folder"] }
+  });
+  harness.context.rollbackRegistrationUploads_ = () => { rollbackCount += 1; };
+
+  const result = harness.context.createRegistration(registrationPayload({
+    uploads: { receipt: [{ originalName: "a.jpg" }] }
+  }));
+  assert.equal(result.ok, true, JSON.stringify(result));
+  const stored = JSON.parse(sheetObjects(harness.sheets["报名项目"])[0].answers);
+  assert.equal(stored.values.receipt[0].storageKey, "private-file");
+  assert.equal(JSON.stringify(result.data).includes("private-file"), false);
+  assert.equal(JSON.stringify(result.data).includes("drive.google.com"), false);
+  assert.equal(rollbackCount, 0);
+});
+
+test("registration failure after a photo write rolls back the private upload receipt", async () => {
+  const rows = baseRows({
+    questions: [
+      ...baseRows()["报名问题"],
+      { questionId: "receipt", eventId: "event-1", label: "Receipt", type: "photo", required: true,
+        options: JSON.stringify({ upload: { maxFiles: 1, maxBytes: 1024 } }), status: "active" }
+    ]
+  });
+  let rollbackReceipt = null;
+  const harness = await createHarness({
+    rows,
+    onWrite: ({ sheet }) => {
+      if (sheet.name === "参加者") throw new Error("injected participant failure");
+    }
+  });
+  harness.context.validateRegistrationUploads_ = () => ({
+    receipt: [{ originalName: "a.jpg", mimeType: "image/jpeg", size: 3 }]
+  });
+  harness.context.saveRegistrationUploads_ = () => ({
+    answersByQuestion: { receipt: [{ originalName: "a.jpg", mimeType: "image/jpeg", size: 3,
+      adminUrl: "https://drive.google.com/file/d/private/view", storageKey: "private-file" }] },
+    receipt: { files: ["private-file"], folders: ["private-folder"] }
+  });
+  harness.context.rollbackRegistrationUploads_ = (receipt) => { rollbackReceipt = receipt; };
+
+  const result = harness.context.createRegistration(registrationPayload({
+    uploads: { receipt: [{ originalName: "a.jpg" }] }
+  }));
+  assert.equal(result.ok, false);
+  assert.deepEqual(JSON.parse(JSON.stringify(rollbackReceipt)), {
+    files: ["private-file"], folders: ["private-folder"]
+  });
+  assert.equal(sheetObjects(harness.sheets["报名项目"]).length, 0);
+});
 
 function sheetWithHeader(harness, header) {
   return Object.values(harness.sheets).find((sheet) => headers[sheet.name].includes(header));

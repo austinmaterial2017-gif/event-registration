@@ -159,6 +159,8 @@ function executeInternalActionLocked_(action, payload, actor) {
     'admin.saveSession': function() { return saveAdminSession_(payload, actor); },
     'admin.saveSeatPlan': function() { return saveAdminSeatPlan_(payload, actor); },
     'admin.saveQuestion': function() { return saveAdminQuestion_(payload, actor); },
+    'admin.uploadQuestionImage': function() { return savePromptQuestionImage_(payload, actor); },
+    'admin.removeQuestionImage': function() { return removePromptQuestionImage_(payload, actor); },
     'admin.recordAction': function() { return adminRecordAction_(payload, actor); },
     'admin.refreshReadableViews': function() { return refreshAdminReadableViews_(payload, actor); },
     'admin.testSheet': function() { return testAdminSheetConnection_(payload, actor); },
@@ -572,7 +574,7 @@ var ADMIN_SELECTION_MODES_ = {
 var ADMIN_SEAT_MODES_ = { none: true, self: true, auto: true, zone: true };
 var ADMIN_QUESTION_TYPES_ = {
   text: true, textarea: true, number: true, tel: true, email: true,
-  date: true, radio: true, checkbox: true, select: true, boolean: true
+  date: true, radio: true, checkbox: true, select: true, boolean: true, photo: true
 };
 var ADMIN_DRAFT_MAX_JSON_LENGTH_ = 45000;
 
@@ -1414,13 +1416,19 @@ function saveAdminQuestion_(payload, actor) {
       !Array.isArray(request.validation) ? request.validation :
       parseAdminQuestionOptions_(existing && existing.options).validation;
     validation = normalizeAdminQuestionValidation_(type, validation, choices);
+    var existingOptions = parseAdminQuestionOptions_(existing && existing.options);
+    var upload = type === 'photo'
+      ? normalizeAdminPhotoUpload_(request.upload || existingOptions.upload)
+      : null;
     var row = {
       questionId: questionId,
       eventId: request.eventId.trim(),
       label: label,
       type: type,
       required: adminBooleanField_(request, 'required', existing && adminTruthy_(existing.required), false),
-      options: JSON.stringify(adminQuestionStorage_(choices, validation)),
+      options: JSON.stringify(adminQuestionStorage_(
+        choices, validation, existingOptions.promptImage, upload
+      )),
       sortOrder: adminNonNegativeInteger_(adminField_(request, 'sortOrder', existing && existing.sortOrder, 0)),
       status: status,
       createdAt: existing ? existing.createdAt : now,
@@ -2330,6 +2338,8 @@ function adminQuestionProjection_(question, settings) {
     required: adminTruthy_(question.required),
     options: parsed.choices,
     validation: parsed.validation,
+    promptImage: parsed.promptImage,
+    upload: parsed.upload,
     sortOrder: Number(question.sortOrder || 0),
     status: String(question.status || ''),
     showOnTicket: adminListHas_(policy.showOnTicketFields, question.questionId),
@@ -2379,10 +2389,34 @@ function normalizeAdminQuestionValidation_(type, source, choices) {
   return normalized;
 }
 
-function adminQuestionStorage_(choices, validation) {
+function adminQuestionStorage_(choices, validation, promptImage, upload) {
   var result = { choices: choices.slice() };
   Object.keys(validation || {}).forEach(function(key) { result[key] = validation[key]; });
+  if (promptImage && typeof promptImage === 'object' && promptImage.url) {
+    result.promptImage = {
+      url: String(promptImage.url),
+      alt: String(promptImage.alt || ''),
+      storageKey: String(promptImage.storageKey || '')
+    };
+  }
+  if (upload) result.upload = upload;
   return result;
+}
+
+function normalizeAdminPhotoUpload_(source) {
+  var request = source && typeof source === 'object' && !Array.isArray(source) ? source : {};
+  var maxFiles = Number(request.maxFiles === undefined ? 3 : request.maxFiles);
+  var maxBytes = Number(request.maxBytes === undefined ? 5 * 1024 * 1024 : request.maxBytes);
+  if (!isFinite(maxFiles) || Math.floor(maxFiles) !== maxFiles || maxFiles < 1 || maxFiles > 5) {
+    adminError_('INVALID_REQUEST');
+  }
+  if (!isFinite(maxBytes) || Math.floor(maxBytes) !== maxBytes ||
+      maxBytes < 1024 || maxBytes > 5 * 1024 * 1024) adminError_('INVALID_REQUEST');
+  return {
+    maxFiles: maxFiles,
+    maxBytes: maxBytes,
+    acceptedMimeTypes: ['image/jpeg', 'image/png', 'image/heic', 'image/heif']
+  };
 }
 
 function adminQuestionSemanticRole_(request, policy, questionId, type, status) {
@@ -2413,11 +2447,11 @@ function adminQuestionSemanticRole_(request, policy, questionId, type, status) {
 }
 
 function parseAdminQuestionOptions_(serialized) {
-  if (!serialized) return { choices: [], validation: {} };
+  if (!serialized) return { choices: [], validation: {}, promptImage: null, upload: null };
   try {
     var parsed = typeof serialized === 'string' ? JSON.parse(serialized) : serialized;
-    if (Array.isArray(parsed)) return { choices: parsed, validation: {} };
-    if (!parsed || typeof parsed !== 'object') return { choices: [], validation: {} };
+    if (Array.isArray(parsed)) return { choices: parsed, validation: {}, promptImage: null, upload: null };
+    if (!parsed || typeof parsed !== 'object') return { choices: [], validation: {}, promptImage: null, upload: null };
     var validation = parsed.validation && typeof parsed.validation === 'object' &&
       !Array.isArray(parsed.validation) ? parsed.validation : {};
     ['minLength', 'maxLength', 'min', 'max', 'pattern', 'minSelections', 'maxSelections']
@@ -2427,10 +2461,13 @@ function parseAdminQuestionOptions_(serialized) {
     return {
       choices: Array.isArray(parsed.choices) ? parsed.choices :
         (Array.isArray(parsed.options) ? parsed.options : []),
-      validation: validation
+      validation: validation,
+      promptImage: parsed.promptImage && typeof parsed.promptImage === 'object'
+        ? parsed.promptImage : null,
+      upload: parsed.upload && typeof parsed.upload === 'object' ? parsed.upload : null
     };
   } catch (_ignored) {
-    return { choices: [], validation: {} };
+    return { choices: [], validation: {}, promptImage: null, upload: null };
   }
 }
 

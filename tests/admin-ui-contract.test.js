@@ -30,15 +30,22 @@ test("administrator markup is a responsive labelled control room for every requi
   for (const mode of ["none", "self", "auto", "zone"]) {
     assert.match(admin, new RegExp(`value=["']${mode}["']`));
   }
-  for (const type of ["text", "textarea", "number", "tel", "email", "date", "radio", "checkbox", "select", "boolean"]) {
+  for (const type of ["text", "textarea", "number", "tel", "email", "date", "radio", "checkbox", "select", "boolean", "photo"]) {
     assert.match(admin, new RegExp(`value=["']${type}["']`));
+  }
+  for (const label of [
+    "简短回答", "段落回答", "数字", "电话号码", "电邮地址", "日期",
+    "单选题", "多选题", "下拉列表", "是／否", "上传图片"
+  ]) {
+    assert.match(admin, new RegExp(`>${label}(?:（[^<]+）)?<`));
   }
   for (const fieldName of [
     "opensAt", "closesAt", "location", "selectionMode", "minChoices", "maxChoices",
     "showOpeningCountdown", "showClosingCountdown", "cancellationEnabled", "seatExchangeEnabled",
     "registrationTimeLimitMinutes", "totalCapacity", "checkInMode",
     "speaker", "startsAt", "endsAt", "capacity", "required", "groupRule",
-    "showOnTicket", "duplicateIdentity", "validation", "sortOrder"
+    "showOnTicket", "duplicateIdentity", "validation", "sortOrder",
+    "maxFiles", "maxMegabytes", "promptImageAlt", "promptImageFile"
   ]) {
     assert.match(admin, new RegExp(`name=["']${fieldName}["']`));
   }
@@ -58,6 +65,10 @@ test("administrator markup is a responsive labelled control room for every requi
   assert.match(admin, /BI 讲师 A.*BI 讲师 B.*“BI”/s);
   assert.match(admin, /data-copy-bundle="publicBackend"/);
   assert.match(admin, /data-copy-bundle="staffAdmin"/);
+  assert.match(admin, /id=["']photo-question-settings["']/);
+  assert.match(admin, /id=["']question-image-preview["']/);
+  assert.match(admin, /id=["']upload-question-image["']/);
+  assert.match(admin, /id=["']remove-question-image["']/);
   assert.match(admin, /AdminScript/);
 });
 
@@ -68,7 +79,8 @@ test("administrator client uses only explicit RPCs, safe DOM rendering, confirma
     "getAdminDashboard", "saveAdminDraft", "finalizeAdminDraft", "deleteAdminDraft",
     "deleteEmptyAdminEvent", "deleteAdminSession",
     "saveAdminEvent", "saveAdminSession", "saveAdminSeatPlan",
-    "saveAdminQuestion", "adminRecordAction", "testAdminSheetConnection",
+    "saveAdminQuestion", "uploadAdminQuestionImage", "removeAdminQuestionImage",
+    "adminRecordAction", "testAdminSheetConnection",
     "switchAdminSheet", "getAdminSourceBundles"
   ]) {
     assert.match(script, new RegExp(`\\.${rpc}\\s*\\(`));

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import vm from "node:vm";
 
 const root = new URL("../apps-script/", import.meta.url);
 const sheetDefinitions = {
@@ -192,4 +193,48 @@ test("public attendance service is verification-only and exposes no staff mutati
   assert.match(attendance, /sessionId/);
   assert.doesNotMatch(attendance, /function\s+checkIn|ATTENDANCE_STAFF_ALLOWLIST|Session\.getActiveUser|StaffCheckIn|ALREADY_CHECKED_IN/);
   assert.doesNotMatch(code, /['"]checkIn['"]\s*:/);
+});
+
+test("public photo question projection exposes safe display data and limits without Drive metadata", async () => {
+  const code = await source("Code.gs");
+  const context = {};
+  vm.runInNewContext(code, context, { filename: "Code.gs" });
+
+  const field = context.publicQuestionProjection_({
+    questionId: "receipt",
+    label: "上传收据",
+    type: "photo",
+    required: true,
+    sortOrder: 7,
+    options: JSON.stringify({
+      promptImage: {
+        url: "https://safe.example/prompt.jpg",
+        alt: "收据样本",
+        driveFileId: "private-prompt-file",
+        storageKey: "private-prompt-key"
+      },
+      upload: {
+        maxFiles: 99,
+        maxBytes: 99 * 1024 * 1024,
+        accept: ["image/jpeg", "application/pdf", "image/heic"]
+      },
+      adminUrl: "https://drive.google.com/private"
+    })
+  }, {});
+
+  assert.deepEqual({ ...field.promptImage }, {
+    url: "https://safe.example/prompt.jpg",
+    alt: "收据样本"
+  });
+  assert.deepEqual({
+    ...field.upload,
+    accept: [...field.upload.accept]
+  }, {
+    maxFiles: 5,
+    maxBytes: 5 * 1024 * 1024,
+    accept: ["image/jpeg", "image/heic"]
+  });
+  assert.equal(JSON.stringify(field).includes("private-prompt-file"), false);
+  assert.equal(JSON.stringify(field).includes("storageKey"), false);
+  assert.equal(JSON.stringify(field).includes("adminUrl"), false);
 });

@@ -31,7 +31,7 @@ test("every public method sends its JSON envelope as a CORS-safe simple POST", a
   const expected = [
     ["listEvents", {}, () => client.listEvents()],
     ["getEvent", { eventId: "event-1" }, () => client.getEvent("event-1")],
-    ["createRegistration", { eventId: "event-1", sessionIds: ["s1"], seatChoices: ["A-01"], answers: { name: "陈晓明" } }, () => client.createRegistration({ eventId: "event-1", sessionIds: ["s1"], seatChoices: ["A-01"], answers: { name: "陈晓明" } })],
+    ["createRegistration", { eventId: "event-1", sessionIds: ["s1"], seatChoices: ["A-01"], answers: { name: "陈晓明" }, uploads: { receipt: [{ originalName: "a.jpg" }] } }, () => client.createRegistration({ eventId: "event-1", sessionIds: ["s1"], seatChoices: ["A-01"], answers: { name: "陈晓明" }, uploads: { receipt: [{ originalName: "a.jpg" }] } })],
     ["recoverTicket", { eventId: "event-1", name: "Alice Chan", phone: "+60123456789" }, () => client.recoverTicket({ eventId: "event-1", name: "Alice Chan", phone: "+60123456789" })],
     ["lookupTicket", { ticketNumber: "T-01", verificationValue: "13800000000" }, () => client.lookupTicket("T-01", "13800000000")],
     ["verifyTicket", { token: "signed-token" }, () => client.verifyTicket("signed-token")],
@@ -87,7 +87,7 @@ test("participant entry modules cache-bust the production API client", async () 
   const root = new URL("../public/js/", import.meta.url);
   const modules = [
     ["index-page.js", "20260728-stable"],
-    ["register-page.js", "20260806-feedback"],
+    ["register-page.js", "20260824-photo"],
     ["ticket-page.js", "20260806-recovery"],
     ["verify-page.js", "20260728-stable"]
   ];
@@ -101,7 +101,7 @@ test("participant HTML cache-busts each updated entry module", async () => {
   const root = new URL("../public/", import.meta.url);
   const pages = [
     ["index.html", "index-page.js", "20260729-dates"],
-    ["register.html", "register-page.js", "20260806-feedback"],
+    ["register.html", "register-page.js", "20260824-photo"],
     ["ticket.html", "ticket-page.js", "20260806-recovery"],
     ["verify.html", "verify-page.js", "20260728-final"],
     ["v.html", "verify-page.js", "20260728-final"]
@@ -192,6 +192,10 @@ test("participant controllers use the public client instead of temporary registr
 
   assert.match(indexPage, /import\s*\{\s*listEvents\s*\}\s*from\s*["']\.\/api\.js(?:\?[^"']+)?["']/);
   assert.match(registerPage, /import\s*\{\s*createRegistration\s*,\s*getEvent\s*\}\s*from\s*["']\.\/api\.js(?:\?[^"']+)?["']/);
+  assert.match(registerPage, /photo-answers\.js/);
+  assert.match(registerPage, /正在上传照片/);
+  assert.match(registerPage, /promptImage/);
+  assert.match(registerPage, /remove-photo/);
   assert.doesNotMatch(registerPage, /demoRegistrationAdapter|registrationApi/);
   assert.doesNotMatch(`${indexPage}\n${registerPage}`, /const\s+serverNow\s*=/);
 });

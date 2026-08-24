@@ -45,3 +45,21 @@ test("the actual final-submit controller stores a successful ticket projection a
   assert.equal(storage.getItem(TICKET_RESULT_STORAGE_KEY), null);
   assert.match(renderTicketMarkup(createTicketViewModel(stored)), /EVT-001/);
 });
+
+test("a client-side photo serialization failure restores the submit button and shows feedback", async () => {
+  const submitting = [];
+  const errors = [];
+  const handler = createFinalSubmitHandler({
+    getReview: () => ({ eventId: "open-event" }),
+    validateReview: () => ({ valid: true, errors: [] }),
+    submitRegistration: async () => { throw new Error("photo read failed"); },
+    showErrors: (messages) => errors.push(messages),
+    editReview: () => {},
+    setSubmitting: (value) => submitting.push(value),
+    transition: () => false
+  });
+
+  await handler();
+  assert.deepEqual(submitting, [true, false]);
+  assert.match(errors.at(-1)[0], /照片.*重试/);
+});

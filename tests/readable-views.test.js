@@ -23,7 +23,8 @@ function sourceRows() {
       { questionId: "q-name", label: "姓名", sortOrder: 1, status: "active" },
       { questionId: "q-phone", label: "电话号码", sortOrder: 2, status: "active" },
       { questionId: "q-transport", label: "交通", sortOrder: 3, status: "active" },
-      { questionId: "q-address", label: "地址", sortOrder: 4, status: "active" }
+      { questionId: "q-address", label: "地址", sortOrder: 4, status: "active" },
+      { questionId: "q-photo", label: "付款证明", type: "photo", sortOrder: 5, status: "active" }
     ],
     sessions: [
       { sessionId: "mm-a", eventId: "event-1", title: "MM A", speaker: "仲老师", status: "open" },
@@ -41,7 +42,11 @@ function sourceRows() {
         answers: JSON.stringify({
           values: {
             "q-name": "Alice", "q-phone": "0170000000",
-            "q-transport": "需要", "q-address": "Jalan 1"
+            "q-transport": "需要", "q-address": "Jalan 1",
+            "q-photo": [
+              { originalName: "receipt.jpg", adminUrl: "https://drive.google.com/file/d/private-1/view" },
+              { originalName: "receipt-2.png", adminUrl: "https://drive.google.com/file/d/private-2/view" }
+            ]
           }
         }),
         createdAt: "2026-08-05T12:00:00.000Z"
@@ -77,11 +82,11 @@ test("registration overview merges duplicated raw session rows into one readable
   const view = context.buildReadableRegistrationOverview_(sourceRows());
 
   assert.deepEqual(Array.from(view.headers), [
-    "报名状态", "姓名", "电话号码", "交通", "地址", "MM", "BI",
+    "报名状态", "姓名", "电话号码", "交通", "地址", "付款证明（数量）", "付款证明（管理员链接）", "MM", "BI",
     "座位", "票号", "报名时间", "登记编号"
   ]);
   assert.deepEqual(Array.from(view.rows[0]), [
-    "有效", "Alice", "0170000000", "需要", "Jalan 1", "仲老师", "韩老师",
+    "有效", "Alice", "0170000000", "需要", "Jalan 1", "已上传 2 张", "https://drive.google.com/file/d/private-1/view\nhttps://drive.google.com/file/d/private-2/view", "仲老师", "韩老师",
     "前区 A1", "EVT-ONE", "2026-08-05T12:00:00.000Z", "r1"
   ]);
   assert.equal(view.rows.length, 1);

@@ -42,6 +42,8 @@
    - `SWITCH_PROBE_SHARED_SECRET`：随机生成、至少 32 个字符的机密；稍后在工作人员项目使用完全相同的值。
    - `INTERNAL_API_SHARED_SECRET`：另一组随机生成、至少 32 个字符的机密；稍后在工作人员项目使用完全相同的值。不要与上一项共用。
    - `PUBLIC_BASE_URL`：参与者网站的 GitHub Pages 根网址，例如 `https://你的帐号.github.io/仓库名`；若网址尚未建立，可在发布 Pages 后补上并重新部署公开 Web App。
+   - `QUESTION_IMAGE_ROOT_FOLDER_ID`：管理员题目说明图片专用的 Google Drive 文件夹 ID。
+   - `REGISTRATION_UPLOAD_ROOT_FOLDER_ID`：参加者照片答案专用的私人 Google Drive 文件夹 ID。两个文件夹只需建立和设置一次；以后新增活动无需再次设置。
 4. 在编辑器中手动运行一次 `setupSystem()`，批准新增的 Drive 权限并初始化永久注册表表头。它不会清空或拆分已有资料，也不会建立示例活动。这个 Drive 授权只在升级后的第一次运行请求一次。
 5. 部署为 Web App：**以部署者身份执行**、**所有人（含匿名访问者）**。复制 `/exec` 公开 URL。
 6. 在 [`public/js/config.js`](public/js/config.js) 填入公开 Apps Script URL 和参与者网站根网址：

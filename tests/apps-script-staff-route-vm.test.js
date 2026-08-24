@@ -13,13 +13,15 @@ const ADMIN_RPC_NAMES = [
   "getAdminDashboard",
   "getAdminSourceBundles",
   "refreshAdminReadableViews",
+  "removeAdminQuestionImage",
   "saveAdminDraft",
   "saveAdminEvent",
   "saveAdminQuestion",
   "saveAdminSeatPlan",
   "saveAdminSession",
   "switchAdminSheet",
-  "testAdminSheetConnection"
+  "testAdminSheetConnection",
+  "uploadAdminQuestionImage"
 ];
 
 async function declaredStaffServerFunctions() {

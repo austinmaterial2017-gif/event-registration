@@ -120,6 +120,15 @@ The public project requires these Script Properties:
   least 32 characters, identical to the value in the staff project
 - `PUBLIC_BASE_URL`: the participant GitHub Pages root URL, without a trailing
   slash; this is used to create absolute QR verification links
+- `QUESTION_IMAGE_ROOT_FOLDER_ID`: a Google Drive folder owned by the public
+  deployer for administrator-uploaded question images. These prompt images are
+  published as link-readable images, so never place participant files here.
+- `REGISTRATION_UPLOAD_ROOT_FOLDER_ID`: a different private Google Drive folder
+  owned by the public deployer for participant photo answers. Keep this folder
+  private; the system creates per-registration subfolders automatically.
+
+Create these two root folders only once during the upgrade. New activities and
+new questions reuse them and do not require another Apps Script edit or deploy.
 
 ## Staff project: `staff-apps-script/`
 

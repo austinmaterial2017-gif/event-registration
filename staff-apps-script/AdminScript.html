@@ -16,7 +16,8 @@
       sessionSaveNotice: false,
       actionNotice: "",
       previewSelectedSeatId: "",
-      previewUsesDraftLayout: false
+      previewUsesDraftLayout: false,
+      editingQuestionPromptImage: null
     };
     const statusNode = document.querySelector("#admin-status");
 
@@ -563,6 +564,13 @@
       form.elements.showOnTicket.checked = item.showOnTicket === true;
       form.elements.duplicateIdentity.checked = item.duplicateIdentity === true;
       form.elements.semanticRole.value = item.semanticRole || "";
+      form.elements.maxFiles.value = item.upload && item.upload.maxFiles || 3;
+      form.elements.maxMegabytes.value = item.upload && item.upload.maxBytes
+        ? Math.max(1, Math.round(item.upload.maxBytes / (1024 * 1024))) : 5;
+      form.elements.promptImageAlt.value = item.promptImage && item.promptImage.alt || "";
+      state.editingQuestionPromptImage = item.promptImage || null;
+      renderQuestionImagePreview_();
+      updateConditionalQuestionFields_();
       focusEditor(form);
     }
 
@@ -715,6 +723,16 @@
       if (["select", "radio", "checkbox"].includes(values.type) && !options.length) {
         return "这个问题类型需要至少一个选项（每行一个）。";
       }
+      if (values.type === "photo") {
+        const maxFiles = Number(values.maxFiles);
+        const maxMegabytes = Number(values.maxMegabytes);
+        if (!Number.isInteger(maxFiles) || maxFiles < 1 || maxFiles > 5) {
+          return "照片数量必须是 1 至 5 张。";
+        }
+        if (!Number.isInteger(maxMegabytes) || maxMegabytes < 1 || maxMegabytes > 5) {
+          return "每张照片上限必须是 1 至 5 MB。";
+        }
+      }
       return "";
     }
 
@@ -727,6 +745,54 @@
         form.elements.required.checked = true;
         form.elements.status.value = "active";
       }
+      updateConditionalQuestionFields_();
+    }
+
+    function updateConditionalQuestionFields_() {
+      const form = document.querySelector("#question-form");
+      const isPhoto = form.elements.type.value === "photo";
+      document.querySelector("#photo-question-settings").hidden = !isPhoto;
+      if (isPhoto) {
+        form.elements.semanticRole.value = "";
+        form.elements.showOnTicket.checked = false;
+        form.elements.duplicateIdentity.checked = false;
+      }
+    }
+
+    function renderQuestionImagePreview_() {
+      const preview = document.querySelector("#question-image-preview");
+      const image = state.editingQuestionPromptImage;
+      preview.hidden = !(image && image.url);
+      if (image && image.url) {
+        preview.src = image.url;
+        preview.alt = image.alt || "题目图片预览";
+      } else {
+        preview.removeAttribute("src");
+        preview.alt = "题目图片预览";
+      }
+      document.querySelector("#remove-question-image").disabled = !(image && image.url);
+    }
+
+    function readAdminImageFile_(file, allowedTypes) {
+      return new Promise((resolve, reject) => {
+        if (!file || !allowedTypes.includes(file.type)) {
+          reject(new Error("请选择 JPEG、PNG 或 WebP 图片。"));
+          return;
+        }
+        if (file.size > 5 * 1024 * 1024) {
+          reject(new Error("图片不可超过 5 MB。"));
+          return;
+        }
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error("无法读取图片，请重新选择。"));
+        reader.onload = () => resolve({
+          originalName: file.name,
+          mimeType: file.type,
+          size: file.size,
+          dataUrl: String(reader.result || "")
+        });
+        reader.readAsDataURL(file);
+      });
     }
 
     function seatPreviewModel_() {
@@ -1215,6 +1281,16 @@
         duplicateIdentity: checked(form, "duplicateIdentity"),
         semanticRole: values.semanticRole
       };
+      if (values.type === "photo") {
+        payload.upload = {
+          maxFiles: Number(values.maxFiles),
+          maxBytes: Number(values.maxMegabytes) * 1024 * 1024,
+          acceptedMimeTypes: ["image/jpeg", "image/png", "image/heic", "image/heif"]
+        };
+        payload.semanticRole = "";
+        payload.showOnTicket = false;
+        payload.duplicateIdentity = false;
+      }
       if (state.selectedDraftId) {
         const draftKey = values.questionId ||
           `draft-question-${state.draftDocument.questions.length + 1}`;
@@ -1243,8 +1319,65 @@
     });
     document.querySelector("#question-form").elements.semanticRole
       .addEventListener("change", syncQuestionCompatibility_);
+    document.querySelector("#question-form").elements.type
+      .addEventListener("change", updateConditionalQuestionFields_);
     document.querySelector("#question-form").elements.duplicateIdentity
       .addEventListener("change", syncQuestionCompatibility_);
+
+    document.querySelector("#upload-question-image").addEventListener("click", async (event) => {
+      const form = document.querySelector("#question-form");
+      if (!state.selectedEventId || !form.elements.questionId.value) {
+        setStatus("请先保存这个问题，再上传题目图片。", "error");
+        return;
+      }
+      try {
+        const image = await readAdminImageFile_(
+          form.elements.promptImageFile.files && form.elements.promptImageFile.files[0],
+          ["image/jpeg", "image/png", "image/webp"]
+        );
+        runButtonAction_(
+          event.currentTarget,
+          "正在上传图片…",
+          "题目图片上传成功。",
+          (runner) => runner.uploadAdminQuestionImage({
+            eventId: state.selectedEventId,
+            questionId: form.elements.questionId.value,
+            alt: String(form.elements.promptImageAlt.value || "").trim(),
+            file: image
+          }),
+          (promptImage) => {
+            state.editingQuestionPromptImage = promptImage;
+            renderQuestionImagePreview_();
+            loadDashboard();
+          }
+        );
+      } catch (error) {
+        setStatus(error && error.message ? error.message : "无法读取图片。", "error");
+      }
+    });
+
+    document.querySelector("#remove-question-image").addEventListener("click", (event) => {
+      const form = document.querySelector("#question-form");
+      if (!state.selectedEventId || !form.elements.questionId.value ||
+          !state.editingQuestionPromptImage) return;
+      if (!window.confirm("确认移除这张题目图片？问题文字和旧报名资料不会受影响。")) return;
+      runButtonAction_(
+        event.currentTarget,
+        "正在移除图片…",
+        "题目图片已移除。",
+        (runner) => runner.removeAdminQuestionImage({
+          eventId: state.selectedEventId,
+          questionId: form.elements.questionId.value,
+          confirm: true
+        }),
+        () => {
+          state.editingQuestionPromptImage = null;
+          form.elements.promptImageFile.value = "";
+          renderQuestionImagePreview_();
+          loadDashboard();
+        }
+      );
+    });
 
     document.querySelector("#finalize-draft").addEventListener("click", (event) => {
       if (!state.selectedDraftId || state.draftNextStep !== "confirm") {

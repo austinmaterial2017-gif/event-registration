@@ -110,6 +110,26 @@ function saveAdminQuestion(payload) {
   });
 }
 
+/** Uploads or replaces one optional image shown with a registration question. */
+function uploadAdminQuestionImage(payload) {
+  return runAdminService_(function() {
+    var actor = requireAuthorizedAdminSession_();
+    var result = invokeInternalBackend_('admin.uploadQuestionImage', payload || {}, actor);
+    if (!result.ok) adminError_(result.code);
+    return result.data;
+  });
+}
+
+/** Removes one optional registration-question image without deleting the question. */
+function removeAdminQuestionImage(payload) {
+  return runAdminService_(function() {
+    var actor = requireAuthorizedAdminSession_();
+    var result = invokeInternalBackend_('admin.removeQuestionImage', payload || {}, actor);
+    if (!result.ok) adminError_(result.code);
+    return result.data;
+  });
+}
+
 /** Cancels a registration or adjusts its assigned seat while preserving history. */
 function adminRecordAction(payload) {
   return runAdminService_(function() {

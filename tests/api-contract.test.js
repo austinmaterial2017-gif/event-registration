@@ -87,7 +87,7 @@ test("participant entry modules cache-bust the production API client", async () 
   const root = new URL("../public/js/", import.meta.url);
   const modules = [
     ["index-page.js", "20260728-stable"],
-    ["register-page.js", "20260806-feedback"],
+    ["register-page.js", "20260824-photo"],
     ["ticket-page.js", "20260806-recovery"],
     ["verify-page.js", "20260728-stable"]
   ];
@@ -101,7 +101,7 @@ test("participant HTML cache-busts each updated entry module", async () => {
   const root = new URL("../public/", import.meta.url);
   const pages = [
     ["index.html", "index-page.js", "20260729-dates"],
-    ["register.html", "register-page.js", "20260806-feedback"],
+    ["register.html", "register-page.js", "20260824-photo"],
     ["ticket.html", "ticket-page.js", "20260806-recovery"],
     ["verify.html", "verify-page.js", "20260728-final"],
     ["v.html", "verify-page.js", "20260728-final"]
@@ -192,6 +192,10 @@ test("participant controllers use the public client instead of temporary registr
 
   assert.match(indexPage, /import\s*\{\s*listEvents\s*\}\s*from\s*["']\.\/api\.js(?:\?[^"']+)?["']/);
   assert.match(registerPage, /import\s*\{\s*createRegistration\s*,\s*getEvent\s*\}\s*from\s*["']\.\/api\.js(?:\?[^"']+)?["']/);
+  assert.match(registerPage, /photo-answers\.js/);
+  assert.match(registerPage, /正在上传照片/);
+  assert.match(registerPage, /promptImage/);
+  assert.match(registerPage, /remove-photo/);
   assert.doesNotMatch(registerPage, /demoRegistrationAdapter|registrationApi/);
   assert.doesNotMatch(`${indexPage}\n${registerPage}`, /const\s+serverNow\s*=/);
 });

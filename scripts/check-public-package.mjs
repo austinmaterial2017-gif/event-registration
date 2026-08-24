@@ -18,7 +18,7 @@ const allowedFiles = new Set([
   "css/app.css",
   "js/activity-countdown-view.js", "js/activity-ticket-view.js", "js/api.js", "js/config.js", "js/domain.js",
   "js/event-list-flow.js", "js/index-page.js", "js/qr.js", "js/register-page.js",
-  "js/registration-attempt-timer.js", "js/registration-flow.js", "js/registration-success.js",
+  "js/photo-answers.js", "js/registration-attempt-timer.js", "js/registration-flow.js", "js/registration-success.js",
   "js/ticket-page.js", "js/verify-page.js", "js/staff-scanner.js"
 ]);
 

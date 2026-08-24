@@ -772,17 +772,41 @@ function readableQuestionColumns_(source) {
     '\u7968\u53f7': true, '\u62a5\u540d\u65f6\u95f4': true,
     '\u767b\u8bb0\u7f16\u53f7': true
   };
-  return (source.questions || []).filter(function(question) {
+  var columns = [];
+  (source.questions || []).filter(function(question) {
     return String(question.status || '').toLowerCase() !== 'inactive' &&
       !hidden[String(question.questionId || '')];
   }).sort(function(left, right) {
     return Number(left.sortOrder || 0) - Number(right.sortOrder || 0);
-  }).map(function(question) {
-    return {
-      id: String(question.questionId || ''),
-      header: readableUniqueHeader_(used, question.label)
-    };
+  }).forEach(function(question) {
+    var id = String(question.questionId || '');
+    if (String(question.type || '').toLowerCase() === 'photo') {
+      columns.push({ id: id, kind: 'photo-count',
+        header: readableUniqueHeader_(used, question.label + '（数量）') });
+      columns.push({ id: id, kind: 'photo-links',
+        header: readableUniqueHeader_(used, question.label + '（管理员链接）') });
+      return;
+    }
+    columns.push({ id: id, kind: 'answer',
+      header: readableUniqueHeader_(used, question.label) });
   });
+  return columns;
+}
+
+function readablePhotoFiles_(value) {
+  return (Array.isArray(value) ? value : []).filter(function(file) {
+    return file && typeof file === 'object' && !Array.isArray(file);
+  });
+}
+
+function readablePhotoCell_(value, kind) {
+  var files = readablePhotoFiles_(value);
+  if (kind === 'photo-count') {
+    return files.length ? ('已上传 ' + files.length + ' 张') : '未上传';
+  }
+  var links = files.map(function(file) { return String(file.adminUrl || '').trim(); })
+    .filter(function(url) { return /^https:\/\//i.test(url); });
+  return links.length ? links.join('\n') : '无';
 }
 
 function readableSessionGroups_(source) {
@@ -823,7 +847,9 @@ function buildReadableRegistrationOverview_(source) {
       readableIdentity_(source, registration, 'phone')
     ];
     questionColumns.forEach(function(column) {
-      row.push(readableText_(registration.answers[column.id], '\u672a\u586b\u5199'));
+      row.push(column.kind === 'answer'
+        ? readableText_(registration.answers[column.id], '\u672a\u586b\u5199')
+        : readablePhotoCell_(registration.answers[column.id], column.kind));
     });
     sessionGroups.forEach(function(group) {
       var selected = group.sessions.filter(function(session) {
@@ -1075,6 +1101,268 @@ function refreshExistingReadableViewsSafely_(spreadsheet, eventId, settings) {
   return refreshReadableViewsSafely_(spreadsheet, eventId, settings);
 }
 
+===== apps-script/PhotoUploadService.gs =====
+var QUESTION_IMAGE_ROOT_FOLDER_ID = 'QUESTION_IMAGE_ROOT_FOLDER_ID';
+var REGISTRATION_UPLOAD_ROOT_FOLDER_ID = 'REGISTRATION_UPLOAD_' + 'ROOT_FOLDER_ID';
+var PHOTO_MAX_BYTES_ = 5 * 1024 * 1024;
+var PHOTO_ANSWER_TYPES_ = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/heic': 'heic',
+  'image/heif': 'heif'
+};
+var PHOTO_PROMPT_TYPES_ = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp'
+};
+
+function photoUploadError_(code) {
+  var error = new Error(code || 'INVALID_REQUEST');
+  error.publicCode = code || 'INVALID_REQUEST';
+  throw error;
+}
+
+function photoRootFolder_(propertyName) {
+  var id = PropertiesService.getScriptProperties().getProperty(propertyName);
+  if (!id) photoUploadError_('INTEGRITY_ERROR');
+  try {
+    var folder = DriveApp.getFolderById(id);
+    if (!folder) photoUploadError_('INTEGRITY_ERROR');
+    return folder;
+  } catch (_error) {
+    photoUploadError_('INTEGRITY_ERROR');
+  }
+}
+
+function photoOptionsObject_(serialized) {
+  if (!serialized) return { choices: [] };
+  try {
+    var parsed = typeof serialized === 'string' ? JSON.parse(serialized) : serialized;
+    if (Array.isArray(parsed)) return { choices: parsed.slice() };
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : { choices: [] };
+  } catch (_error) {
+    return { choices: [] };
+  }
+}
+
+function photoBaseName_(value) {
+  var name = String(value || 'image').replace(/\\/g, '/').split('/').pop();
+  name = name.replace(/[\u0000-\u001f\u007f]/g, '').trim();
+  name = name.replace(/[^A-Za-z0-9._() -]+/g, '_').replace(/^\.+/, '');
+  return name.slice(0, 120) || 'image';
+}
+
+function photoFolderName_(prefix, value) {
+  var text = String(value || '').replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+  return (prefix + '-' + (text || 'item')).slice(0, 120);
+}
+
+function photoBase64Value_(file) {
+  var direct = typeof file.base64 === 'string' ? file.base64.trim() : '';
+  if (direct) return direct;
+  var dataUrl = typeof file.dataUrl === 'string' ? file.dataUrl.trim() : '';
+  var match = /^data:([^;,]+);base64,([A-Za-z0-9+/=\s]+)$/.exec(dataUrl);
+  if (!match || String(match[1]).toLowerCase() !== String(file.mimeType || '').toLowerCase()) {
+    photoUploadError_('INVALID_REQUEST');
+  }
+  return match[2].replace(/\s+/g, '');
+}
+
+function normalizePhotoFile_(file, allowedTypes, maxBytes) {
+  if (!file || typeof file !== 'object' || Array.isArray(file)) photoUploadError_('INVALID_REQUEST');
+  var mimeType = String(file.mimeType || '').toLowerCase();
+  if (!allowedTypes[mimeType]) photoUploadError_('INVALID_REQUEST');
+  var declaredSize = Number(file.size);
+  if (!isFinite(declaredSize) || Math.floor(declaredSize) !== declaredSize ||
+      declaredSize < 1 || declaredSize > maxBytes) photoUploadError_('INVALID_REQUEST');
+  var base64 = photoBase64Value_(file);
+  if (!base64 || base64.length > Math.ceil(maxBytes / 3) * 4 + 8) {
+    photoUploadError_('INVALID_REQUEST');
+  }
+  var bytes;
+  try { bytes = Utilities.base64Decode(base64); }
+  catch (_decodeError) { photoUploadError_('INVALID_REQUEST'); }
+  if (!bytes || bytes.length !== declaredSize || bytes.length > maxBytes) {
+    photoUploadError_('INVALID_REQUEST');
+  }
+  var originalName = photoBaseName_(file.originalName || file.name || ('image.' + allowedTypes[mimeType]));
+  return {
+    originalName: originalName,
+    mimeType: mimeType,
+    size: bytes.length,
+    extension: allowedTypes[mimeType],
+    bytes: bytes
+  };
+}
+
+function validateRegistrationUploads_(questions, uploads) {
+  var questionList = Array.isArray(questions) ? questions : [];
+  var source = uploads && typeof uploads === 'object' && !Array.isArray(uploads) ? uploads : {};
+  var photoQuestions = {};
+  questionList.forEach(function(question) {
+    if (!question || String(question.status || '').toLowerCase() !== 'active' ||
+        String(question.type || '').toLowerCase() !== 'photo') return;
+    photoQuestions[String(question.questionId || '')] = question;
+  });
+  Object.keys(source).forEach(function(questionId) {
+    if (!photoQuestions[questionId]) photoUploadError_('INVALID_REQUEST');
+  });
+  var normalized = {};
+  Object.keys(photoQuestions).forEach(function(questionId) {
+    var question = photoQuestions[questionId];
+    var files = source[questionId] === undefined ? [] : source[questionId];
+    if (!Array.isArray(files)) photoUploadError_('INVALID_REQUEST');
+    var options = photoOptionsObject_(question.options);
+    var upload = options.upload && typeof options.upload === 'object' ? options.upload : {};
+    var maxFiles = Number(upload.maxFiles === undefined ? 3 : upload.maxFiles);
+    var maxBytes = Number(upload.maxBytes === undefined ? PHOTO_MAX_BYTES_ : upload.maxBytes);
+    if (!isFinite(maxFiles) || Math.floor(maxFiles) !== maxFiles || maxFiles < 1 || maxFiles > 5 ||
+        !isFinite(maxBytes) || Math.floor(maxBytes) !== maxBytes || maxBytes < 1 ||
+        maxBytes > PHOTO_MAX_BYTES_) photoUploadError_('INTEGRITY_ERROR');
+    if (files.length > maxFiles || (question.required && !files.length)) {
+      photoUploadError_('INVALID_REQUEST');
+    }
+    if (files.length) {
+      normalized[questionId] = files.map(function(file) {
+        return normalizePhotoFile_(file, PHOTO_ANSWER_TYPES_, maxBytes);
+      });
+    }
+  });
+  return normalized;
+}
+
+function saveRegistrationUploads_(eventId, registrationId, normalizedUploads) {
+  var source = normalizedUploads && typeof normalizedUploads === 'object' ? normalizedUploads : {};
+  if (!Object.keys(source).length) return { answersByQuestion: {}, receipt: { files: [], folders: [] } };
+  var root = photoRootFolder_(REGISTRATION_UPLOAD_ROOT_FOLDER_ID);
+  var receipt = { files: [], folders: [] };
+  var answersByQuestion = {};
+  try {
+    var eventFolder = root.createFolder(photoFolderName_('event', eventId));
+    receipt.folders.push(eventFolder.getId());
+    var registrationFolder = eventFolder.createFolder(photoFolderName_('registration', registrationId));
+    receipt.folders.unshift(registrationFolder.getId());
+    Object.keys(source).forEach(function(questionId) {
+      answersByQuestion[questionId] = source[questionId].map(function(file, index) {
+        var serverName = photoFolderName_('question', questionId) + '-' + (index + 1) + '.' + file.extension;
+        var blob = Utilities.newBlob(file.bytes, file.mimeType, serverName);
+        var driveFile = registrationFolder.createFile(blob);
+        receipt.files.push(driveFile.getId());
+        return {
+          originalName: file.originalName,
+          mimeType: file.mimeType,
+          size: file.size,
+          adminUrl: driveFile.getUrl(),
+          storageKey: driveFile.getId()
+        };
+      });
+    });
+    return { answersByQuestion: answersByQuestion, receipt: receipt };
+  } catch (error) {
+    rollbackRegistrationUploads_(receipt);
+    throw error;
+  }
+}
+
+function rollbackRegistrationUploads_(receipt) {
+  var record = receipt && typeof receipt === 'object' ? receipt : {};
+  (Array.isArray(record.files) ? record.files : []).slice().reverse().forEach(function(id) {
+    try { DriveApp.getFileById(id).setTrashed(true); } catch (_ignored) {}
+  });
+  (Array.isArray(record.folders) ? record.folders : []).forEach(function(id) {
+    try { DriveApp.getFolderById(id).setTrashed(true); } catch (_ignored) {}
+  });
+}
+
+function savePromptImageFile_(file, alt) {
+  var normalized = normalizePhotoFile_(file, PHOTO_PROMPT_TYPES_, PHOTO_MAX_BYTES_);
+  var root = photoRootFolder_(QUESTION_IMAGE_ROOT_FOLDER_ID);
+  var driveFile = root.createFile(Utilities.newBlob(
+    normalized.bytes,
+    normalized.mimeType,
+    'question-image-' + new Date().getTime() + '.' + normalized.extension
+  ));
+  driveFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  var url = 'https://drive.google.com/uc?export=view&id=' + encodeURIComponent(driveFile.getId());
+  return {
+    storedValue: {
+      url: url,
+      alt: String(alt || '').trim().slice(0, 160),
+      storageKey: driveFile.getId()
+    },
+    publicValue: {
+      url: url,
+      alt: String(alt || '').trim().slice(0, 160)
+    }
+  };
+}
+
+function trashPromptImage_(storageKey) {
+  if (!storageKey) return;
+  try { DriveApp.getFileById(storageKey).setTrashed(true); } catch (_ignored) {}
+}
+
+function savePromptQuestionImage_(payload, actor) {
+  var request = requireAdminObject_(payload);
+  if (typeof request.eventId !== 'string' || !request.eventId.trim() ||
+      typeof request.questionId !== 'string' || !request.questionId.trim()) {
+    adminError_('INVALID_REQUEST');
+  }
+  return withScriptLock_(function() {
+    var registry = getRootConfiguredSpreadsheet_();
+    requireNoSwitchMaintenance_(registry);
+    var spreadsheet = getAdminEventSpreadsheet_(registry, request.eventId.trim());
+    var question = findAdminEventChildRow_(
+      spreadsheet, '报名问题', 'questionId', request.questionId.trim(), request.eventId.trim()
+    );
+    if (!question) adminError_('NOT_FOUND');
+    var previous = photoOptionsObject_(question.options).promptImage;
+    var saved = savePromptImageFile_(request.file, request.alt);
+    try {
+      var options = photoOptionsObject_(question.options);
+      options.promptImage = saved.storedValue;
+      question.options = JSON.stringify(options);
+      question.updatedAt = new Date().toISOString();
+      writeAdminRow_(spreadsheet, '报名问题', question.rowNumber, question);
+      appendAdminAudit_(spreadsheet, 'UPLOAD_QUESTION_IMAGE', 'question', question.questionId,
+        actor, { eventId: question.eventId });
+    } catch (error) {
+      trashPromptImage_(saved.storedValue.storageKey);
+      throw error;
+    }
+    if (previous && previous.storageKey) trashPromptImage_(previous.storageKey);
+    return saved.publicValue;
+  });
+}
+
+function removePromptQuestionImage_(payload, actor) {
+  var request = requireAdminObject_(payload);
+  if (request.confirm !== true || typeof request.eventId !== 'string' || !request.eventId.trim() ||
+      typeof request.questionId !== 'string' || !request.questionId.trim()) {
+    adminError_(request.confirm === true ? 'INVALID_REQUEST' : 'CONFIRMATION_REQUIRED');
+  }
+  return withScriptLock_(function() {
+    var registry = getRootConfiguredSpreadsheet_();
+    requireNoSwitchMaintenance_(registry);
+    var spreadsheet = getAdminEventSpreadsheet_(registry, request.eventId.trim());
+    var question = findAdminEventChildRow_(
+      spreadsheet, '报名问题', 'questionId', request.questionId.trim(), request.eventId.trim()
+    );
+    if (!question) adminError_('NOT_FOUND');
+    var options = photoOptionsObject_(question.options);
+    var previous = options.promptImage;
+    delete options.promptImage;
+    question.options = JSON.stringify(options);
+    question.updatedAt = new Date().toISOString();
+    writeAdminRow_(spreadsheet, '报名问题', question.rowNumber, question);
+    if (previous && previous.storageKey) trashPromptImage_(previous.storageKey);
+    appendAdminAudit_(spreadsheet, 'REMOVE_QUESTION_IMAGE', 'question', question.questionId,
+      actor, { eventId: question.eventId });
+    return { removed: true };
+  });
+}
+
 ===== apps-script/RegistrationService.gs =====
 var REGISTRATION_ACTIVE_STATUSES = { active: true, confirmed: true };
 
@@ -1106,7 +1394,21 @@ function createRegistration(payload) {
           (status === 'active' || status === 'open' || status === 'upcoming');
       });
       var registrations = readRows(spreadsheet, '报名项目');
-      var answers = validateDynamicAnswers_(questions, request.answers);
+      var normalizedUploads = validateRegistrationUploads_(questions, request.uploads);
+      var submittedAnswers = {};
+      Object.keys(request.answers || {}).forEach(function(questionId) {
+        submittedAnswers[questionId] = request.answers[questionId];
+      });
+      Object.keys(normalizedUploads).forEach(function(questionId) {
+        submittedAnswers[questionId] = normalizedUploads[questionId].map(function(file) {
+          return {
+            originalName: file.originalName,
+            mimeType: file.mimeType,
+            size: file.size
+          };
+        });
+      });
+      var answers = validateDynamicAnswers_(questions, submittedAnswers);
       var selectedSessions = validateSessionSelection_(event, sessions, request.sessionIds, policy);
 
       validateEventCapacity_(event.eventId, policy, registrations);
@@ -1136,8 +1438,16 @@ function createRegistration(payload) {
       var seatSnapshots = snapshotSeatRows_(spreadsheet, selectedSeats.concat(expiredSeats));
       var participant = null;
       var registrationBatch = null;
+      var uploadReceipt = null;
 
       try {
+        var savedUploads = saveRegistrationUploads_(
+          event.eventId, registrationId, normalizedUploads
+        );
+        uploadReceipt = savedUploads.receipt;
+        Object.keys(savedUploads.answersByQuestion).forEach(function(questionId) {
+          answers[questionId] = savedUploads.answersByQuestion[questionId];
+        });
         participant = appendParticipantRow_(spreadsheet, participantId, answers, policy, createdAt);
         var rowsToWrite = selectedSessions.length ? selectedSessions : [null];
         registrationBatch = appendRegistrationRows_(
@@ -1163,6 +1473,7 @@ function createRegistration(payload) {
           participant,
           registrationBatch
         );
+        rollbackRegistrationUploads_(uploadReceipt);
         if (cleanupFailures.length) {
           raiseRegistrationIntegrityError_(spreadsheet, registrationId, cleanupFailures);
         }
@@ -1189,6 +1500,7 @@ function createRegistration(payload) {
           participant,
           registrationBatch
         );
+        rollbackRegistrationUploads_(uploadReceipt);
         if (routeCleanupFailures.length) {
           raiseRegistrationIntegrityError_(
             spreadsheet,
@@ -1369,11 +1681,15 @@ function requireRegistrationPayload_(payload) {
   if (payload.answers && (typeof payload.answers !== 'object' || Array.isArray(payload.answers))) {
     registrationError_('INVALID_REQUEST');
   }
+  if (payload.uploads && (typeof payload.uploads !== 'object' || Array.isArray(payload.uploads))) {
+    registrationError_('INVALID_REQUEST');
+  }
   return {
     eventId: payload.eventId.trim(),
     sessionIds: payload.sessionIds === undefined ? [] : payload.sessionIds,
     seatChoices: payload.seatChoices === undefined ? [] : payload.seatChoices,
     answers: payload.answers || {},
+    uploads: payload.uploads || {},
     seatHoldOwner: typeof payload.seatHoldOwner === 'string' ? payload.seatHoldOwner : ''
   };
 }
@@ -1414,7 +1730,7 @@ function validateDynamicAnswers_(questions, submittedAnswers) {
   var normalized = {};
   var supportedTypes = {
     text: true, textarea: true, number: true, tel: true, email: true,
-    date: true, radio: true, checkbox: true, select: true, boolean: true
+    date: true, radio: true, checkbox: true, select: true, boolean: true, photo: true
   };
 
   questions.forEach(function(question) {
@@ -1428,7 +1744,7 @@ function validateDynamicAnswers_(questions, submittedAnswers) {
       (type === 'boolean' && value !== true);
     if (required && missing) registrationError_('INVALID_REQUEST');
     if (missing) {
-      normalized[question.questionId] = type === 'checkbox' ? [] : '';
+      normalized[question.questionId] = (type === 'checkbox' || type === 'photo') ? [] : '';
       return;
     }
 
@@ -1458,6 +1774,12 @@ function validateDynamicAnswers_(questions, submittedAnswers) {
       if (maximumSelections !== null && value.length > maximumSelections) registrationError_('INVALID_REQUEST');
       if (minimumSelections !== null && maximumSelections !== null &&
           minimumSelections > maximumSelections) registrationError_('INVALID_REQUEST');
+    } else if (type === 'photo') {
+      if (!Array.isArray(value) || value.some(function(file) {
+        return !file || typeof file !== 'object' || Array.isArray(file) ||
+          typeof file.originalName !== 'string' || typeof file.mimeType !== 'string' ||
+          !isFinite(Number(file.size));
+      })) registrationError_('INVALID_REQUEST');
     } else if (type === 'boolean') {
       if (typeof value !== 'boolean') registrationError_('INVALID_REQUEST');
     } else {
@@ -2230,7 +2552,8 @@ function buildStoredTicketFields_(questions, answers, policy) {
     if (typeof questionId === 'string' && questionId) allowed[questionId] = true;
   });
   return (questions || []).filter(function(question) {
-    return allowed[question.questionId] === true;
+    return allowed[question.questionId] === true &&
+      String(question.type || '').toLowerCase() !== 'photo';
   }).map(function(question) {
     return {
       id: String(question.questionId || ''),
@@ -4199,6 +4522,8 @@ function executeInternalActionLocked_(action, payload, actor) {
     'admin.saveSession': function() { return saveAdminSession_(payload, actor); },
     'admin.saveSeatPlan': function() { return saveAdminSeatPlan_(payload, actor); },
     'admin.saveQuestion': function() { return saveAdminQuestion_(payload, actor); },
+    'admin.uploadQuestionImage': function() { return savePromptQuestionImage_(payload, actor); },
+    'admin.removeQuestionImage': function() { return removePromptQuestionImage_(payload, actor); },
     'admin.recordAction': function() { return adminRecordAction_(payload, actor); },
     'admin.refreshReadableViews': function() { return refreshAdminReadableViews_(payload, actor); },
     'admin.testSheet': function() { return testAdminSheetConnection_(payload, actor); },
@@ -4612,7 +4937,7 @@ var ADMIN_SELECTION_MODES_ = {
 var ADMIN_SEAT_MODES_ = { none: true, self: true, auto: true, zone: true };
 var ADMIN_QUESTION_TYPES_ = {
   text: true, textarea: true, number: true, tel: true, email: true,
-  date: true, radio: true, checkbox: true, select: true, boolean: true
+  date: true, radio: true, checkbox: true, select: true, boolean: true, photo: true
 };
 var ADMIN_DRAFT_MAX_JSON_LENGTH_ = 45000;
 
@@ -5454,13 +5779,19 @@ function saveAdminQuestion_(payload, actor) {
       !Array.isArray(request.validation) ? request.validation :
       parseAdminQuestionOptions_(existing && existing.options).validation;
     validation = normalizeAdminQuestionValidation_(type, validation, choices);
+    var existingOptions = parseAdminQuestionOptions_(existing && existing.options);
+    var upload = type === 'photo'
+      ? normalizeAdminPhotoUpload_(request.upload || existingOptions.upload)
+      : null;
     var row = {
       questionId: questionId,
       eventId: request.eventId.trim(),
       label: label,
       type: type,
       required: adminBooleanField_(request, 'required', existing && adminTruthy_(existing.required), false),
-      options: JSON.stringify(adminQuestionStorage_(choices, validation)),
+      options: JSON.stringify(adminQuestionStorage_(
+        choices, validation, existingOptions.promptImage, upload
+      )),
       sortOrder: adminNonNegativeInteger_(adminField_(request, 'sortOrder', existing && existing.sortOrder, 0)),
       status: status,
       createdAt: existing ? existing.createdAt : now,
@@ -6370,6 +6701,8 @@ function adminQuestionProjection_(question, settings) {
     required: adminTruthy_(question.required),
     options: parsed.choices,
     validation: parsed.validation,
+    promptImage: parsed.promptImage,
+    upload: parsed.upload,
     sortOrder: Number(question.sortOrder || 0),
     status: String(question.status || ''),
     showOnTicket: adminListHas_(policy.showOnTicketFields, question.questionId),
@@ -6419,10 +6752,34 @@ function normalizeAdminQuestionValidation_(type, source, choices) {
   return normalized;
 }
 
-function adminQuestionStorage_(choices, validation) {
+function adminQuestionStorage_(choices, validation, promptImage, upload) {
   var result = { choices: choices.slice() };
   Object.keys(validation || {}).forEach(function(key) { result[key] = validation[key]; });
+  if (promptImage && typeof promptImage === 'object' && promptImage.url) {
+    result.promptImage = {
+      url: String(promptImage.url),
+      alt: String(promptImage.alt || ''),
+      storageKey: String(promptImage.storageKey || '')
+    };
+  }
+  if (upload) result.upload = upload;
   return result;
+}
+
+function normalizeAdminPhotoUpload_(source) {
+  var request = source && typeof source === 'object' && !Array.isArray(source) ? source : {};
+  var maxFiles = Number(request.maxFiles === undefined ? 3 : request.maxFiles);
+  var maxBytes = Number(request.maxBytes === undefined ? 5 * 1024 * 1024 : request.maxBytes);
+  if (!isFinite(maxFiles) || Math.floor(maxFiles) !== maxFiles || maxFiles < 1 || maxFiles > 5) {
+    adminError_('INVALID_REQUEST');
+  }
+  if (!isFinite(maxBytes) || Math.floor(maxBytes) !== maxBytes ||
+      maxBytes < 1024 || maxBytes > 5 * 1024 * 1024) adminError_('INVALID_REQUEST');
+  return {
+    maxFiles: maxFiles,
+    maxBytes: maxBytes,
+    acceptedMimeTypes: ['image/jpeg', 'image/png', 'image/heic', 'image/heif']
+  };
 }
 
 function adminQuestionSemanticRole_(request, policy, questionId, type, status) {
@@ -6453,11 +6810,11 @@ function adminQuestionSemanticRole_(request, policy, questionId, type, status) {
 }
 
 function parseAdminQuestionOptions_(serialized) {
-  if (!serialized) return { choices: [], validation: {} };
+  if (!serialized) return { choices: [], validation: {}, promptImage: null, upload: null };
   try {
     var parsed = typeof serialized === 'string' ? JSON.parse(serialized) : serialized;
-    if (Array.isArray(parsed)) return { choices: parsed, validation: {} };
-    if (!parsed || typeof parsed !== 'object') return { choices: [], validation: {} };
+    if (Array.isArray(parsed)) return { choices: parsed, validation: {}, promptImage: null, upload: null };
+    if (!parsed || typeof parsed !== 'object') return { choices: [], validation: {}, promptImage: null, upload: null };
     var validation = parsed.validation && typeof parsed.validation === 'object' &&
       !Array.isArray(parsed.validation) ? parsed.validation : {};
     ['minLength', 'maxLength', 'min', 'max', 'pattern', 'minSelections', 'maxSelections']
@@ -6467,10 +6824,13 @@ function parseAdminQuestionOptions_(serialized) {
     return {
       choices: Array.isArray(parsed.choices) ? parsed.choices :
         (Array.isArray(parsed.options) ? parsed.options : []),
-      validation: validation
+      validation: validation,
+      promptImage: parsed.promptImage && typeof parsed.promptImage === 'object'
+        ? parsed.promptImage : null,
+      upload: parsed.upload && typeof parsed.upload === 'object' ? parsed.upload : null
     };
   } catch (_ignored) {
-    return { choices: [], validation: {} };
+    return { choices: [], validation: {}, promptImage: null, upload: null };
   }
 }
 
@@ -6964,7 +7324,7 @@ function publicQuestionProjection_(question, policy) {
     semanticRole = role;
     return true;
   });
-  return {
+  var projection = {
     id: String(question.questionId || ''),
     label: String(question.label || ''),
     type: String(question.type || '').toLowerCase(),
@@ -6974,6 +7334,9 @@ function publicQuestionProjection_(question, policy) {
     sortOrder: publicNonNegativeNumber_(question.sortOrder, 0),
     semanticRole: semanticRole
   };
+  if (parsed.promptImage) projection.promptImage = parsed.promptImage;
+  if (projection.type === 'photo') projection.upload = parsed.upload;
+  return projection;
 }
 
 function publicQuestionConfiguration_(serialized) {
@@ -6994,12 +7357,46 @@ function publicQuestionConfiguration_(serialized) {
       if (parsed[key] !== undefined) constraints[key] = parsed[key];
       else if (legacy[key] !== undefined) constraints[key] = legacy[key];
     });
+  var promptImage = publicPromptImage_(parsed.promptImage);
   return {
     choices: Array.isArray(parsed.choices) ? parsed.choices.filter(function(value) {
       return typeof value === 'string';
     }) : [],
-    constraints: constraints
+    constraints: constraints,
+    promptImage: promptImage,
+    upload: publicPhotoUploadConfiguration_(parsed.upload)
   };
+}
+
+function publicPromptImage_(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  var url = String(value.url || '').trim();
+  if (!/^https:\/\//i.test(url)) return null;
+  return {
+    url: url,
+    alt: String(value.alt || '').trim().slice(0, 200)
+  };
+}
+
+function publicPhotoUploadConfiguration_(value) {
+  var source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  var allowed = {
+    'image/jpeg': true,
+    'image/png': true,
+    'image/heic': true,
+    'image/heif': true
+  };
+  var accept = Array.isArray(source.accept) ? source.accept.filter(function(type, index, list) {
+    return allowed[type] === true && list.indexOf(type) === index;
+  }) : Object.keys(allowed);
+  if (!accept.length) accept = Object.keys(allowed);
+  var maxFiles = Math.floor(Number(source.maxFiles));
+  if (!isFinite(maxFiles)) maxFiles = 3;
+  maxFiles = Math.max(1, Math.min(5, maxFiles));
+  var maxBytes = Math.floor(Number(source.maxBytes));
+  if (!isFinite(maxBytes)) maxBytes = 5 * 1024 * 1024;
+  maxBytes = Math.max(1024, Math.min(5 * 1024 * 1024, maxBytes));
+  return { maxFiles: maxFiles, maxBytes: maxBytes, accept: accept };
 }
 
 function publicGroupRule_(value) {

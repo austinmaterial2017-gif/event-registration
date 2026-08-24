@@ -439,6 +439,7 @@ async function createSystem({ onWrite, failActivityCreationStage, extraSheetData
   for (const file of [
     "Repository.gs",
     "ReadableViews.gs",
+    "PhotoUploadService.gs",
     "RegistrationService.gs",
     "TicketService.gs",
     "AttendanceService.gs",

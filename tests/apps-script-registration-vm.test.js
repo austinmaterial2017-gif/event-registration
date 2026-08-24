@@ -260,6 +260,127 @@ function sheetObjects(sheet) {
     Object.fromEntries(headers[sheet.name].map((key, index) => [key, values[index]])));
 }
 
+async function createPhotoStorageHarness() {
+  let nextId = 0;
+  const items = new Map();
+  class FakeFile {
+    constructor(name, blob) {
+      this.id = `file-${++nextId}`;
+      this.name = name;
+      this.blob = blob;
+      this.trashed = false;
+      this.sharing = "PRIVATE";
+      items.set(this.id, this);
+    }
+    getId() { return this.id; }
+    getUrl() { return `https://drive.google.com/file/d/${this.id}/view`; }
+    setSharing(access) { this.sharing = access; return this; }
+    setTrashed(value) { this.trashed = value; return this; }
+  }
+  class FakeFolder {
+    constructor(name) {
+      this.id = `folder-${++nextId}`;
+      this.name = name;
+      this.files = [];
+      this.folders = [];
+      this.trashed = false;
+      items.set(this.id, this);
+    }
+    getId() { return this.id; }
+    createFolder(name) { const folder = new FakeFolder(name); this.folders.push(folder); return folder; }
+    createFile(blob) { const file = new FakeFile(blob.name, blob); this.files.push(file); return file; }
+    setTrashed(value) { this.trashed = value; return this; }
+  }
+  const promptRoot = new FakeFolder("prompt-root");
+  const answerRoot = new FakeFolder("answer-root");
+  const properties = new Map([
+    ["QUESTION_IMAGE_ROOT_FOLDER_ID", promptRoot.getId()],
+    ["REGISTRATION_UPLOAD_ROOT_FOLDER_ID", answerRoot.getId()]
+  ]);
+  const context = vm.createContext({
+    console, Date, JSON, Math, Object, Array, String, Number, RegExp, Error, isFinite,
+    PropertiesService: { getScriptProperties: () => ({ getProperty: (key) => properties.get(key) || "" }) },
+    DriveApp: {
+      Access: { ANYONE_WITH_LINK: "ANYONE_WITH_LINK", PRIVATE: "PRIVATE" },
+      Permission: { VIEW: "VIEW" },
+      getFolderById: (id) => items.get(id),
+      getFileById: (id) => items.get(id)
+    },
+    Utilities: {
+      base64Decode: (value) => [...Buffer.from(value, "base64")],
+      newBlob: (bytes, mimeType, name) => ({ bytes, mimeType, name })
+    }
+  });
+  vm.runInContext(await readFile(new URL("PhotoUploadService.gs", serviceRoot), "utf8"), context, {
+    filename: "PhotoUploadService.gs"
+  });
+  return { context, promptRoot, answerRoot, items };
+}
+
+test("photo storage validates first, keeps answer files private, and rolls back every created item", async () => {
+  const harness = await createPhotoStorageHarness();
+  const questions = [{
+    questionId: "receipt", type: "photo", status: "active", required: true,
+    options: JSON.stringify({ upload: { maxFiles: 2, maxBytes: 1024 } })
+  }];
+  const uploads = {
+    receipt: [{
+      originalName: "../receipt.jpg", mimeType: "image/jpeg", size: 4,
+      base64: Buffer.from([1, 2, 3, 4]).toString("base64")
+    }]
+  };
+  const normalized = harness.context.validateRegistrationUploads_(questions, uploads);
+  const saved = harness.context.saveRegistrationUploads_("event/1", "registration/1", normalized);
+
+  assert.equal(saved.answersByQuestion.receipt[0].originalName, "receipt.jpg");
+  assert.equal(saved.answersByQuestion.receipt[0].mimeType, "image/jpeg");
+  assert.equal(saved.answersByQuestion.receipt[0].size, 4);
+  assert.match(saved.answersByQuestion.receipt[0].adminUrl, /^https:\/\/drive\.google\.com\/file\/d\//);
+  assert.equal(harness.answerRoot.folders[0].folders[0].files[0].sharing, "PRIVATE");
+  assert.doesNotMatch(harness.answerRoot.folders[0].name, /\//);
+  assert.doesNotMatch(harness.answerRoot.folders[0].folders[0].name, /\//);
+
+  harness.context.rollbackRegistrationUploads_(saved.receipt);
+  assert.equal(harness.answerRoot.folders[0].folders[0].files[0].trashed, true);
+  assert.equal(harness.answerRoot.folders[0].folders[0].trashed, true);
+});
+
+test("photo validation rejects unsafe type, size, count, and unknown question before Drive writes", async () => {
+  const harness = await createPhotoStorageHarness();
+  const questions = [{
+    questionId: "receipt", type: "photo", status: "active", required: false,
+    options: JSON.stringify({ upload: { maxFiles: 1, maxBytes: 5 } })
+  }];
+  const file = (mimeType, size = 4) => ({
+    originalName: "x.jpg", mimeType, size,
+    base64: Buffer.alloc(size).toString("base64")
+  });
+  for (const uploads of [
+    { receipt: [file("application/pdf")] },
+    { receipt: [file("image/jpeg", 6)] },
+    { receipt: [file("image/jpeg"), file("image/jpeg")] },
+    { unknown: [file("image/jpeg")] }
+  ]) {
+    assert.throws(() => harness.context.validateRegistrationUploads_(questions, uploads));
+  }
+  assert.equal(harness.answerRoot.folders.length, 0);
+});
+
+test("prompt image storage is link-readable and replacement metadata contains no root ID", async () => {
+  const harness = await createPhotoStorageHarness();
+  const result = harness.context.savePromptImageFile_({
+    originalName: "guide.webp", mimeType: "image/webp", size: 3,
+    base64: Buffer.from([7, 8, 9]).toString("base64")
+  }, "Question guide");
+  const file = harness.promptRoot.files[0];
+  assert.equal(file.sharing, "ANYONE_WITH_LINK");
+  assert.deepEqual(JSON.parse(JSON.stringify(result.publicValue)), {
+    url: `https://drive.google.com/uc?export=view&id=${file.id}`,
+    alt: "Question guide"
+  });
+  assert.equal(JSON.stringify(result).includes(harness.promptRoot.id), false);
+});
+
 function sheetWithHeader(harness, header) {
   return Object.values(harness.sheets).find((sheet) => headers[sheet.name].includes(header));
 }

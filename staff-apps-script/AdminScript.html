@@ -751,7 +751,8 @@
     function updateConditionalQuestionFields_() {
       const form = document.querySelector("#question-form");
       const isPhoto = form.elements.type.value === "photo";
-      document.querySelector("#photo-question-settings").hidden = !isPhoto;
+      const settings = document.querySelector("#photo-question-settings");
+      if (settings) settings.hidden = !isPhoto;
       if (isPhoto) {
         form.elements.semanticRole.value = "";
         form.elements.showOnTicket.checked = false;
@@ -762,6 +763,7 @@
     function renderQuestionImagePreview_() {
       const preview = document.querySelector("#question-image-preview");
       const image = state.editingQuestionPromptImage;
+      if (!preview) return;
       preview.hidden = !(image && image.url);
       if (image && image.url) {
         preview.src = image.url;
@@ -770,7 +772,8 @@
         preview.removeAttribute("src");
         preview.alt = "题目图片预览";
       }
-      document.querySelector("#remove-question-image").disabled = !(image && image.url);
+      const removeButton = document.querySelector("#remove-question-image");
+      if (removeButton) removeButton.disabled = !(image && image.url);
     }
 
     function readAdminImageFile_(file, allowedTypes) {
@@ -1324,7 +1327,8 @@
     document.querySelector("#question-form").elements.duplicateIdentity
       .addEventListener("change", syncQuestionCompatibility_);
 
-    document.querySelector("#upload-question-image").addEventListener("click", async (event) => {
+    const uploadQuestionImageButton = document.querySelector("#upload-question-image");
+    if (uploadQuestionImageButton) uploadQuestionImageButton.addEventListener("click", async (event) => {
       const form = document.querySelector("#question-form");
       if (!state.selectedEventId || !form.elements.questionId.value) {
         setStatus("请先保存这个问题，再上传题目图片。", "error");
@@ -1356,7 +1360,8 @@
       }
     });
 
-    document.querySelector("#remove-question-image").addEventListener("click", (event) => {
+    const removeQuestionImageButton = document.querySelector("#remove-question-image");
+    if (removeQuestionImageButton) removeQuestionImageButton.addEventListener("click", (event) => {
       const form = document.querySelector("#question-form");
       if (!state.selectedEventId || !form.elements.questionId.value ||
           !state.editingQuestionPromptImage) return;

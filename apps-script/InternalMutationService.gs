@@ -758,10 +758,6 @@ function saveAdminDraft_(payload, actor) {
     if (existing && existing.finalizedEventId) adminError_('CONFLICT');
     var document = validateActivityDraftDocument_(request);
     var now = new Date().toISOString();
-    var existingOptions = parseAdminQuestionOptions_(existing && existing.options);
-    var upload = type === 'photo'
-      ? normalizeAdminPhotoUpload_(request.upload || existingOptions.upload)
-      : null;
     var row = {
       draftId: existing ? existing.draftId : Utilities.getUuid(),
       payload: JSON.stringify(document),
@@ -1420,6 +1416,10 @@ function saveAdminQuestion_(payload, actor) {
       !Array.isArray(request.validation) ? request.validation :
       parseAdminQuestionOptions_(existing && existing.options).validation;
     validation = normalizeAdminQuestionValidation_(type, validation, choices);
+    var existingOptions = parseAdminQuestionOptions_(existing && existing.options);
+    var upload = type === 'photo'
+      ? normalizeAdminPhotoUpload_(request.upload || existingOptions.upload)
+      : null;
     var row = {
       questionId: questionId,
       eventId: request.eventId.trim(),

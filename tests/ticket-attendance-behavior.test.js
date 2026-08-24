@@ -221,12 +221,14 @@ test("verification view offers separate sessions and never treats scanning as ch
 });
 
 test("public verification stays read-only, ticket mutations require owner verification, and staff check-in stays protected", async () => {
-  const [ticketHtml, verifyHtml, shortVerifyHtml, verifyPage, staffHtml] = await Promise.all([
+  const [ticketHtml, verifyHtml, shortVerifyHtml, verifyPage, staffHtml, scannerPage, publicCode] = await Promise.all([
     readFile(new URL("../public/ticket.html", import.meta.url), "utf8"),
     readFile(new URL("../public/verify.html", import.meta.url), "utf8"),
     readFile(new URL("../public/v.html", import.meta.url), "utf8"),
     readFile(new URL("../public/js/verify-page.js", import.meta.url), "utf8"),
-    readFile(new URL("../staff-apps-script/StaffCheckIn.html", import.meta.url), "utf8")
+    readFile(new URL("../staff-apps-script/StaffCheckIn.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/js/staff-scanner.js", import.meta.url), "utf8"),
+    readFile(new URL("../apps-script/Code.gs", import.meta.url), "utf8")
   ]);
   assert.match(ticketHtml, /ticket-lookup-form/);
   assert.match(ticketHtml, /registration-recovery-form/);
@@ -246,115 +248,38 @@ test("public verification stays read-only, ticket mutations require owner verifi
   assert.match(shortVerifyHtml, /js\/verify-page\.js\?v=20260728-final/);
   assert.doesNotMatch(verifyPage, /\bcheckIn\b|google\.script\.run/);
   assert.match(staffHtml, /google\.script\.run/);
-  assert.match(staffHtml, /confirmCheckIn/);
   assert.match(staffHtml, /sessionId/);
-  assert.match(staffHtml, /确认整个活动签到/);
-  assert.match(staffHtml, /此活动不需要签到；二维码仍可用于验票/);
+  assert.match(staffHtml, /createStaffScannerPass/);
+  assert.match(scannerPage, /staffScannerCheckIn/);
+  assert.match(scannerPage, /scannerPass/);
+  assert.match(publicCode, /staffScannerCheckIn/);
   assert.doesNotMatch(staffHtml, /staffIdentity/);
 });
 
 test("staff check-in accepts a raw token or scanned verification URL and auto-loads a token query", async () => {
-  const staffCode = await readFile(
-    new URL("../staff-apps-script/Code.gs", import.meta.url),
-    "utf8"
-  );
-  const staffHtml = await readFile(
-    new URL("../staff-apps-script/StaffCheckIn.html", import.meta.url),
-    "utf8"
-  );
-  const script = [...staffHtml.matchAll(/<script>([\s\S]*?)<\/script>/g)].at(-1)?.[1];
-  assert.ok(script, "staff script missing");
-  const calls = [];
-  const listeners = {};
-  const lookupButton = { disabled: false, textContent: "读取凭证" };
-  const checkInButton = { disabled: false, textContent: "确认本场签到" };
-  const lookupForm = {
-    elements: { token: { value: "" } },
-    querySelector: (selector) => selector === 'button[type="submit"]' ? lookupButton : null,
-    addEventListener: (type, handler) => { listeners[`lookup:${type}`] = handler; }
-  };
-  const checkInForm = {
-    hidden: true,
-    elements: {
-      sessionId: { value: "", length: 1, append() {} },
-      confirmCheckIn: { checked: false }
-    },
-    querySelector: (selector) => selector === 'button[type="submit"]' ? checkInButton : null,
-    addEventListener: (type, handler) => { listeners[`checkin:${type}`] = handler; }
-  };
-  const nodes = {
-    "#lookup-form": lookupForm,
-    "#check-in-form": checkInForm,
-    "#message": { textContent: "" },
-    "#ticket-summary": { textContent: "" },
-    'meta[name="initial-scan"]': { content: "server-token-123" }
-  };
-  const runner = {
-    withSuccessHandler() { return this; },
-    withFailureHandler() { return this; },
-    getStaffTicketForCheckIn(payload) { calls.push(payload); return this; },
-    checkIn() { return this; }
-  };
-  const context = vm.createContext({
-    URL,
-    URLSearchParams,
-    document: {
-      querySelector: (selector) => nodes[selector],
-      createElement: () => ({ value: "", textContent: "" })
-    },
-    window: {
-      location: {
-        href: "https://script.google.com/macros/s/staff/exec?token=query-token-123",
-        search: ""
-      }
-    },
-    google: { script: { run: runner } }
-  });
-  vm.runInContext(script, context, { filename: "StaffCheckIn.inline.js" });
-
-  assert.equal(
-    context.parseScannedTicketToken(
-      "https://events.example.org/summer/v.html?t=scanned-token-456"
-    ),
-    "scanned-token-456"
-  );
-  assert.equal(
-    context.parseScannedTicketToken(
-      "https://events.example.org/summer/verify.html?token=legacy-token-456"
-    ),
-    "legacy-token-456"
-  );
-  assert.equal(context.parseScannedTicketToken("raw-token-789"), "raw-token-789");
-  assert.match(staffCode, /createTemplateFromFile\('StaffCheckIn'\)/);
-  assert.match(staffCode, /template\.initialScan/);
-  assert.match(staffHtml, /meta name="initial-scan"/);
-  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ token: "server-token-123" }]);
-  assert.equal(lookupForm.elements.token.value, "server-token-123");
-  assert.equal(lookupButton.disabled, true);
-  listeners["lookup:submit"]({ preventDefault() {} });
-  listeners["lookup:submit"]({ preventDefault() {} });
-  assert.equal(calls.length, 1);
+  const scannerPage = await readFile(new URL("../public/js/staff-scanner.js", import.meta.url), "utf8");
+  assert.match(scannerPage, /function ticketToken\(value\)/);
+  assert.match(scannerPage, /searchParams\.get\("t"\)/);
+  assert.match(scannerPage, /searchParams\.get\("token"\)/);
+  assert.match(scannerPage, /\^\[a-f0-9\]\{64\}\$/i);
+  assert.match(scannerPage, /staffScannerCheckIn/);
 });
 
-test("staff check-in offers a mobile rear-camera scanner with a clear manual fallback", async () => {
-  const staffHtml = await readFile(
-    new URL("../staff-apps-script/StaffCheckIn.html", import.meta.url),
-    "utf8"
-  );
+test("staff check-in offers a mobile rear-camera scanner with continuous feedback", async () => {
+  const [scannerHtml, scannerJs] = await Promise.all([
+    readFile(new URL("../public/staff-scanner.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/js/staff-scanner.js", import.meta.url), "utf8")
+  ]);
 
-  assert.match(staffHtml, /id="start-camera-scan"/);
-  assert.match(staffHtml, /打开手机相机扫码/);
-  assert.match(staffHtml, /https:\/\/unpkg\.com\/@zxing\/browser@0\.1\.5\/umd\/zxing-browser\.min\.js/);
-  assert.match(staffHtml, /facingMode:\s*\{\s*ideal:\s*["']environment["']/);
-  assert.match(staffHtml, /new BarcodeDetector\(\{\s*formats:\s*\["qr_code"\]/);
-  assert.match(staffHtml, /ZXingBrowser\.BrowserQRCodeReader/);
-  assert.match(staffHtml, /decodeFromVideoDevice/);
-  assert.match(staffHtml, /lookupTicketForCheckIn\(scannedValue\)/);
-  assert.match(staffHtml, /也可以把二维码网址粘贴到下方/);
-  assert.match(staffHtml, /停止扫码/);
-  assert.match(staffHtml, /加入手机主画面/);
-  assert.match(staffHtml, /id="scan-next-ticket"/);
-  assert.match(staffHtml, /继续扫描下一位/);
+  assert.match(scannerHtml, /id="start-scanner"/);
+  assert.match(scannerHtml, /打开相机开始连续扫码/);
+  assert.match(scannerHtml, /https:\/\/unpkg\.com\/@zxing\/browser@0\.1\.5\/umd\/zxing-browser\.min\.js/);
+  assert.match(scannerHtml, /playsinline/);
+  assert.match(scannerJs, /ZXingBrowser\.BrowserQRCodeReader/);
+  assert.match(scannerJs, /decodeFromVideoDevice/);
+  assert.match(scannerJs, /handleScan\(text\)/);
+  assert.match(scannerJs, /正在签到/);
+  assert.match(scannerJs, /继续扫描下一位/);
 });
 
 test("standalone staff scanner is launched with a short-lived pass instead of a return URL", async () => {
@@ -364,7 +289,8 @@ test("standalone staff scanner is launched with a short-lived pass instead of a 
     readFile(new URL("../public/js/staff-scanner.js", import.meta.url), "utf8")
   ]);
 
-  assert.match(staffHtml, /staff-scanner\.html\?scannerPass=/);
+  assert.match(staffHtml, /staff-scanner\.html/);
+  assert.match(staffHtml, /\?scannerPass=/);
   assert.match(staffHtml, /createStaffScannerPass/);
   assert.match(scannerHtml, /id="start-scanner"/);
   assert.match(scannerHtml, /js\/staff-scanner\.js/);

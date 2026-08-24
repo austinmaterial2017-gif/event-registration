@@ -260,6 +260,12 @@ async function createHarness() {
   const context = vm.createContext({
     document,
     FormData: FakeFormData,
+    FileReader: class {
+      readAsDataURL(file) {
+        this.result = `data:${file.type};base64,AQID`;
+        queueMicrotask(() => this.onload());
+      }
+    },
     URL,
     console,
     google: { script: { get run() { return new Runner(); } } },
@@ -774,6 +780,41 @@ test("photo question saves bounded upload settings without identity or ticket fl
   assert.equal(mutation.payload.showOnTicket, false);
   assert.equal(mutation.payload.duplicateIdentity, false);
   assert.equal(mutation.payload.semanticRole, "");
+});
+
+test("question image upload and remove buttons send one mutation and show explicit feedback", async () => {
+  const ui = await createHarness();
+  ui.selector.value = "B";
+  ui.selector.dispatch("change");
+  ui.requests.at(-1).success({ ok: true, data: dashboard("B", "Activity B") });
+  ui.questionForm.elements.questionId.value = "question-photo";
+  ui.questionForm.elements.promptImageAlt.value = "付款说明";
+  ui.questionForm.elements.promptImageFile.files = [{
+    name: "guide.png", type: "image/png", size: 3
+  }];
+
+  ui.elements.get("#upload-question-image").dispatch("click");
+  await new Promise((resolve) => setImmediate(resolve));
+  const upload = ui.mutations.at(-1);
+  assert.equal(upload.kind, "questionImageUpload");
+  assert.equal(upload.payload.eventId, "B");
+  assert.equal(upload.payload.questionId, "question-photo");
+  assert.equal(upload.payload.file.dataUrl, "data:image/png;base64,AQID");
+  assert.equal(ui.elements.get("#upload-question-image").disabled, true);
+  upload.success({
+    ok: true,
+    data: { url: "https://drive.google.com/uc?id=safe", alt: "付款说明" }
+  });
+  assert.equal(ui.elements.get("#admin-status").textContent, "题目图片上传成功。");
+
+  ui.elements.get("#remove-question-image").dispatch("click");
+  const remove = ui.mutations.at(-1);
+  assert.equal(remove.kind, "questionImageRemove");
+  assert.deepEqual(JSON.parse(JSON.stringify(remove.payload)), {
+    eventId: "B", questionId: "question-photo", confirm: true
+  });
+  remove.success({ ok: true, data: { removed: true } });
+  assert.equal(ui.elements.get("#admin-status").textContent, "题目图片已移除。");
 });
 
 test("question form automatically keeps semantic role and identity settings compatible", async () => {

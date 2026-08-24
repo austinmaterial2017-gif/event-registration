@@ -1,8 +1,9 @@
-import { createRegistration, getEvent } from "./api.js?v=20260806-feedback";
-import { createSeatHold, releaseSeatHold } from "./api.js?v=20260806-feedback";
+import { createRegistration, getEvent } from "./api.js?v=20260824-photo";
+import { createSeatHold, releaseSeatHold } from "./api.js?v=20260824-photo";
 import { applyRegistrationGate, getFieldControlSpec, getSeatModeState, validateRegistrationDraft } from "./registration-flow.js";
 import { transitionToTicket } from "./registration-success.js";
 import { createRegistrationAttemptTimer } from "./registration-attempt-timer.js?v=20260728-timer";
+import { answerMetadataForFiles, serializePhotoFiles, validatePhotoFiles } from "./photo-answers.js?v=20260824-photo";
 
 const form = typeof document === "undefined" ? null : document.querySelector("#registration-form");
 const state = {
@@ -13,6 +14,7 @@ const state = {
   seatPending: new Set(),
   holdOwner: "",
   holdTimer: null,
+  photoFiles: new Map(),
   review: null,
   event: null,
   serverOffset: Number.NaN,
@@ -43,6 +45,42 @@ function appendFieldLabel(container, field, controlId) {
   const label = node("label"); label.htmlFor = controlId; label.append(document.createTextNode(field.label));
   const marker = node("span", field.required ? "required-mark" : "optional-mark", field.required ? " *" : "（选填）");
   marker.setAttribute("aria-label", field.required ? "必填" : "选填"); label.append(marker); container.append(label);
+}
+
+function appendPromptImage(container, field) {
+  const source = field?.promptImage;
+  if (!source?.url) return;
+  const image = document.createElement("img");
+  image.className = "question-prompt-image";
+  image.src = source.url;
+  image.alt = source.alt || `${field.label}说明图片`;
+  image.loading = "lazy";
+  image.decoding = "async";
+  container.append(image);
+}
+
+function renderPhotoSelection(wrapper, field, input) {
+  let list = wrapper.querySelector(".photo-selection");
+  if (!list) { list = node("div", "photo-selection"); wrapper.append(list); }
+  list.replaceChildren();
+  const files = state.photoFiles.get(field.id) || [];
+  if (!files.length) { list.append(node("p", "helper", "尚未选择照片。")); return; }
+  for (const [index, file] of files.entries()) {
+    const row = node("div", "photo-selection-row");
+    const remove = node("button", "secondary-button remove-photo", "删除");
+    remove.type = "button";
+    remove.dataset.index = String(index);
+    remove.addEventListener("click", () => {
+      const next = [...(state.photoFiles.get(field.id) || [])];
+      next.splice(index, 1);
+      state.photoFiles.set(field.id, next);
+      input.value = "";
+      renderPhotoSelection(wrapper, field, input);
+      showErrors([]);
+    });
+    row.append(node("span", "", `${file.name} · ${Math.max(1, Math.ceil(file.size / 1024))}KB`), remove);
+    list.append(row);
+  }
 }
 
 function renderSessionChoices(event) {
@@ -415,6 +453,7 @@ function renderQuestions(event) {
   for (const field of event.fields || []) {
     const controlSpec = getFieldControlSpec(field.type); const wrapper = field.type === "radio" || field.type === "checkbox" ? document.createElement("fieldset") : node("div"); wrapper.className = "question"; wrapper.dataset.fieldType = field.type;
     const controlId = `field-${field.id}`;
+    appendPromptImage(wrapper, field);
     if (field.type === "radio" || field.type === "checkbox") {
       const legend = node("legend", "", field.label); legend.append(node("span", field.required ? "required-mark" : "optional-mark", field.required ? " *" : "（选填）")); wrapper.append(legend);
       const options = node("div", "inline-options"); for (const value of field.options || []) { const label = node("label"); const input = document.createElement("input"); input.type = field.type; input.name = field.id; input.value = value; input.required = field.required; label.append(input, document.createTextNode(value)); options.append(label); } wrapper.append(options);
@@ -425,7 +464,22 @@ function renderQuestions(event) {
       if (controlSpec.inputType) { control.type = controlSpec.inputType; control.autocomplete = field.autocomplete || ""; if (field.min !== undefined) control.min = String(field.min); }
       appendFieldLabel(wrapper, field, controlId);
       if (field.type === "select") { const placeholder = node("option", "", "请选择"); placeholder.value = ""; control.append(placeholder); for (const value of field.options || []) { const option = node("option", "", value); option.value = value; control.append(option); } }
+      if (field.type === "photo") {
+        const maxFiles = Math.max(1, Number(field.upload?.maxFiles) || 1);
+        control.accept = (field.upload?.accept || ["image/jpeg", "image/png", "image/heic", "image/heif"]).join(",");
+        control.multiple = maxFiles > 1;
+        control.required = false;
+        control.addEventListener("change", () => {
+          const files = Array.from(control.files || []);
+          const errors = validatePhotoFiles(field, files);
+          if (errors.length) { control.value = ""; showErrors(errors); return; }
+          state.photoFiles.set(field.id, files);
+          renderPhotoSelection(wrapper, field, control);
+          showErrors([]);
+        });
+      }
       wrapper.append(control);
+      if (field.type === "photo") renderPhotoSelection(wrapper, field, control);
     }
     const constraints = field.constraints && typeof field.constraints === "object"
       ? field.constraints : {};
@@ -446,7 +500,7 @@ function renderQuestions(event) {
 
 function collectAnswers(event) {
   const answers = {};
-  for (const field of event.fields || []) { const controls = [...form.elements].filter((control) => control.name === field.id); if (field.type === "checkbox") answers[field.id] = controls.filter((control) => control.checked).map((control) => control.value); else if (field.type === "boolean") answers[field.id] = controls[0]?.checked === true; else answers[field.id] = controls.find((control) => control.checked || control.type !== "radio")?.value ?? ""; }
+  for (const field of event.fields || []) { const controls = [...form.elements].filter((control) => control.name === field.id); if (field.type === "photo") answers[field.id] = answerMetadataForFiles(state.photoFiles.get(field.id)); else if (field.type === "checkbox") answers[field.id] = controls.filter((control) => control.checked).map((control) => control.value); else if (field.type === "boolean") answers[field.id] = controls[0]?.checked === true; else answers[field.id] = controls.find((control) => control.checked || control.type !== "radio")?.value ?? ""; }
   return answers;
 }
 
@@ -459,7 +513,7 @@ function showErrors(messages) {
 function showReview(event, request) {
   const details = document.querySelector("#review-details"); details.replaceChildren();
   const sessionNames = formatSelectedSessionLabels(event, request.sessionIds);
-  const rows = [["已选场次", sessionNames], ["座位", formatSeatChoiceLabels(event, request.seatChoices) || getSeatModeState(event.seatMode).label], ...event.fields.map((field) => { const value = request.answers[field.id]; return [field.label, Array.isArray(value) ? value.join("、") : value === true ? "已同意" : value || "未填写"]; })];
+  const rows = [["已选场次", sessionNames], ["座位", formatSeatChoiceLabels(event, request.seatChoices) || getSeatModeState(event.seatMode).label], ...event.fields.map((field) => { const value = request.answers[field.id]; return [field.label, field.type === "photo" ? (value || []).map((item) => item.originalName).join("、") || "未上传" : Array.isArray(value) ? value.join("、") : value === true ? "已同意" : value || "未填写"]; })];
   for (const [label, value] of rows) { const list = document.createElement("dl"); list.append(node("dt", "", label), node("dd", "", value)); details.append(list); }
   state.review = request; form.hidden = true; const card = document.querySelector("#review-card"); card.hidden = false; card.focus();
 }
@@ -475,7 +529,14 @@ export function createFinalSubmitHandler({ getReview, validateReview, submitRegi
       return;
     }
     setSubmitting(true);
-    const result = await submitRegistration(review);
+    let result;
+    try {
+      result = await submitRegistration(review);
+    } catch {
+      showErrors(["照片读取失败，请重新选择照片后重试。"]);
+      setSubmitting(false);
+      return;
+    }
     if (result.ok && transition(result)) return;
     showErrors([result.ok ? "凭证暂时无法打开，请重试。" : result.message]);
     setSubmitting(false);
@@ -536,12 +597,16 @@ async function initialise() {
   finalSubmit.addEventListener("click", createFinalSubmitHandler({
     getReview: () => state.expired ? null : state.review,
     validateReview: (review) => validateReview(state.event, review),
-    submitRegistration: createRegistration,
+    submitRegistration: async (review) => createRegistration({
+      ...review,
+      uploads: await serializePhotoFiles(Object.fromEntries(state.photoFiles))
+    }),
     showErrors,
     editReview: () => document.querySelector("#edit-registration").click(),
     setSubmitting: (submitting) => {
       finalSubmit.disabled = submitting;
-      finalSubmit.textContent = submitting ? "正在提交…" : "06 · 确认提交报名";
+      const hasPhotos = [...state.photoFiles.values()].some((files) => files.length);
+      finalSubmit.textContent = submitting ? (hasPhotos ? "正在上传照片并提交…" : "正在提交…") : "06 · 确认提交报名";
     },
     transition: (result) => {
       const transitioned = transitionToTicket(result);

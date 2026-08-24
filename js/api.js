@@ -132,6 +132,7 @@ export function createApiClient({ endpoint = APPS_SCRIPT_WEB_APP_URL, fetchImpl 
       sessionIds: requestData?.sessionIds,
       seatChoices: requestData?.seatChoices,
       answers: requestData?.answers,
+      uploads: requestData?.uploads,
       seatHoldOwner: requestData?.seatHoldOwner
     }),
     recoverTicket: (requestData) => request("recoverTicket", {

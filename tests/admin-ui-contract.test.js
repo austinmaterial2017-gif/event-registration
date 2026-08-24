@@ -33,6 +33,12 @@ test("administrator markup is a responsive labelled control room for every requi
   for (const type of ["text", "textarea", "number", "tel", "email", "date", "radio", "checkbox", "select", "boolean", "photo"]) {
     assert.match(admin, new RegExp(`value=["']${type}["']`));
   }
+  for (const label of [
+    "简短回答", "段落回答", "数字", "电话号码", "电邮地址", "日期",
+    "单选题", "多选题", "下拉列表", "是／否", "上传图片"
+  ]) {
+    assert.match(admin, new RegExp(`>${label}(?:（[^<]+）)?<`));
+  }
   for (const fieldName of [
     "opensAt", "closesAt", "location", "selectionMode", "minChoices", "maxChoices",
     "showOpeningCountdown", "showClosingCountdown", "cancellationEnabled", "seatExchangeEnabled",

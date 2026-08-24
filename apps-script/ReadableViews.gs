@@ -134,17 +134,41 @@ function readableQuestionColumns_(source) {
     '\u7968\u53f7': true, '\u62a5\u540d\u65f6\u95f4': true,
     '\u767b\u8bb0\u7f16\u53f7': true
   };
-  return (source.questions || []).filter(function(question) {
+  var columns = [];
+  (source.questions || []).filter(function(question) {
     return String(question.status || '').toLowerCase() !== 'inactive' &&
       !hidden[String(question.questionId || '')];
   }).sort(function(left, right) {
     return Number(left.sortOrder || 0) - Number(right.sortOrder || 0);
-  }).map(function(question) {
-    return {
-      id: String(question.questionId || ''),
-      header: readableUniqueHeader_(used, question.label)
-    };
+  }).forEach(function(question) {
+    var id = String(question.questionId || '');
+    if (String(question.type || '').toLowerCase() === 'photo') {
+      columns.push({ id: id, kind: 'photo-count',
+        header: readableUniqueHeader_(used, question.label + '（数量）') });
+      columns.push({ id: id, kind: 'photo-links',
+        header: readableUniqueHeader_(used, question.label + '（管理员链接）') });
+      return;
+    }
+    columns.push({ id: id, kind: 'answer',
+      header: readableUniqueHeader_(used, question.label) });
   });
+  return columns;
+}
+
+function readablePhotoFiles_(value) {
+  return (Array.isArray(value) ? value : []).filter(function(file) {
+    return file && typeof file === 'object' && !Array.isArray(file);
+  });
+}
+
+function readablePhotoCell_(value, kind) {
+  var files = readablePhotoFiles_(value);
+  if (kind === 'photo-count') {
+    return files.length ? ('已上传 ' + files.length + ' 张') : '未上传';
+  }
+  var links = files.map(function(file) { return String(file.adminUrl || '').trim(); })
+    .filter(function(url) { return /^https:\/\//i.test(url); });
+  return links.length ? links.join('\n') : '无';
 }
 
 function readableSessionGroups_(source) {
@@ -185,7 +209,9 @@ function buildReadableRegistrationOverview_(source) {
       readableIdentity_(source, registration, 'phone')
     ];
     questionColumns.forEach(function(column) {
-      row.push(readableText_(registration.answers[column.id], '\u672a\u586b\u5199'));
+      row.push(column.kind === 'answer'
+        ? readableText_(registration.answers[column.id], '\u672a\u586b\u5199')
+        : readablePhotoCell_(registration.answers[column.id], column.kind));
     });
     sessionGroups.forEach(function(group) {
       var selected = group.sessions.filter(function(session) {

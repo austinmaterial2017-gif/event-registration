@@ -31,7 +31,7 @@ test("every public method sends its JSON envelope as a CORS-safe simple POST", a
   const expected = [
     ["listEvents", {}, () => client.listEvents()],
     ["getEvent", { eventId: "event-1" }, () => client.getEvent("event-1")],
-    ["createRegistration", { eventId: "event-1", sessionIds: ["s1"], seatChoices: ["A-01"], answers: { name: "陈晓明" } }, () => client.createRegistration({ eventId: "event-1", sessionIds: ["s1"], seatChoices: ["A-01"], answers: { name: "陈晓明" } })],
+    ["createRegistration", { eventId: "event-1", sessionIds: ["s1"], seatChoices: ["A-01"], answers: { name: "陈晓明" }, uploads: { receipt: [{ originalName: "a.jpg" }] } }, () => client.createRegistration({ eventId: "event-1", sessionIds: ["s1"], seatChoices: ["A-01"], answers: { name: "陈晓明" }, uploads: { receipt: [{ originalName: "a.jpg" }] } })],
     ["recoverTicket", { eventId: "event-1", name: "Alice Chan", phone: "+60123456789" }, () => client.recoverTicket({ eventId: "event-1", name: "Alice Chan", phone: "+60123456789" })],
     ["lookupTicket", { ticketNumber: "T-01", verificationValue: "13800000000" }, () => client.lookupTicket("T-01", "13800000000")],
     ["verifyTicket", { token: "signed-token" }, () => client.verifyTicket("signed-token")],

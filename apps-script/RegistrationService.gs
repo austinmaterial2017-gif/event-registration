@@ -28,7 +28,21 @@ function createRegistration(payload) {
           (status === 'active' || status === 'open' || status === 'upcoming');
       });
       var registrations = readRows(spreadsheet, '报名项目');
-      var answers = validateDynamicAnswers_(questions, request.answers);
+      var normalizedUploads = validateRegistrationUploads_(questions, request.uploads);
+      var submittedAnswers = {};
+      Object.keys(request.answers || {}).forEach(function(questionId) {
+        submittedAnswers[questionId] = request.answers[questionId];
+      });
+      Object.keys(normalizedUploads).forEach(function(questionId) {
+        submittedAnswers[questionId] = normalizedUploads[questionId].map(function(file) {
+          return {
+            originalName: file.originalName,
+            mimeType: file.mimeType,
+            size: file.size
+          };
+        });
+      });
+      var answers = validateDynamicAnswers_(questions, submittedAnswers);
       var selectedSessions = validateSessionSelection_(event, sessions, request.sessionIds, policy);
 
       validateEventCapacity_(event.eventId, policy, registrations);
@@ -58,8 +72,16 @@ function createRegistration(payload) {
       var seatSnapshots = snapshotSeatRows_(spreadsheet, selectedSeats.concat(expiredSeats));
       var participant = null;
       var registrationBatch = null;
+      var uploadReceipt = null;
 
       try {
+        var savedUploads = saveRegistrationUploads_(
+          event.eventId, registrationId, normalizedUploads
+        );
+        uploadReceipt = savedUploads.receipt;
+        Object.keys(savedUploads.answersByQuestion).forEach(function(questionId) {
+          answers[questionId] = savedUploads.answersByQuestion[questionId];
+        });
         participant = appendParticipantRow_(spreadsheet, participantId, answers, policy, createdAt);
         var rowsToWrite = selectedSessions.length ? selectedSessions : [null];
         registrationBatch = appendRegistrationRows_(
@@ -85,6 +107,7 @@ function createRegistration(payload) {
           participant,
           registrationBatch
         );
+        rollbackRegistrationUploads_(uploadReceipt);
         if (cleanupFailures.length) {
           raiseRegistrationIntegrityError_(spreadsheet, registrationId, cleanupFailures);
         }
@@ -111,6 +134,7 @@ function createRegistration(payload) {
           participant,
           registrationBatch
         );
+        rollbackRegistrationUploads_(uploadReceipt);
         if (routeCleanupFailures.length) {
           raiseRegistrationIntegrityError_(
             spreadsheet,
@@ -291,11 +315,15 @@ function requireRegistrationPayload_(payload) {
   if (payload.answers && (typeof payload.answers !== 'object' || Array.isArray(payload.answers))) {
     registrationError_('INVALID_REQUEST');
   }
+  if (payload.uploads && (typeof payload.uploads !== 'object' || Array.isArray(payload.uploads))) {
+    registrationError_('INVALID_REQUEST');
+  }
   return {
     eventId: payload.eventId.trim(),
     sessionIds: payload.sessionIds === undefined ? [] : payload.sessionIds,
     seatChoices: payload.seatChoices === undefined ? [] : payload.seatChoices,
     answers: payload.answers || {},
+    uploads: payload.uploads || {},
     seatHoldOwner: typeof payload.seatHoldOwner === 'string' ? payload.seatHoldOwner : ''
   };
 }
@@ -336,7 +364,7 @@ function validateDynamicAnswers_(questions, submittedAnswers) {
   var normalized = {};
   var supportedTypes = {
     text: true, textarea: true, number: true, tel: true, email: true,
-    date: true, radio: true, checkbox: true, select: true, boolean: true
+    date: true, radio: true, checkbox: true, select: true, boolean: true, photo: true
   };
 
   questions.forEach(function(question) {
@@ -350,7 +378,7 @@ function validateDynamicAnswers_(questions, submittedAnswers) {
       (type === 'boolean' && value !== true);
     if (required && missing) registrationError_('INVALID_REQUEST');
     if (missing) {
-      normalized[question.questionId] = type === 'checkbox' ? [] : '';
+      normalized[question.questionId] = (type === 'checkbox' || type === 'photo') ? [] : '';
       return;
     }
 
@@ -380,6 +408,12 @@ function validateDynamicAnswers_(questions, submittedAnswers) {
       if (maximumSelections !== null && value.length > maximumSelections) registrationError_('INVALID_REQUEST');
       if (minimumSelections !== null && maximumSelections !== null &&
           minimumSelections > maximumSelections) registrationError_('INVALID_REQUEST');
+    } else if (type === 'photo') {
+      if (!Array.isArray(value) || value.some(function(file) {
+        return !file || typeof file !== 'object' || Array.isArray(file) ||
+          typeof file.originalName !== 'string' || typeof file.mimeType !== 'string' ||
+          !isFinite(Number(file.size));
+      })) registrationError_('INVALID_REQUEST');
     } else if (type === 'boolean') {
       if (typeof value !== 'boolean') registrationError_('INVALID_REQUEST');
     } else {
@@ -1152,7 +1186,8 @@ function buildStoredTicketFields_(questions, answers, policy) {
     if (typeof questionId === 'string' && questionId) allowed[questionId] = true;
   });
   return (questions || []).filter(function(question) {
-    return allowed[question.questionId] === true;
+    return allowed[question.questionId] === true &&
+      String(question.type || '').toLowerCase() !== 'photo';
   }).map(function(question) {
     return {
       id: String(question.questionId || ''),

@@ -121,7 +121,9 @@ var ADMIN_MUTATION_ACTIONS_ = {
   'admin.saveQuestion': true,
   'admin.recordAction': true,
   'admin.refreshReadableViews': true,
-  'admin.switchSheet': true
+  'admin.switchSheet': true,
+  'admin.saveBundlePlan': true,
+  'admin.saveBundleRule': true
 };
 
 function executeInternalActionLocked_(action, payload, actor) {
@@ -150,6 +152,7 @@ function executeInternalActionLocked_(action, payload, actor) {
       return internalStaffCheckInLocked_(payload, actor);
     },
     'admin.getDashboard': function() { return getAdminDashboard_(payload, actor); },
+    'admin.getBundleDashboard': function() { return getBundleDashboard_(payload, actor); },
     'admin.saveDraft': function() { return saveAdminDraft_(payload, actor); },
     'admin.finalizeDraft': function() { return finalizeAdminDraft_(payload, actor); },
     'admin.deleteDraft': function() { return deleteAdminDraft_(payload, actor); },
@@ -165,6 +168,8 @@ function executeInternalActionLocked_(action, payload, actor) {
     'admin.refreshReadableViews': function() { return refreshAdminReadableViews_(payload, actor); },
     'admin.testSheet': function() { return testAdminSheetConnection_(payload, actor); },
     'admin.switchSheet': function() { return switchInternalAdminSheet_(payload, actor); }
+    ,'admin.saveBundlePlan': function() { return saveBundlePlan_(payload, actor); }
+    ,'admin.saveBundleRule': function() { return saveBundleRule_(payload, actor); }
   };
   if (!Object.prototype.hasOwnProperty.call(handlers, action)) {
     return internalMutationFailure_('INTERNAL_REQUEST_DENIED');
@@ -240,6 +245,60 @@ function adminError_(code) {
 
 function withScriptLock_(callback) {
   return callback();
+}
+
+function bundleRegistrySheet_(registry) {
+  initializeBundleSpreadsheet_(registry);
+  return registry;
+}
+
+function getBundleDashboard_(_payload, _actor) {
+  var registry = bundleRegistrySheet_(getRegistrySpreadsheet_());
+  var plans = bundleSheetRows_(registry.getSheetByName('组合计划'), BUNDLE_SHEET_HEADERS_['组合计划']);
+  var rules = bundleSheetRows_(registry.getSheetByName('组合活动规则'), BUNDLE_SHEET_HEADERS_['组合活动规则']);
+  var entitlements = bundleSheetRows_(registry.getSheetByName('组合资格'), BUNDLE_SHEET_HEADERS_['组合资格']);
+  var attendance = bundleSheetRows_(registry.getSheetByName('组合签到'), BUNDLE_SHEET_HEADERS_['组合签到']);
+  return {
+    plans: plans.sort(function(left, right) { return String(right.updatedAt).localeCompare(String(left.updatedAt)); }).map(function(plan) {
+      return {
+        planId: String(plan.planId), title: String(plan.title), description: String(plan.description || ''),
+        opensAt: String(plan.opensAt), closesAt: String(plan.closesAt), totalTicketLimit: Number(plan.totalTicketLimit),
+        status: String(plan.status), registrationUrl: buildBundleRegistrationUrl_(plan.planId),
+        attendanceCount: attendance.filter(function(record) {
+          return String(record.status || '').toLowerCase() === 'checked_in' && entitlements.some(function(entitlement) {
+            return entitlement.entitlementId === record.entitlementId && entitlement.planId === plan.planId;
+          });
+        }).length,
+        rules: rules.filter(function(rule) { return rule.planId === plan.planId; }).map(function(rule) {
+          var used = entitlements.filter(function(entitlement) {
+            return entitlement.planId === plan.planId && entitlement.eventId === rule.eventId &&
+              String(entitlement.status || '').toLowerCase() === 'active';
+          }).length;
+          return { eventId: String(rule.eventId), fixedTicketCount: Number(rule.fixedTicketCount), capacity: Number(rule.capacity), used: used, status: String(rule.status) };
+        })
+      };
+    })
+  };
+}
+
+function saveBundlePlan_(payload, actor) {
+  var registry = bundleRegistrySheet_(getRegistrySpreadsheet_());
+  var plan = requireBundlePlanPayload_(payload);
+  return saveBundlePlanToSheet_(registry.getSheetByName('\u7ec4\u5408\u8ba1\u5212'), plan, new Date().toISOString());
+}
+
+function saveBundleRule_(payload, actor) {
+  var registry = bundleRegistrySheet_(getRegistrySpreadsheet_());
+  var rule = requireBundleRulePayload_(payload);
+  var planMatches = bundleSheetRows_(
+    registry.getSheetByName('\u7ec4\u5408\u8ba1\u5212'), BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u8ba1\u5212']
+  ).filter(function(plan) { return plan.planId === rule.planId; });
+  if (planMatches.length !== 1) adminError_('NOT_FOUND');
+  var eventMatches = readAdminRows_(registry, '活动目录').filter(function(event) {
+    return String(event.eventId || '') === rule.eventId;
+  });
+  if (eventMatches.length !== 1) adminError_('NOT_FOUND');
+  return saveBundleRuleToSheet_(registry.getSheetByName('\u7ec4\u5408\u6d3b\u52a8\u89c4\u5219'), rule);
 }
 
 function runAdminMutationTransaction_(registry, spreadsheet, action, callback) {
@@ -465,6 +524,99 @@ function internalStaffCheckInLocked_(payload, actor) {
     status: 'checked_in', sessionId: sessionId, checkpointId: checkpointId,
     checkpointLabel: checkpointLabel, checkedInAt: row.checkedInAt,
     checkpoints: internalCheckpointState_(spreadsheet, match.registrationId, sessionId, checkpointPolicy)
+  };
+}
+
+/** Checks a combined credential only after the normal ticket route was not found. */
+function staffBundleCheckIn_(payload, actor, scannerPass) {
+  var registry = getRegistrySpreadsheet_();
+  requireNoSwitchMaintenance_(registry);
+  if (!payload || typeof payload.token !== 'string' || !payload.token.trim() || payload.token.length > 512) {
+    adminError_('TOKEN_INVALID');
+  }
+  var eventId = scannerPassId_(scannerPass && scannerPass.eventId);
+  var selectedSessionId = scannerPassId_(scannerPass && scannerPass.sessionId);
+  if (!eventId || !selectedSessionId) adminError_('STAFF_ACTION_DENIED');
+
+  initializeBundleSpreadsheet_(registry);
+  var registrationSheet = registry.getSheetByName('组合报名');
+  var entitlementSheet = registry.getSheetByName('组合资格');
+  var attendanceSheet = registry.getSheetByName('组合签到');
+  var digest = digestTicketToken_(payload.token.trim());
+  var registrations = bundleSheetRows_(registrationSheet, BUNDLE_SHEET_HEADERS_['组合报名']).filter(function(row) {
+    return String(row.tokenDigest || '').toLowerCase() === digest &&
+      String(row.status || '').toLowerCase() === 'active';
+  });
+  if (registrations.length !== 1) adminError_('TOKEN_INVALID');
+  var registration = registrations[0];
+  var entitlements = bundleSheetRows_(entitlementSheet, BUNDLE_SHEET_HEADERS_['组合资格']).filter(function(row) {
+    return row.bundleRegistrationId === registration.bundleRegistrationId &&
+      row.eventId === eventId && String(row.status || '').toLowerCase() === 'active';
+  });
+  if (entitlements.length !== 1) adminError_('SESSION_NOT_REGISTERED');
+  var entitlement = entitlements[0];
+
+  var eventBook = getEventSpreadsheet_(registry, eventId);
+  var event = readRows(eventBook, '活动').filter(function(row) { return row.eventId === eventId; })[0];
+  if (!event || String(event.status || '').toLowerCase() !== 'live') adminError_('CHECK_IN_CLOSED');
+  var settings = getAdminSettings(registry);
+  var eventPolicy = settings && settings.registration && settings.registration.events &&
+    settings.registration.events[eventId] || {};
+  var checkInMode = String(eventPolicy.checkInMode || 'session').toLowerCase();
+  if (['session', 'event', 'none'].indexOf(checkInMode) === -1) checkInMode = 'session';
+  if (checkInMode === 'none') adminError_('CHECK_IN_DISABLED');
+
+  var sessionId = '__EVENT__';
+  var session = null;
+  var checkpointPolicy = { checkInMode: 'single', checkInCount: 1, checkInLabels: [''] };
+  if (checkInMode === 'session') {
+    sessionId = selectedSessionId;
+    session = readRows(eventBook, '场次').filter(function(row) {
+      return row.sessionId === sessionId && row.eventId === eventId;
+    })[0];
+    if (!session) adminError_('SESSION_NOT_REGISTERED');
+    if (['live', 'open'].indexOf(String(session.status || '').toLowerCase()) === -1 ||
+        !isWithinInternalAttendanceWindow_(registry, session, new Date())) {
+      adminError_('CHECK_IN_CLOSED');
+    }
+    checkpointPolicy = adminCheckpointPolicy_(eventPolicy.sessions && eventPolicy.sessions[sessionId] || {});
+    if (checkpointPolicy.checkInMode === 'none') adminError_('CHECK_IN_DISABLED');
+  }
+
+  var completed = {};
+  bundleSheetRows_(attendanceSheet, BUNDLE_SHEET_HEADERS_['组合签到']).forEach(function(row) {
+    if (row.entitlementId !== entitlement.entitlementId || row.sessionId !== sessionId ||
+        String(row.status || '').toLowerCase() !== 'checked_in') return;
+    completed[String(row.checkpointId || 'checkpoint-1')] = true;
+  });
+  var checkpointId = 'checkpoint-1';
+  if (checkInMode === 'session' && checkpointPolicy.checkInMode === 'manual') {
+    checkpointId = scannerPassId_(scannerPass && scannerPass.checkpointId);
+    if (!checkpointId) adminError_('CHECKPOINT_REQUIRED');
+    if (!internalCheckpointIndex_(checkpointId, checkpointPolicy.checkInCount)) adminError_('CHECKPOINT_INVALID');
+  } else if (checkInMode === 'session' && checkpointPolicy.checkInMode === 'automatic') {
+    checkpointId = '';
+    for (var checkpointNumber = 1; checkpointNumber <= checkpointPolicy.checkInCount; checkpointNumber += 1) {
+      var candidateId = 'checkpoint-' + checkpointNumber;
+      if (!completed[candidateId]) { checkpointId = candidateId; break; }
+    }
+    if (!checkpointId) adminError_('ALL_CHECK_INS_COMPLETE');
+  }
+  if (completed[checkpointId]) adminError_('ALREADY_CHECKED_IN');
+  var checkpointIndex = internalCheckpointIndex_(checkpointId, checkpointPolicy.checkInCount || 1);
+  var checkpointLabel = checkInMode === 'event' ? '活动签到' :
+    internalCheckpointLabel_(checkpointPolicy, checkpointIndex - 1);
+  var checkedInAt = new Date().toISOString();
+  attendanceSheet.getRange(attendanceSheet.getLastRow() + 1, 1, 1, BUNDLE_SHEET_HEADERS_['组合签到'].length).setValues([
+    bundleValues_(BUNDLE_SHEET_HEADERS_['组合签到'], {
+      attendanceId: Utilities.getUuid(), entitlementId: entitlement.entitlementId, eventId: eventId,
+      sessionId: sessionId, checkpointId: checkpointId, checkedInAt: checkedInAt,
+      checkedInBy: String(actor || '').trim().toLowerCase(), status: 'checked_in'
+    })
+  ]);
+  return {
+    status: 'checked_in', sessionId: sessionId, checkpointId: checkpointId,
+    checkpointLabel: checkpointLabel, checkedInAt: checkedInAt, kind: 'bundle'
   };
 }
 

@@ -110,6 +110,36 @@ function saveAdminQuestion(payload) {
   });
 }
 
+/** Returns isolated combination plans and their activity rules. */
+function getBundleDashboard(payload) {
+  return runAdminService_(function() {
+    var actor = requireAuthorizedAdminSession_();
+    var result = invokeInternalBackend_('admin.getBundleDashboard', payload || {}, actor);
+    if (!result.ok) adminError_(result.code);
+    return result.data;
+  });
+}
+
+/** Saves one isolated combination-registration plan. */
+function saveBundlePlan(payload) {
+  return runAdminService_(function() {
+    var actor = requireAuthorizedAdminSession_();
+    var result = invokeInternalBackend_('admin.saveBundlePlan', payload || {}, actor);
+    if (!result.ok) adminError_(result.code);
+    return result.data;
+  });
+}
+
+/** Saves the fixed ticket, capacity and time rule for one activity in a plan. */
+function saveBundleRule(payload) {
+  return runAdminService_(function() {
+    var actor = requireAuthorizedAdminSession_();
+    var result = invokeInternalBackend_('admin.saveBundleRule', payload || {}, actor);
+    if (!result.ok) adminError_(result.code);
+    return result.data;
+  });
+}
+
 /** Uploads or replaces one optional image shown with a registration question. */
 function uploadAdminQuestionImage(payload) {
   return runAdminService_(function() {

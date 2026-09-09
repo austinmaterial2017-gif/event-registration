@@ -355,6 +355,143 @@ function ensureHeaders_(sheet, headers) {
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
 }
 
+/*
+ * Combination-registration data is deliberately isolated from ordinary
+ * event spreadsheets.  Existing activities and their historical rows never
+ * receive a new column or a bundle record.
+ */
+var BUNDLE_SHEET_HEADERS_ = {
+  '\u7ec4\u5408\u8ba1\u5212': ['planId', 'title', 'description', 'opensAt', 'closesAt', 'totalTicketLimit', 'status', 'createdAt', 'updatedAt'],
+  '\u7ec4\u5408\u6d3b\u52a8\u89c4\u5219': ['ruleId', 'planId', 'eventId', 'fixedTicketCount', 'capacity', 'opensAt', 'closesAt', 'status'],
+  '\u7ec4\u5408\u62a5\u540d': ['bundleRegistrationId', 'planId', 'participantId', 'ticketNumber', 'tokenDigest', 'answers', 'status', 'createdAt'],
+  '\u7ec4\u5408\u8d44\u683c': ['entitlementId', 'planId', 'bundleRegistrationId', 'eventId', 'fixedTicketCount', 'status', 'createdAt', 'updatedAt'],
+  '\u7ec4\u5408\u7b7e\u5230': ['attendanceId', 'entitlementId', 'eventId', 'sessionId', 'checkpointId', 'checkedInAt', 'checkedInBy', 'status'],
+  '\u7ec4\u5408\u95ee\u9898': ['planId', 'questionId', 'snapshot']
+};
+
+function initializeBundleSpreadsheet_(spreadsheet) {
+  if (!spreadsheet || typeof spreadsheet.getSheetByName !== 'function' ||
+      typeof spreadsheet.insertSheet !== 'function') {
+    throw new Error('Bundle spreadsheet is unavailable.');
+  }
+  Object.keys(BUNDLE_SHEET_HEADERS_).forEach(function(sheetName) {
+    var sheet = spreadsheet.getSheetByName(sheetName) || spreadsheet.insertSheet(sheetName);
+    ensureHeaders_(sheet, BUNDLE_SHEET_HEADERS_[sheetName]);
+  });
+}
+
+function bundlePayloadError_() {
+  var error = new Error('INVALID_REQUEST');
+  error.publicCode = 'INVALID_REQUEST';
+  throw error;
+}
+
+function bundleText_(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function bundleIsoTime_(value) {
+  var text = bundleText_(value);
+  if (!text || isNaN(Date.parse(text))) bundlePayloadError_();
+  return new Date(text).toISOString();
+}
+
+function bundlePositiveInteger_(value) {
+  var number = Number(value);
+  if (!isFinite(number) || Math.floor(number) !== number || number < 1) bundlePayloadError_();
+  return number;
+}
+
+function bundleCapacity_(value) {
+  var number = Number(value);
+  if (!isFinite(number) || Math.floor(number) !== number || number < 0) bundlePayloadError_();
+  return number;
+}
+
+function requireBundlePlanPayload_(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) bundlePayloadError_();
+  var title = bundleText_(payload.title);
+  var opensAt = bundleIsoTime_(payload.opensAt);
+  var closesAt = bundleIsoTime_(payload.closesAt);
+  if (!title || Date.parse(closesAt) <= Date.parse(opensAt)) bundlePayloadError_();
+  var status = bundleText_(payload.status || 'draft').toLowerCase();
+  if (['draft', 'open', 'closed', 'inactive'].indexOf(status) === -1) bundlePayloadError_();
+  return {
+    planId: bundleText_(payload.planId), title: title,
+    description: bundleText_(payload.description), opensAt: opensAt, closesAt: closesAt,
+    totalTicketLimit: bundlePositiveInteger_(payload.totalTicketLimit), status: status
+  };
+}
+
+function requireBundleRulePayload_(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) bundlePayloadError_();
+  var planId = bundleText_(payload.planId);
+  var eventId = bundleText_(payload.eventId);
+  if (!planId || !eventId) bundlePayloadError_();
+  return {
+    ruleId: bundleText_(payload.ruleId), planId: planId, eventId: eventId,
+    fixedTicketCount: bundlePositiveInteger_(payload.fixedTicketCount),
+    capacity: bundleCapacity_(payload.capacity),
+    opensAt: payload.opensAt ? bundleIsoTime_(payload.opensAt) : '',
+    closesAt: payload.closesAt ? bundleIsoTime_(payload.closesAt) : '',
+    status: bundleText_(payload.status || 'open').toLowerCase()
+  };
+}
+
+function bundleRowObject_(headers, values, rowNumber) {
+  var row = { rowNumber: rowNumber };
+  headers.forEach(function(header, index) { row[header] = values[index] === undefined ? '' : values[index]; });
+  return row;
+}
+
+function bundleSheetRows_(sheet, headers) {
+  if (!sheet || sheet.getLastRow() <= 1) return [];
+  return sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues()
+    .map(function(values, index) { return bundleRowObject_(headers, values, index + 2); });
+}
+
+function bundleValues_(headers, row) {
+  return headers.map(function(header) { return row[header] === undefined ? '' : row[header]; });
+}
+
+function saveBundlePlanToSheet_(sheet, plan, now) {
+  var headers = BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u8ba1\u5212'];
+  var timestamp = bundleIsoTime_(now || new Date().toISOString());
+  var existing = bundleSheetRows_(sheet, headers).filter(function(row) {
+    return row.planId === plan.planId;
+  });
+  if (existing.length > 1) bundlePayloadError_();
+  var row = {
+    planId: plan.planId || 'BND-' + Utilities.getUuid(), title: plan.title,
+    description: plan.description || '', opensAt: plan.opensAt, closesAt: plan.closesAt,
+    totalTicketLimit: plan.totalTicketLimit, status: plan.status,
+    createdAt: existing.length ? existing[0].createdAt : timestamp, updatedAt: timestamp
+  };
+  var targetRow = existing.length ? existing[0].rowNumber : sheet.getLastRow() + 1;
+  sheet.getRange(targetRow, 1, 1, headers.length).setValues([bundleValues_(headers, row)]);
+  return row;
+}
+
+function saveBundleRuleToSheet_(sheet, rule) {
+  var headers = BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u6d3b\u52a8\u89c4\u5219'];
+  var existing = bundleSheetRows_(sheet, headers).filter(function(row) {
+    return row.planId === rule.planId && row.eventId === rule.eventId;
+  });
+  if (existing.length > 1) bundlePayloadError_();
+  var status = bundleText_(rule.status || 'open').toLowerCase();
+  if (['open', 'inactive'].indexOf(status) === -1) bundlePayloadError_();
+  if ((rule.opensAt && !rule.closesAt) || (!rule.opensAt && rule.closesAt) ||
+      (rule.opensAt && Date.parse(rule.closesAt) <= Date.parse(rule.opensAt))) bundlePayloadError_();
+  var row = {
+    ruleId: rule.ruleId || (existing.length ? existing[0].ruleId : 'BNR-' + Utilities.getUuid()),
+    planId: rule.planId, eventId: rule.eventId, fixedTicketCount: rule.fixedTicketCount,
+    capacity: rule.capacity, opensAt: rule.opensAt || '', closesAt: rule.closesAt || '', status: status
+  };
+  var targetRow = existing.length ? existing[0].rowNumber : sheet.getLastRow() + 1;
+  sheet.getRange(targetRow, 1, 1, headers.length).setValues([bundleValues_(headers, row)]);
+  return row;
+}
+
 function migrateLegacyAttendanceHeader_(sheet, headers) {
   var preSession = ['checkInId', 'registrationId', 'eventId', 'checkedInAt', 'checkedInBy', 'status'];
   var preCheckpoint = ['checkInId', 'registrationId', 'eventId', 'sessionId', 'checkedInAt', 'checkedInBy', 'status'];
@@ -616,4 +753,15 @@ function buildPublicVerificationUrl_(token) {
   var base = configured.trim().replace(/\/+$/, '');
   if (!/^https:\/\/[^?#\s]+$/i.test(base)) return '';
   return base + '/verify.html?token=' + encodeURIComponent(token);
+}
+
+/** Returns the public combination-registration page for one opaque plan ID. */
+function buildBundleRegistrationUrl_(planId) {
+  if (typeof planId !== 'string' || !planId.trim()) return '';
+  if (typeof PropertiesService === 'undefined') return '';
+  var configured = PropertiesService.getScriptProperties().getProperty(PUBLIC_BASE_URL);
+  if (typeof configured !== 'string') return '';
+  var base = configured.trim().replace(/\/+$/, '');
+  if (!/^https:\/\/[^?#\s]+$/i.test(base)) return '';
+  return base + '/bundle-register.html?plan=' + encodeURIComponent(planId.trim());
 }

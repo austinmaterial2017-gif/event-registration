@@ -127,6 +127,12 @@ export function createApiClient({ endpoint = APPS_SCRIPT_WEB_APP_URL, fetchImpl 
   return {
     listEvents: () => request("listEvents", {}),
     getEvent: (eventId) => request("getEvent", { eventId }),
+    getBundlePlan: (planId) => request("getBundlePlan", { planId }),
+    createBundleRegistration: (requestData) => request("createBundleRegistration", {
+      planId: requestData?.planId, eventIds: requestData?.eventIds,
+      answers: requestData?.answers, uploads: requestData?.uploads
+    }),
+    verifyBundleTicket: (token) => request("verifyBundleTicket", { token }),
     createRegistration: (requestData) => request("createRegistration", {
       eventId: requestData?.eventId,
       sessionIds: requestData?.sessionIds,
@@ -175,6 +181,9 @@ const publicClient = createApiClient();
 
 export const listEvents = () => publicClient.listEvents();
 export const getEvent = (eventId) => publicClient.getEvent(eventId);
+export const getBundlePlan = (planId) => publicClient.getBundlePlan(planId);
+export const createBundleRegistration = (request) => publicClient.createBundleRegistration(request);
+export const verifyBundleTicket = (token) => publicClient.verifyBundleTicket(token);
 export const createRegistration = (request) => publicClient.createRegistration(request);
 export const recoverTicket = (request) => publicClient.recoverTicket(request);
 export const lookupTicket = (ticketNumber, verificationValue) => publicClient.lookupTicket(ticketNumber, verificationValue);

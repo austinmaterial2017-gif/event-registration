@@ -323,6 +323,18 @@
         state.draftNextStep = selectedDraft.nextStep;
       }
       renderActivitySelector(events, drafts);
+      const bundleEventSelector = document.querySelector("#bundle-event-selector");
+      if (bundleEventSelector) {
+        const currentValue = bundleEventSelector.value;
+        bundleEventSelector.replaceChildren(element("option", "请选择活动"));
+        bundleEventSelector.firstChild.value = "";
+        events.forEach((item) => {
+          const option = element("option", item.title || "未命名活动");
+          option.value = item.eventId;
+          bundleEventSelector.append(option);
+        });
+        bundleEventSelector.value = events.some((item) => item.eventId === currentValue) ? currentValue : "";
+      }
       renderSelectedActivity(selectedDraft || selectedEvent, Boolean(selectedDraft));
       syncSelectedEventFields();
       document.querySelector("#connection-status").textContent = data.connection && data.connection.connected
@@ -458,6 +470,50 @@
       const payload = { search };
       if (requestedEventId) payload.eventId = requestedEventId;
       adminRunner_(renderDashboard, isCurrent).getAdminDashboard(payload);
+    }
+
+    function renderBundleDashboard_(data) {
+      if (!document.querySelector("#bundle-plan-list")) return;
+      const plans = Array.isArray(data && data.plans) ? data.plans : [];
+      replaceList("#bundle-plan-list", plans, (plan) => {
+        const row = dataRow(plan.title, plan.status, [
+          `每人最多 ${plan.totalTicketLimit} 张`,
+          `活动规则 ${Array.isArray(plan.rules) ? plan.rules.length : 0} 项`,
+          `已签到 ${plan.attendanceCount || 0} 次`
+        ]);
+        const use = editButton("使用此计划", () => {
+          const form = document.querySelector("#bundle-plan-form");
+          form.elements.planId.value = plan.planId;
+          form.elements.title.value = plan.title || "";
+          form.elements.totalTicketLimit.value = String(plan.totalTicketLimit || 1);
+          form.elements.opensAt.value = localDateInput(plan.opensAt);
+          form.elements.closesAt.value = localDateInput(plan.closesAt);
+          form.elements.status.value = plan.status || "draft";
+          form.elements.description.value = plan.description || "";
+          document.querySelector("#bundle-rule-form").elements.planId.value = plan.planId;
+          setStatus(`正在编辑组合计划：${plan.title}`);
+        });
+        use.dataset.useBundlePlan = plan.planId;
+        row.append(use);
+        const copy = editButton("复制报名链接", () => {
+          const url = String(plan.registrationUrl || "");
+          if (!url) {
+            setStatus("公开报名网址尚未设置，请先在公开后端设置 PUBLIC_BASE_URL。", "error");
+            return;
+          }
+          navigator.clipboard.writeText(url)
+            .then(() => setStatus("组合报名链接已复制。"))
+            .catch(() => setStatus("无法写入剪贴板，请检查浏览器权限。", "error"));
+        });
+        copy.dataset.copyBundleRegistration = plan.planId;
+        row.append(copy);
+        return row;
+      });
+    }
+
+    function loadBundleDashboard_() {
+      const runner = adminRunner_(renderBundleDashboard_);
+      if (typeof runner.getBundleDashboard === "function") runner.getBundleDashboard({});
     }
 
     function formObject(form) {
@@ -1524,6 +1580,45 @@
       "报名处理资料已修改，请再次确认操作。"
     );
 
+    function bundleDateValue_(value) {
+      if (!value) return "";
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? "" : date.toISOString();
+    }
+
+    const bundlePlanForm_ = document.querySelector("#bundle-plan-form");
+    if (bundlePlanForm_) bundlePlanForm_.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const values = formObject(form);
+      const payload = {
+        planId: String(values.planId || "").trim(), title: String(values.title || "").trim(),
+        description: String(values.description || "").trim(), totalTicketLimit: Number(values.totalTicketLimit),
+        opensAt: bundleDateValue_(values.opensAt), closesAt: bundleDateValue_(values.closesAt), status: values.status
+      };
+      runButtonAction_(document.querySelector("#save-bundle-plan"), "正在保存组合计划…", "组合计划已保存。", (runner) => {
+        runner.saveBundlePlan(payload);
+      }, (plan) => {
+        form.elements.planId.value = plan.planId;
+        document.querySelector("#bundle-rule-form").elements.planId.value = plan.planId;
+        loadBundleDashboard_();
+      });
+    });
+
+    const bundleRuleForm_ = document.querySelector("#bundle-rule-form");
+    if (bundleRuleForm_) bundleRuleForm_.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const values = formObject(event.currentTarget);
+      const payload = {
+        planId: String(values.planId || "").trim(), eventId: String(values.eventId || "").trim(),
+        fixedTicketCount: Number(values.fixedTicketCount), capacity: Number(values.capacity),
+        opensAt: bundleDateValue_(values.opensAt), closesAt: bundleDateValue_(values.closesAt), status: values.status
+      };
+      runButtonAction_(document.querySelector("#save-bundle-rule"), "正在保存活动规则…", "活动规则已保存。", (runner) => {
+        runner.saveBundleRule(payload);
+      }, loadBundleDashboard_);
+    });
+
     document.querySelector("#test-sheet").addEventListener("click", () => {
       const spreadsheetId = document.querySelector("#sheet-form").elements.spreadsheetId.value.trim();
       setStatus("正在测试数据表连接…");
@@ -1598,5 +1693,6 @@
     });
 
     loadDashboard();
+    loadBundleDashboard_();
   })();
 </script>

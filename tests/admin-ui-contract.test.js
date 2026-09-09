@@ -69,6 +69,7 @@ test("administrator markup is a responsive labelled control room for every requi
   assert.match(admin, /id=["']question-image-preview["']/);
   assert.match(admin, /id=["']upload-question-image["']/);
   assert.match(admin, /id=["']remove-question-image["']/);
+  assert.match(admin, /id=["']bundle-plan-list["']/);
   assert.match(admin, /AdminScript/);
 });
 
@@ -82,6 +83,7 @@ test("administrator client uses only explicit RPCs, safe DOM rendering, confirma
     "saveAdminQuestion", "uploadAdminQuestionImage", "removeAdminQuestionImage",
     "adminRecordAction", "testAdminSheetConnection",
     "switchAdminSheet", "getAdminSourceBundles"
+    , "getBundleDashboard"
   ]) {
     assert.match(script, new RegExp(`\\.${rpc}\\s*\\(`));
   }
@@ -98,6 +100,8 @@ test("administrator client uses only explicit RPCs, safe DOM rendering, confirma
   assert.match(script, /editAdminEvent\s*\(/);
   assert.match(script, /editAdminSession\s*\(/);
   assert.match(script, /editAdminQuestion\s*\(/);
+  assert.match(script, /function\s+renderBundleDashboard_/);
+  assert.match(script, /dataset\.useBundlePlan/);
   assert.match(script, /\.elements\.[A-Za-z]+\.value\s*=/);
 });
 

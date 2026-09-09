@@ -12,6 +12,7 @@ const ADMIN_RPC_NAMES = [
   "finalizeAdminDraft",
   "getAdminDashboard",
   "getAdminSourceBundles",
+  "getBundleDashboard",
   "refreshAdminReadableViews",
   "removeAdminQuestionImage",
   "saveAdminDraft",
@@ -19,6 +20,8 @@ const ADMIN_RPC_NAMES = [
   "saveAdminQuestion",
   "saveAdminSeatPlan",
   "saveAdminSession",
+  "saveBundlePlan",
+  "saveBundleRule",
   "switchAdminSheet",
   "testAdminSheetConnection",
   "uploadAdminQuestionImage"

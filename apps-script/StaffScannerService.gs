@@ -49,6 +49,13 @@ function staffScannerCheckIn(payload) {
       }, pass.actor);
       return { ok: true, data: data };
     } catch (error) {
+      if (error && error.publicCode === 'TOKEN_INVALID') {
+        try {
+          return { ok: true, data: staffBundleCheckIn_(payload, pass.actor, pass) };
+        } catch (bundleError) {
+          return internalMutationFailure_(bundleError && bundleError.publicCode ? bundleError.publicCode : 'INTERNAL');
+        }
+      }
       return internalMutationFailure_(error && error.publicCode ? error.publicCode : 'INTERNAL');
     }
   });

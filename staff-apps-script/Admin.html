@@ -195,6 +195,7 @@
         <nav aria-label="管理区导航">
           <a href="#events">活动</a><a href="#sessions">场次</a><a href="#seats">座位</a>
           <a href="#questions">问题</a><a href="#records">记录</a><a href="#attendance">签到</a>
+          <a href="#bundle-registration">组合报名</a>
           <a href="<?= staffScannerUrl ?>" target="_blank" rel="noopener">手机扫码签到</a>
         </nav>
       </aside>
@@ -274,6 +275,37 @@
               </form>
               <div><div class="actions"><button id="new-activity" class="secondary" type="button">新建活动</button></div><div id="event-list" class="data-list" aria-label="活动列表"></div></div>
             </div>
+          </section>
+
+          <section id="bundle-registration" class="panel">
+            <div class="panel-head"><div><p class="eyebrow">组合活动</p><h2>组合报名</h2><p>参加者填写一次资料，选择多个活动；每个活动的票数、名额与时间独立设定。</p></div></div>
+            <div class="panel-body split">
+              <form id="bundle-plan-form">
+                <input name="planId" type="hidden">
+                <div class="fields">
+                  <label>组合名称<input name="title" required placeholder="例如：九月活动组合"></label>
+                  <label>每人总票数上限<input name="totalTicketLimit" type="number" min="1" step="1" value="6" required></label>
+                  <label>开放时间<input name="opensAt" type="datetime-local" required></label>
+                  <label>截止时间<input name="closesAt" type="datetime-local" required></label>
+                  <label>状态<select name="status"><option value="draft">草稿（不公开）</option><option value="open">开放报名</option><option value="closed">停止报名</option><option value="inactive">停用</option></select></label>
+                  <label class="wide">说明<textarea name="description" placeholder="参加者会看到的说明"></textarea></label>
+                </div>
+                <button id="save-bundle-plan" type="submit">保存组合计划</button>
+              </form>
+              <form id="bundle-rule-form">
+                <label>组合计划 ID<input name="planId" required placeholder="先保存组合计划"></label>
+                <div class="fields">
+                  <label>选择活动<select name="eventId" id="bundle-event-selector" required><option value="">请先选择活动</option></select></label>
+                  <label>此活动固定票数<input name="fixedTicketCount" type="number" min="1" step="1" value="1" required></label>
+                  <label>此活动总名额（0 = 不限）<input name="capacity" type="number" min="0" step="1" value="0" required></label>
+                  <label>开放时间（可留空）<input name="opensAt" type="datetime-local"></label>
+                  <label>截止时间（可留空）<input name="closesAt" type="datetime-local"></label>
+                  <label>状态<select name="status"><option value="open">启用</option><option value="inactive">停用</option></select></label>
+                </div>
+                <button id="save-bundle-rule" type="submit">保存活动规则</button>
+              </form>
+            </div>
+            <div class="panel-body"><h3>已有组合计划</h3><div id="bundle-plan-list" class="data-list" aria-live="polite"></div></div>
           </section>
 
           <section id="selected-activity" class="activity-context" aria-live="polite" hidden>

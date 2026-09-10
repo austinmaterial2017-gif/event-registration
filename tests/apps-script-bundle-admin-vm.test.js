@@ -323,6 +323,7 @@ test("combination plans can collect configurable personal information and be sho
   assert.match(repositorySource, /'showOnHome'/);
   assert.match(internalSource, /'admin\.saveBundleQuestion'/);
   assert.match(internalSource, /'admin\.deleteBundleQuestion'/);
+  assert.match(internalSource, /sortOrder\s*<\s*1/);
   assert.match(codeSource, /'listBundlePlans'/);
   assert.match(adminHtml, /id="bundle-question-form"/);
   assert.match(adminHtml, /name="options"/);

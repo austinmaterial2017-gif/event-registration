@@ -5016,7 +5016,7 @@ function saveBundleQuestion_(payload, _actor) {
     ? { upload: { maxFiles: 3, maxBytes: 5242880, accept: ['image/jpeg', 'image/png', 'image/heic', 'image/heif'] } }
     : { choices: choices };
   var sortOrder = Number(payload.sortOrder || 100);
-  if (!isFinite(sortOrder) || sortOrder < 4) adminError_('INVALID_REQUEST');
+  if (!isFinite(sortOrder) || sortOrder < 1) adminError_('INVALID_REQUEST');
   var snapshot = { questionId: questionId, label: bundleText_(payload.label), type: type, required: payload.required === true, options: JSON.stringify(configuration), status: payload.status === 'hidden' ? 'hidden' : 'active', sortOrder: sortOrder };
   var target = existing.length ? existing[0].rowNumber : sheet.getLastRow() + 1;
   sheet.getRange(target, 1, 1, 3).setValues([[planId, questionId, JSON.stringify(snapshot)]]);

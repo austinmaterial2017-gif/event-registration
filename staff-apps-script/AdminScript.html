@@ -516,6 +516,28 @@
       adminRunner_(renderDashboard, isCurrent).getAdminDashboard(payload);
     }
 
+    function renderBundleTicketDisplayChoices_(plan) {
+      const holder = document.querySelector("#bundle-ticket-question-display");
+      if (!holder) return;
+      const settings = plan && plan.ticketDisplay && typeof plan.ticketDisplay === "object" ? plan.ticketDisplay : {};
+      const selected = new Set(Array.isArray(settings.questionIds) ? settings.questionIds : []);
+      holder.replaceChildren();
+      const questions = Array.isArray(plan && plan.questions) ? plan.questions : [];
+      if (!questions.length) {
+        holder.append(element("span", "暂无资料问题。保存计划后可在下方新增问题，再回来勾选要显示的资料。", "hint"));
+        return;
+      }
+      questions.forEach((question) => {
+        const label = document.createElement("label");
+        label.className = "check";
+        const input = document.createElement("input");
+        input.type = "checkbox"; input.name = "ticketQuestionId"; input.value = question.questionId;
+        input.checked = selected.has(question.questionId);
+        label.append(input, document.createTextNode(` 显示资料：${question.label}`));
+        holder.append(label);
+      });
+    }
+
     function renderBundleDashboard_(data) {
       if (!document.querySelector("#bundle-plan-list")) return;
       const plans = Array.isArray(data && data.plans) ? data.plans : [];
@@ -541,6 +563,11 @@
           form.elements.status.value = plan.status || "draft";
           form.elements.showOnHome.checked = plan.showOnHome === true;
           form.elements.description.value = plan.description || "";
+          const display = plan.ticketDisplay && typeof plan.ticketDisplay === "object" ? plan.ticketDisplay : {};
+          form.elements.showItemTicketCount.checked = display.showItemTicketCount !== false;
+          form.elements.showItemSchedule.checked = display.showItemSchedule !== false;
+          form.elements.showItemVenue.checked = display.showItemVenue !== false;
+          renderBundleTicketDisplayChoices_(plan);
           document.querySelector("#bundle-item-form").elements.planId.value = plan.planId;
           document.querySelector("#bundle-question-form").elements.planId.value = plan.planId;
           setStatus(`正在编辑组合计划：${plan.title}`);
@@ -621,6 +648,7 @@
             form.elements.capacity.value = String(item.capacity || 0);
             form.elements.startsAt.value = localDateInput(item.startsAt);
             form.elements.endsAt.value = localDateInput(item.endsAt);
+            form.elements.location.value = item.location || "";
             form.elements.checkInMode.value = item.checkInMode || "none";
             form.elements.checkInCount.value = String(item.checkInCount || 1);
             form.elements.checkInLabels.value = Array.isArray(item.checkInLabels) ? item.checkInLabels.join("\n") : "";
@@ -1737,7 +1765,12 @@
       const payload = {
         planId: String(values.planId || "").trim(), title: String(values.title || "").trim(),
         description: String(values.description || "").trim(), totalTicketLimit: Number(values.totalTicketLimit), showOnHome: checked(form, "showOnHome"),
-        opensAt: bundleDateValue_(values.opensAt), closesAt: bundleDateValue_(values.closesAt), status: values.status
+        opensAt: bundleDateValue_(values.opensAt), closesAt: bundleDateValue_(values.closesAt), status: values.status,
+        ticketDisplay: {
+          questionIds: Array.from(form.querySelectorAll('input[name="ticketQuestionId"]:checked')).map((input) => input.value),
+          showItemTicketCount: checked(form, "showItemTicketCount"), showItemSchedule: checked(form, "showItemSchedule"),
+          showItemVenue: checked(form, "showItemVenue")
+        }
       };
       runButtonAction_(document.querySelector("#save-bundle-plan"), "正在保存组合计划…", "组合计划已保存。", (runner) => {
         runner.saveBundlePlan(payload);
@@ -1771,7 +1804,7 @@
         bundleItemId: String(values.bundleItemId || "").trim(),
         planId: String(values.planId || "").trim(), title: String(values.title || "").trim(),
         fixedTicketCount: Number(values.fixedTicketCount), capacity: Number(values.capacity),
-        startsAt: bundleDateValue_(values.startsAt), endsAt: bundleDateValue_(values.endsAt),
+        startsAt: bundleDateValue_(values.startsAt), endsAt: bundleDateValue_(values.endsAt), location: String(values.location || "").trim(),
         checkInMode: values.checkInMode, checkInCount: Number(values.checkInCount),
         checkInLabels: String(values.checkInLabels || "").split(/\r?\n/).map((value) => value.trim()).filter(Boolean),
         status: values.status

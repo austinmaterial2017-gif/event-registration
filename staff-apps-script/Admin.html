@@ -301,6 +301,7 @@
                   <label>状态<select name="status"><option value="draft">草稿（不公开）</option><option value="open">开放报名</option><option value="closed">停止报名</option><option value="inactive">停用</option></select></label>
                   <label><input name="showOnHome" type="checkbox"> 显示在报名首页</label>
                   <label class="wide">说明<textarea name="description" placeholder="参加者会看到的说明"></textarea></label>
+                  <fieldset id="bundle-ticket-display-fields" class="wide"><legend>电子凭证显示内容</legend><p class="hint">电子凭证编号和二维码会一直显示。勾选后，参加者的电子凭证才会显示对应资料。</p><div class="checks"><label class="check"><input name="showItemTicketCount" type="checkbox" checked> 显示每个项目的票数</label><label class="check"><input name="showItemSchedule" type="checkbox" checked> 显示项目日期／时间</label><label class="check"><input name="showItemVenue" type="checkbox" checked> 显示项目地点</label></div><div id="bundle-ticket-question-display" class="checks"><span class="hint">先保存计划，再新增资料问题；这里会出现每一题的显示选项。</span></div></fieldset>
                 </div>
                 <div class="actions"><button id="save-bundle-plan" type="submit">保存组合计划</button><button id="preview-bundle-registration" class="secondary" type="button">预览报名表</button></div>
               </form>
@@ -313,6 +314,7 @@
                   <label>项目总名额（0 = 不限）<input name="capacity" type="number" min="0" step="1" value="0" required></label>
                   <label>开始时间<input name="startsAt" type="datetime-local" required></label>
                   <label>结束时间<input name="endsAt" type="datetime-local" required></label>
+                  <label>地点（选填）<input name="location" placeholder="例如：现代礼堂"></label>
                   <label>签到方式<select name="checkInMode"><option value="none">不需要签到</option><option value="single">只签到一次</option><option value="multiple">多次签到</option></select></label>
                   <label>需要签到几次<input name="checkInCount" type="number" min="1" step="1" value="1"></label>
                   <label class="wide">签到点名称（多次签到时每行一个）<textarea name="checkInLabels" placeholder="例如：入场签到&#10;离场签到"></textarea></label>

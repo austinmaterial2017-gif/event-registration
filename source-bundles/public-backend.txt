@@ -367,10 +367,13 @@ function ensureHeaders_(sheet, headers) {
   // row above real live records.  This path preserves every existing row.
   if (sheet.getLastRow() > 0) {
     var current = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
-    var matchingPrefix = current.slice(0, Math.max(0, headers.length - 1)).every(function(value, index) {
+    var currentHeaderLength = current.reduce(function(length, value, index) {
+      return String(value || '') ? index + 1 : length;
+    }, 0);
+    var matchingPrefix = current.slice(0, currentHeaderLength).every(function(value, index) {
       return String(value || '') === String(headers[index] || '');
     });
-    if (matchingPrefix && String(current[headers.length - 1] || '') === '') {
+    if (matchingPrefix && currentHeaderLength < headers.length) {
       sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
       return;
     }
@@ -391,8 +394,8 @@ function ensureHeaders_(sheet, headers) {
  */
 var BUNDLE_SHEET_HEADERS_ = {
   // Keep the new flag at the end: existing live sheets retain every old column's meaning.
-  '\u7ec4\u5408\u8ba1\u5212': ['planId', 'title', 'description', 'opensAt', 'closesAt', 'totalTicketLimit', 'status', 'createdAt', 'updatedAt', 'showOnHome'],
-  '\u7ec4\u5408\u9879\u76ee': ['bundleItemId', 'planId', 'title', 'startsAt', 'endsAt', 'fixedTicketCount', 'capacity', 'checkInMode', 'checkInCount', 'checkInLabels', 'status', 'createdAt', 'updatedAt'],
+  '\u7ec4\u5408\u8ba1\u5212': ['planId', 'title', 'description', 'opensAt', 'closesAt', 'totalTicketLimit', 'status', 'createdAt', 'updatedAt', 'showOnHome', 'ticketDisplay'],
+  '\u7ec4\u5408\u9879\u76ee': ['bundleItemId', 'planId', 'title', 'startsAt', 'endsAt', 'fixedTicketCount', 'capacity', 'checkInMode', 'checkInCount', 'checkInLabels', 'status', 'createdAt', 'updatedAt', 'location'],
   '\u7ec4\u5408\u6d3b\u52a8\u89c4\u5219': ['ruleId', 'planId', 'eventId', 'fixedTicketCount', 'capacity', 'opensAt', 'closesAt', 'status'],
   '\u7ec4\u5408\u62a5\u540d': ['bundleRegistrationId', 'planId', 'participantId', 'ticketNumber', 'tokenDigest', 'answers', 'status', 'createdAt'],
   '\u7ec4\u5408\u8d44\u683c': ['entitlementId', 'planId', 'bundleRegistrationId', 'eventId', 'fixedTicketCount', 'status', 'createdAt', 'updatedAt'],
@@ -439,6 +442,23 @@ function bundleCapacity_(value) {
   return number;
 }
 
+/** Normalizes the optional display choices for a combination e-ticket. */
+function normalizeBundleTicketDisplay_(value) {
+  var source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  var seen = {};
+  var questionIds = (Array.isArray(source.questionIds) ? source.questionIds : []).map(bundleText_).filter(function(questionId) {
+    if (!questionId || seen[questionId]) return false;
+    seen[questionId] = true;
+    return true;
+  });
+  return {
+    questionIds: questionIds,
+    showItemSchedule: source.showItemSchedule !== false,
+    showItemVenue: source.showItemVenue !== false,
+    showItemTicketCount: source.showItemTicketCount !== false
+  };
+}
+
 function requireBundlePlanPayload_(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) bundlePayloadError_();
   var title = bundleText_(payload.title);
@@ -450,7 +470,8 @@ function requireBundlePlanPayload_(payload) {
   return {
     planId: bundleText_(payload.planId), title: title,
     description: bundleText_(payload.description), opensAt: opensAt, closesAt: closesAt,
-    totalTicketLimit: bundlePositiveInteger_(payload.totalTicketLimit), showOnHome: payload.showOnHome === true, status: status
+    totalTicketLimit: bundlePositiveInteger_(payload.totalTicketLimit), showOnHome: payload.showOnHome === true,
+    ticketDisplay: normalizeBundleTicketDisplay_(payload.ticketDisplay), status: status
   };
 }
 
@@ -485,7 +506,7 @@ function requireBundleItemPayload_(payload) {
       (checkInMode === 'multiple' && labels.length && labels.length !== checkInCount)) bundlePayloadError_();
   return {
     bundleItemId: bundleText_(payload.bundleItemId), planId: planId, title: title,
-    startsAt: startsAt, endsAt: endsAt,
+    startsAt: startsAt, endsAt: endsAt, location: bundleText_(payload.location),
     fixedTicketCount: bundlePositiveInteger_(payload.fixedTicketCount),
     capacity: bundleCapacity_(payload.capacity), checkInMode: checkInMode,
     checkInCount: checkInCount, checkInLabels: labels,
@@ -519,7 +540,8 @@ function saveBundlePlanToSheet_(sheet, plan, now) {
   var row = {
     planId: plan.planId || 'BND-' + Utilities.getUuid(), title: plan.title,
     description: plan.description || '', opensAt: plan.opensAt, closesAt: plan.closesAt,
-    totalTicketLimit: plan.totalTicketLimit, showOnHome: plan.showOnHome === true || String(plan.showOnHome).toLowerCase() === 'true', status: plan.status,
+    totalTicketLimit: plan.totalTicketLimit, showOnHome: plan.showOnHome === true || String(plan.showOnHome).toLowerCase() === 'true',
+    ticketDisplay: JSON.stringify(normalizeBundleTicketDisplay_(plan.ticketDisplay)), status: plan.status,
     createdAt: existing.length ? existing[0].createdAt : timestamp, updatedAt: timestamp
   };
   var targetRow = existing.length ? existing[0].rowNumber : sheet.getLastRow() + 1;
@@ -556,7 +578,7 @@ function saveBundleItemToSheet_(sheet, item, now) {
   var timestamp = bundleIsoTime_(now || new Date().toISOString());
   var row = {
     bundleItemId: item.bundleItemId || 'BNI-' + Utilities.getUuid(), planId: item.planId,
-    title: item.title, startsAt: item.startsAt, endsAt: item.endsAt,
+    title: item.title, startsAt: item.startsAt, endsAt: item.endsAt, location: item.location || '',
     fixedTicketCount: item.fixedTicketCount, capacity: item.capacity,
     checkInMode: item.checkInMode, checkInCount: item.checkInCount,
     checkInLabels: JSON.stringify(item.checkInLabels), status: item.status,
@@ -5025,7 +5047,7 @@ function getBundleDashboard_(_payload, _actor) {
       return {
         planId: String(plan.planId), title: String(plan.title), description: String(plan.description || ''),
         opensAt: String(plan.opensAt), closesAt: String(plan.closesAt), totalTicketLimit: Number(plan.totalTicketLimit),
-        showOnHome: plan.showOnHome === true || String(plan.showOnHome).toLowerCase() === 'true', status: String(plan.status), registrationUrl: buildBundleRegistrationUrl_(plan.planId), sheetUrl: ensureBundlePlanWorkbook_(plan).url,
+        showOnHome: plan.showOnHome === true || String(plan.showOnHome).toLowerCase() === 'true', ticketDisplay: bundleTicketDisplaySettings_(plan.ticketDisplay), status: String(plan.status), registrationUrl: buildBundleRegistrationUrl_(plan.planId), sheetUrl: ensureBundlePlanWorkbook_(plan).url,
         attendanceCount: attendance.filter(function(record) {
           return String(record.status || '').toLowerCase() === 'checked_in' && entitlements.some(function(entitlement) {
             return entitlement.entitlementId === record.entitlementId && entitlement.planId === plan.planId;
@@ -5033,7 +5055,7 @@ function getBundleDashboard_(_payload, _actor) {
         }).length,
         items: items.filter(function(item) { return item.planId === plan.planId; }).map(function(item) {
           var labels; try { labels = JSON.parse(String(item.checkInLabels || '[]')); } catch (_ignored) { labels = []; }
-          return { bundleItemId: String(item.bundleItemId), title: String(item.title), fixedTicketCount: Number(item.fixedTicketCount), capacity: Number(item.capacity), startsAt: String(item.startsAt || ''), endsAt: String(item.endsAt || ''), checkInMode: String(item.checkInMode), checkInCount: Number(item.checkInCount || 0), checkInLabels: labels, status: String(item.status) };
+          return { bundleItemId: String(item.bundleItemId), title: String(item.title), fixedTicketCount: Number(item.fixedTicketCount), capacity: Number(item.capacity), startsAt: String(item.startsAt || ''), endsAt: String(item.endsAt || ''), location: String(item.location || ''), checkInMode: String(item.checkInMode), checkInCount: Number(item.checkInCount || 0), checkInLabels: labels, status: String(item.status) };
         }),
         questions: questions.filter(function(question) { return question.planId === plan.planId; }).map(function(question) { try { return JSON.parse(String(question.snapshot || '{}')); } catch (_ignored) { return null; } }).filter(Boolean),
         rules: rules.filter(function(rule) { return rule.planId === plan.planId; }).map(function(rule) {
@@ -5123,7 +5145,7 @@ function archiveBundlePlan_(payload, _actor) {
   if (!plan) adminError_('NOT_FOUND');
   return saveBundlePlanToSheet_(planSheet, {
     planId: plan.planId, title: plan.title, description: plan.description, opensAt: plan.opensAt,
-    closesAt: plan.closesAt, totalTicketLimit: plan.totalTicketLimit, showOnHome: false, status: 'inactive'
+    closesAt: plan.closesAt, totalTicketLimit: plan.totalTicketLimit, showOnHome: false, ticketDisplay: bundleTicketDisplaySettings_(plan.ticketDisplay), status: 'inactive'
   }, new Date().toISOString());
 }
 
@@ -7900,7 +7922,7 @@ function getBundlePlan(payload) {
         // Native item startsAt/endsAt are the event schedule, not its registration window.
         // The enclosing plan controls when participants may register.
         var availability = bundleRulePublicAvailability_({ status: item.status, capacity: item.capacity }, used, now);
-        return { itemId: String(item.bundleItemId), title: String(item.title), fixedTicketCount: Number(item.fixedTicketCount), capacity: Number(item.capacity || 0), used: used, startsAt: String(item.startsAt), endsAt: String(item.endsAt), status: availability.status, available: availability.available };
+        return { itemId: String(item.bundleItemId), title: String(item.title), fixedTicketCount: Number(item.fixedTicketCount), capacity: Number(item.capacity || 0), used: used, startsAt: String(item.startsAt), endsAt: String(item.endsAt), location: String(item.location || ''), status: availability.status, available: availability.available };
       }) : [];
       return {
         plan: { planId: planId, title: String(plans[0].title), description: String(plans[0].description || ''), totalTicketLimit: Number(plans[0].totalTicketLimit), opensAt: String(plans[0].opensAt), closesAt: String(plans[0].closesAt) },
@@ -8034,6 +8056,43 @@ function bundleRulePublicAvailability_(rule, used, now) {
   return { available: true, status: 'open' };
 }
 
+/** Creates the participant-safe, administrator-selected content of one bundle ticket. */
+function buildBundleTicketDisplay_(display, fields, answers, items) {
+  var settings = display && typeof display === 'object' && !Array.isArray(display) ? display : {};
+  var selected = {};
+  (Array.isArray(settings.questionIds) ? settings.questionIds : []).forEach(function(questionId) {
+    selected[String(questionId || '')] = true;
+  });
+  var response = { fields: [], items: [] };
+  (fields || []).forEach(function(field) {
+    var questionId = String(field.questionId || field.id || '');
+    if (!questionId || !selected[questionId]) return;
+    var value = answers && answers[questionId];
+    if (value === undefined || value === null || value === '') return;
+    response.fields.push({ label: String(field.label || questionId), value: bundleTicketDisplayValue_(value) });
+  });
+  (items || []).forEach(function(item) {
+    var visible = { title: String(item.title || item.itemId || item.eventId || '项目') };
+    if (settings.showItemSchedule !== false && item.startsAt && item.endsAt) {
+      visible.schedule = String(item.startsAt) + ' - ' + String(item.endsAt);
+    }
+    if (settings.showItemVenue !== false && item.location) visible.location = String(item.location);
+    if (settings.showItemTicketCount !== false) visible.fixedTicketCount = Number(item.fixedTicketCount || 0);
+    response.items.push(visible);
+  });
+  return response;
+}
+
+function bundleTicketDisplayValue_(value) {
+  if (Array.isArray(value)) return value.map(bundleTicketDisplayValue_).filter(Boolean).join('、');
+  if (typeof value === 'object') return String(value.originalName || value.name || value.fileName || '已上传资料');
+  return String(value);
+}
+
+function bundleTicketDisplaySettings_(value) {
+  try { return normalizeBundleTicketDisplay_(JSON.parse(String(value || '{}'))); } catch (_ignored) { return normalizeBundleTicketDisplay_({}); }
+}
+
 function verifyBundleTicket(payload) {
   return runPublicEventRead_(function() {
     if (!payload || typeof payload.token !== 'string' || !payload.token.trim()) publicEventReadError_('TOKEN_INVALID');
@@ -8046,18 +8105,26 @@ function verifyBundleTicket(payload) {
       var registrations = bundleSheetRows_(registrationSheet, BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u62a5\u540d']).filter(function(row) { return row.tokenDigest === digest && row.status === 'active'; });
       if (registrations.length !== 1) publicEventReadError_('TOKEN_INVALID');
       var registration = registrations[0];
+      var planSheet = registry.getSheetByName('\u7ec4\u5408\u8ba1\u5212');
       var itemSheet = registry.getSheetByName('\u7ec4\u5408\u9879\u76ee');
-      var itemTitles = {};
+      var itemDetails = {};
       if (itemSheet) {
         bundleSheetRows_(itemSheet, BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u9879\u76ee']).forEach(function(item) {
-          itemTitles[String(item.bundleItemId)] = String(item.title || '');
+          itemDetails[String(item.bundleItemId)] = item;
         });
       }
       var entitlements = bundleSheetRows_(entitlementSheet, BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u8d44\u683c']).filter(function(row) { return row.bundleRegistrationId === registration.bundleRegistrationId && row.status === 'active'; }).map(function(row) {
         var itemId = String(row.eventId);
-        return { eventId: itemId, itemId: itemId, title: itemTitles[itemId] || itemId, fixedTicketCount: Number(row.fixedTicketCount) };
+        var item = itemDetails[itemId] || {};
+        return { eventId: itemId, itemId: itemId, title: String(item.title || itemId), fixedTicketCount: Number(row.fixedTicketCount), startsAt: String(item.startsAt || ''), endsAt: String(item.endsAt || ''), location: String(item.location || '') };
       });
-      return { ticketNumber: String(registration.ticketNumber), planId: String(registration.planId), selectedEvents: entitlements, status: 'active' };
+      var plan = planSheet ? bundleSheetRows_(planSheet, BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u8ba1\u5212']).filter(function(row) { return String(row.planId) === String(registration.planId); })[0] : null;
+      var answers; try { answers = JSON.parse(String(registration.answers || '{}')); } catch (_ignored) { answers = {}; }
+      var ticketDisplay = buildBundleTicketDisplay_(
+        bundleTicketDisplaySettings_(plan && plan.ticketDisplay),
+        bundleRegistrationFields_(registry, String(registration.planId)), answers, entitlements
+      );
+      return { ticketNumber: String(registration.ticketNumber), planId: String(registration.planId), selectedEvents: entitlements, ticketDisplay: ticketDisplay, status: 'active' };
     });
   });
 }

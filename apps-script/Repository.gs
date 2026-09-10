@@ -350,10 +350,13 @@ function ensureHeaders_(sheet, headers) {
   // row above real live records.  This path preserves every existing row.
   if (sheet.getLastRow() > 0) {
     var current = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
-    var matchingPrefix = current.slice(0, Math.max(0, headers.length - 1)).every(function(value, index) {
+    var currentHeaderLength = current.reduce(function(length, value, index) {
+      return String(value || '') ? index + 1 : length;
+    }, 0);
+    var matchingPrefix = current.slice(0, currentHeaderLength).every(function(value, index) {
       return String(value || '') === String(headers[index] || '');
     });
-    if (matchingPrefix && String(current[headers.length - 1] || '') === '') {
+    if (matchingPrefix && currentHeaderLength < headers.length) {
       sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
       return;
     }
@@ -374,8 +377,8 @@ function ensureHeaders_(sheet, headers) {
  */
 var BUNDLE_SHEET_HEADERS_ = {
   // Keep the new flag at the end: existing live sheets retain every old column's meaning.
-  '\u7ec4\u5408\u8ba1\u5212': ['planId', 'title', 'description', 'opensAt', 'closesAt', 'totalTicketLimit', 'status', 'createdAt', 'updatedAt', 'showOnHome'],
-  '\u7ec4\u5408\u9879\u76ee': ['bundleItemId', 'planId', 'title', 'startsAt', 'endsAt', 'fixedTicketCount', 'capacity', 'checkInMode', 'checkInCount', 'checkInLabels', 'status', 'createdAt', 'updatedAt'],
+  '\u7ec4\u5408\u8ba1\u5212': ['planId', 'title', 'description', 'opensAt', 'closesAt', 'totalTicketLimit', 'status', 'createdAt', 'updatedAt', 'showOnHome', 'ticketDisplay'],
+  '\u7ec4\u5408\u9879\u76ee': ['bundleItemId', 'planId', 'title', 'startsAt', 'endsAt', 'fixedTicketCount', 'capacity', 'checkInMode', 'checkInCount', 'checkInLabels', 'status', 'createdAt', 'updatedAt', 'location'],
   '\u7ec4\u5408\u6d3b\u52a8\u89c4\u5219': ['ruleId', 'planId', 'eventId', 'fixedTicketCount', 'capacity', 'opensAt', 'closesAt', 'status'],
   '\u7ec4\u5408\u62a5\u540d': ['bundleRegistrationId', 'planId', 'participantId', 'ticketNumber', 'tokenDigest', 'answers', 'status', 'createdAt'],
   '\u7ec4\u5408\u8d44\u683c': ['entitlementId', 'planId', 'bundleRegistrationId', 'eventId', 'fixedTicketCount', 'status', 'createdAt', 'updatedAt'],
@@ -422,6 +425,23 @@ function bundleCapacity_(value) {
   return number;
 }
 
+/** Normalizes the optional display choices for a combination e-ticket. */
+function normalizeBundleTicketDisplay_(value) {
+  var source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  var seen = {};
+  var questionIds = (Array.isArray(source.questionIds) ? source.questionIds : []).map(bundleText_).filter(function(questionId) {
+    if (!questionId || seen[questionId]) return false;
+    seen[questionId] = true;
+    return true;
+  });
+  return {
+    questionIds: questionIds,
+    showItemSchedule: source.showItemSchedule !== false,
+    showItemVenue: source.showItemVenue !== false,
+    showItemTicketCount: source.showItemTicketCount !== false
+  };
+}
+
 function requireBundlePlanPayload_(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) bundlePayloadError_();
   var title = bundleText_(payload.title);
@@ -433,7 +453,8 @@ function requireBundlePlanPayload_(payload) {
   return {
     planId: bundleText_(payload.planId), title: title,
     description: bundleText_(payload.description), opensAt: opensAt, closesAt: closesAt,
-    totalTicketLimit: bundlePositiveInteger_(payload.totalTicketLimit), showOnHome: payload.showOnHome === true, status: status
+    totalTicketLimit: bundlePositiveInteger_(payload.totalTicketLimit), showOnHome: payload.showOnHome === true,
+    ticketDisplay: normalizeBundleTicketDisplay_(payload.ticketDisplay), status: status
   };
 }
 
@@ -468,7 +489,7 @@ function requireBundleItemPayload_(payload) {
       (checkInMode === 'multiple' && labels.length && labels.length !== checkInCount)) bundlePayloadError_();
   return {
     bundleItemId: bundleText_(payload.bundleItemId), planId: planId, title: title,
-    startsAt: startsAt, endsAt: endsAt,
+    startsAt: startsAt, endsAt: endsAt, location: bundleText_(payload.location),
     fixedTicketCount: bundlePositiveInteger_(payload.fixedTicketCount),
     capacity: bundleCapacity_(payload.capacity), checkInMode: checkInMode,
     checkInCount: checkInCount, checkInLabels: labels,
@@ -502,7 +523,8 @@ function saveBundlePlanToSheet_(sheet, plan, now) {
   var row = {
     planId: plan.planId || 'BND-' + Utilities.getUuid(), title: plan.title,
     description: plan.description || '', opensAt: plan.opensAt, closesAt: plan.closesAt,
-    totalTicketLimit: plan.totalTicketLimit, showOnHome: plan.showOnHome === true || String(plan.showOnHome).toLowerCase() === 'true', status: plan.status,
+    totalTicketLimit: plan.totalTicketLimit, showOnHome: plan.showOnHome === true || String(plan.showOnHome).toLowerCase() === 'true',
+    ticketDisplay: JSON.stringify(normalizeBundleTicketDisplay_(plan.ticketDisplay)), status: plan.status,
     createdAt: existing.length ? existing[0].createdAt : timestamp, updatedAt: timestamp
   };
   var targetRow = existing.length ? existing[0].rowNumber : sheet.getLastRow() + 1;
@@ -539,7 +561,7 @@ function saveBundleItemToSheet_(sheet, item, now) {
   var timestamp = bundleIsoTime_(now || new Date().toISOString());
   var row = {
     bundleItemId: item.bundleItemId || 'BNI-' + Utilities.getUuid(), planId: item.planId,
-    title: item.title, startsAt: item.startsAt, endsAt: item.endsAt,
+    title: item.title, startsAt: item.startsAt, endsAt: item.endsAt, location: item.location || '',
     fixedTicketCount: item.fixedTicketCount, capacity: item.capacity,
     checkInMode: item.checkInMode, checkInCount: item.checkInCount,
     checkInLabels: JSON.stringify(item.checkInLabels), status: item.status,

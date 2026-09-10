@@ -50,14 +50,57 @@ test("bundle rule rejects zero fixed tickets and invalid capacity", async () => 
   }), /INVALID_REQUEST/);
 });
 
+test("bundle plan normalizes ticket display settings while retaining only selected question IDs", async () => {
+  const context = await loadBundleValidation();
+  const plan = context.requireBundlePlanPayload_({
+    title: "九月组合报名", totalTicketLimit: 6,
+    opensAt: "2026-09-01T00:00:00.000Z", closesAt: "2026-09-30T00:00:00.000Z",
+    status: "draft",
+    ticketDisplay: {
+      questionIds: ["name", "phone", "name", "  "],
+      showItemSchedule: false, showItemVenue: true, showItemTicketCount: false
+    }
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(plan.ticketDisplay)), {
+    questionIds: ["name", "phone"],
+    showItemSchedule: false, showItemVenue: true, showItemTicketCount: false
+  });
+});
+
+test("bundle plan ticket display defaults preserve the useful event details for old plans", async () => {
+  const context = await loadBundleValidation();
+  assert.deepEqual(JSON.parse(JSON.stringify(context.normalizeBundleTicketDisplay_({}))), {
+    questionIds: [], showItemSchedule: true, showItemVenue: true, showItemTicketCount: true
+  });
+});
+
+test("combination ticket display returns only selected personal answers and enabled item details", async () => {
+  const source = await readFile(new URL("../apps-script/Code.gs", import.meta.url), "utf8");
+  const context = vm.createContext({ Object, Array, String, Number, JSON, Date, Error, isFinite });
+  vm.runInContext(source, context);
+  const display = context.buildBundleTicketDisplay_({
+    questionIds: ["name"], showItemSchedule: true, showItemVenue: false, showItemTicketCount: true
+  }, [
+    { questionId: "name", label: "姓名" }, { questionId: "phone", label: "电话号码" }
+  ], { name: "小明", phone: "0123456789" }, [{
+    title: "羽球比赛", startsAt: "2026-12-01T02:00:00.000Z", endsAt: "2026-12-01T04:00:00.000Z",
+    location: "现代", fixedTicketCount: 6
+  }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(display)), {
+    fields: [{ label: "姓名", value: "小明" }],
+    items: [{ title: "羽球比赛", schedule: "2026-12-01T02:00:00.000Z - 2026-12-01T04:00:00.000Z", fixedTicketCount: 6 }]
+  });
+});
+
 test("native bundle item does not accept or require an ordinary event id", async () => {
   const context = await loadBundleValidation();
   const item = context.requireBundleItemPayload_({
     planId: "plan-1", title: "亲子科学工作坊", fixedTicketCount: 2, capacity: 40,
     startsAt: "2026-09-20T02:00:00.000Z", endsAt: "2026-09-20T04:00:00.000Z",
-    checkInMode: "single", checkInCount: 1, checkInLabels: [], status: "open"
+    location: "现代礼堂", checkInMode: "single", checkInCount: 1, checkInLabels: [], status: "open"
   });
   assert.equal(item.title, "亲子科学工作坊");
+  assert.equal(item.location, "现代礼堂");
   assert.equal(item.eventId, undefined);
   assert.throws(() => context.requireBundleItemPayload_({
     planId: "plan-1", title: "", fixedTicketCount: 1, capacity: 0,
@@ -179,7 +222,7 @@ test("native combination item event times do not lock an already-open plan", asy
   assert.doesNotMatch(source, /availability = bundleRulePublicAvailability_\(\{ status: item\.status, opensAt: item\.startsAt/);
 });
 
-test("adding the homepage flag keeps existing combination plan rows in their original columns", async () => {
+test("adding new combination plan columns keeps existing rows in their original columns", async () => {
   const context = await loadBundleValidation();
   const oldHeaders = ["planId", "title", "description", "opensAt", "closesAt", "totalTicketLimit", "status", "createdAt", "updatedAt"];
   const rows = [oldHeaders, ["plan-1", "旧计划", "", "2026-09-01T00:00:00.000Z", "2026-09-30T00:00:00.000Z", 6, "open", "old", "old"]];
@@ -196,6 +239,7 @@ test("adding the homepage flag keeps existing combination plan rows in their ori
   };
   context.ensureHeaders_(sheet, context.BUNDLE_SHEET_HEADERS_["组合计划"]);
   assert.equal(rows[0][9], "showOnHome");
+  assert.equal(rows[0][10], "ticketDisplay");
   assert.equal(rows[1][6], "open");
   assert.equal(rows[1][7], "old");
 });
@@ -207,6 +251,16 @@ test("combination administrator editor creates native items instead of selecting
   assert.match(html, /name="title" required placeholder="例如：亲子科学工作坊"/);
   assert.doesNotMatch(html, /bundle-event-selector/);
   assert.match(script, /saveBundleItem/);
+});
+
+test("combination administrator can configure ticket details and a project venue", async () => {
+  const html = await readFile(new URL("../staff-apps-script/Admin.html", import.meta.url), "utf8");
+  const script = await readFile(new URL("../staff-apps-script/AdminScript.html", import.meta.url), "utf8");
+  assert.match(html, /id="bundle-ticket-display-fields"/);
+  assert.match(html, /name="showItemSchedule"/);
+  assert.match(html, /name="location"/);
+  assert.match(script, /ticketDisplay/);
+  assert.match(script, /showItemVenue/);
 });
 
 test("combination plan dashboard includes its separate check-in count", async () => {
@@ -252,6 +306,14 @@ test("combination ticket page uses the public QR SVG renderer", async () => {
   assert.match(source, /import\s*\{\s*renderQrSvg\s*\}\s*from\s*["']\.\/qr\.js["']/);
   assert.match(source, /renderQrSvg\(/);
   assert.doesNotMatch(source, /renderQr\s*\(/);
+});
+
+test("combination ticket page renders administrator-selected personal details", async () => {
+  const html = await readFile(new URL("../public/bundle-ticket.html", import.meta.url), "utf8");
+  const script = await readFile(new URL("../public/js/bundle-ticket-page.js", import.meta.url), "utf8");
+  assert.match(html, /id="ticket-details"/);
+  assert.match(script, /ticketDisplay/);
+  assert.match(script, /schedule/);
 });
 
 test("combination ticket QR contains the short raw token and recovery routes are available", async () => {

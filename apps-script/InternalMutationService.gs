@@ -276,7 +276,7 @@ function getBundleDashboard_(_payload, _actor) {
       return {
         planId: String(plan.planId), title: String(plan.title), description: String(plan.description || ''),
         opensAt: String(plan.opensAt), closesAt: String(plan.closesAt), totalTicketLimit: Number(plan.totalTicketLimit),
-        showOnHome: plan.showOnHome === true || String(plan.showOnHome).toLowerCase() === 'true', status: String(plan.status), registrationUrl: buildBundleRegistrationUrl_(plan.planId), sheetUrl: ensureBundlePlanWorkbook_(plan).url,
+        showOnHome: plan.showOnHome === true || String(plan.showOnHome).toLowerCase() === 'true', ticketDisplay: bundleTicketDisplaySettings_(plan.ticketDisplay), status: String(plan.status), registrationUrl: buildBundleRegistrationUrl_(plan.planId), sheetUrl: ensureBundlePlanWorkbook_(plan).url,
         attendanceCount: attendance.filter(function(record) {
           return String(record.status || '').toLowerCase() === 'checked_in' && entitlements.some(function(entitlement) {
             return entitlement.entitlementId === record.entitlementId && entitlement.planId === plan.planId;
@@ -284,7 +284,7 @@ function getBundleDashboard_(_payload, _actor) {
         }).length,
         items: items.filter(function(item) { return item.planId === plan.planId; }).map(function(item) {
           var labels; try { labels = JSON.parse(String(item.checkInLabels || '[]')); } catch (_ignored) { labels = []; }
-          return { bundleItemId: String(item.bundleItemId), title: String(item.title), fixedTicketCount: Number(item.fixedTicketCount), capacity: Number(item.capacity), startsAt: String(item.startsAt || ''), endsAt: String(item.endsAt || ''), checkInMode: String(item.checkInMode), checkInCount: Number(item.checkInCount || 0), checkInLabels: labels, status: String(item.status) };
+          return { bundleItemId: String(item.bundleItemId), title: String(item.title), fixedTicketCount: Number(item.fixedTicketCount), capacity: Number(item.capacity), startsAt: String(item.startsAt || ''), endsAt: String(item.endsAt || ''), location: String(item.location || ''), checkInMode: String(item.checkInMode), checkInCount: Number(item.checkInCount || 0), checkInLabels: labels, status: String(item.status) };
         }),
         questions: questions.filter(function(question) { return question.planId === plan.planId; }).map(function(question) { try { return JSON.parse(String(question.snapshot || '{}')); } catch (_ignored) { return null; } }).filter(Boolean),
         rules: rules.filter(function(rule) { return rule.planId === plan.planId; }).map(function(rule) {
@@ -374,7 +374,7 @@ function archiveBundlePlan_(payload, _actor) {
   if (!plan) adminError_('NOT_FOUND');
   return saveBundlePlanToSheet_(planSheet, {
     planId: plan.planId, title: plan.title, description: plan.description, opensAt: plan.opensAt,
-    closesAt: plan.closesAt, totalTicketLimit: plan.totalTicketLimit, showOnHome: false, status: 'inactive'
+    closesAt: plan.closesAt, totalTicketLimit: plan.totalTicketLimit, showOnHome: false, ticketDisplay: bundleTicketDisplaySettings_(plan.ticketDisplay), status: 'inactive'
   }, new Date().toISOString());
 }
 

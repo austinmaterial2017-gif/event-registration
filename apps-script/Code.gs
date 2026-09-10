@@ -106,7 +106,7 @@ function getBundlePlan(payload) {
         // Native item startsAt/endsAt are the event schedule, not its registration window.
         // The enclosing plan controls when participants may register.
         var availability = bundleRulePublicAvailability_({ status: item.status, capacity: item.capacity }, used, now);
-        return { itemId: String(item.bundleItemId), title: String(item.title), fixedTicketCount: Number(item.fixedTicketCount), capacity: Number(item.capacity || 0), used: used, startsAt: String(item.startsAt), endsAt: String(item.endsAt), status: availability.status, available: availability.available };
+        return { itemId: String(item.bundleItemId), title: String(item.title), fixedTicketCount: Number(item.fixedTicketCount), capacity: Number(item.capacity || 0), used: used, startsAt: String(item.startsAt), endsAt: String(item.endsAt), location: String(item.location || ''), status: availability.status, available: availability.available };
       }) : [];
       return {
         plan: { planId: planId, title: String(plans[0].title), description: String(plans[0].description || ''), totalTicketLimit: Number(plans[0].totalTicketLimit), opensAt: String(plans[0].opensAt), closesAt: String(plans[0].closesAt) },
@@ -240,6 +240,43 @@ function bundleRulePublicAvailability_(rule, used, now) {
   return { available: true, status: 'open' };
 }
 
+/** Creates the participant-safe, administrator-selected content of one bundle ticket. */
+function buildBundleTicketDisplay_(display, fields, answers, items) {
+  var settings = display && typeof display === 'object' && !Array.isArray(display) ? display : {};
+  var selected = {};
+  (Array.isArray(settings.questionIds) ? settings.questionIds : []).forEach(function(questionId) {
+    selected[String(questionId || '')] = true;
+  });
+  var response = { fields: [], items: [] };
+  (fields || []).forEach(function(field) {
+    var questionId = String(field.questionId || field.id || '');
+    if (!questionId || !selected[questionId]) return;
+    var value = answers && answers[questionId];
+    if (value === undefined || value === null || value === '') return;
+    response.fields.push({ label: String(field.label || questionId), value: bundleTicketDisplayValue_(value) });
+  });
+  (items || []).forEach(function(item) {
+    var visible = { title: String(item.title || item.itemId || item.eventId || '项目') };
+    if (settings.showItemSchedule !== false && item.startsAt && item.endsAt) {
+      visible.schedule = String(item.startsAt) + ' - ' + String(item.endsAt);
+    }
+    if (settings.showItemVenue !== false && item.location) visible.location = String(item.location);
+    if (settings.showItemTicketCount !== false) visible.fixedTicketCount = Number(item.fixedTicketCount || 0);
+    response.items.push(visible);
+  });
+  return response;
+}
+
+function bundleTicketDisplayValue_(value) {
+  if (Array.isArray(value)) return value.map(bundleTicketDisplayValue_).filter(Boolean).join('、');
+  if (typeof value === 'object') return String(value.originalName || value.name || value.fileName || '已上传资料');
+  return String(value);
+}
+
+function bundleTicketDisplaySettings_(value) {
+  try { return normalizeBundleTicketDisplay_(JSON.parse(String(value || '{}'))); } catch (_ignored) { return normalizeBundleTicketDisplay_({}); }
+}
+
 function verifyBundleTicket(payload) {
   return runPublicEventRead_(function() {
     if (!payload || typeof payload.token !== 'string' || !payload.token.trim()) publicEventReadError_('TOKEN_INVALID');
@@ -252,18 +289,26 @@ function verifyBundleTicket(payload) {
       var registrations = bundleSheetRows_(registrationSheet, BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u62a5\u540d']).filter(function(row) { return row.tokenDigest === digest && row.status === 'active'; });
       if (registrations.length !== 1) publicEventReadError_('TOKEN_INVALID');
       var registration = registrations[0];
+      var planSheet = registry.getSheetByName('\u7ec4\u5408\u8ba1\u5212');
       var itemSheet = registry.getSheetByName('\u7ec4\u5408\u9879\u76ee');
-      var itemTitles = {};
+      var itemDetails = {};
       if (itemSheet) {
         bundleSheetRows_(itemSheet, BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u9879\u76ee']).forEach(function(item) {
-          itemTitles[String(item.bundleItemId)] = String(item.title || '');
+          itemDetails[String(item.bundleItemId)] = item;
         });
       }
       var entitlements = bundleSheetRows_(entitlementSheet, BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u8d44\u683c']).filter(function(row) { return row.bundleRegistrationId === registration.bundleRegistrationId && row.status === 'active'; }).map(function(row) {
         var itemId = String(row.eventId);
-        return { eventId: itemId, itemId: itemId, title: itemTitles[itemId] || itemId, fixedTicketCount: Number(row.fixedTicketCount) };
+        var item = itemDetails[itemId] || {};
+        return { eventId: itemId, itemId: itemId, title: String(item.title || itemId), fixedTicketCount: Number(row.fixedTicketCount), startsAt: String(item.startsAt || ''), endsAt: String(item.endsAt || ''), location: String(item.location || '') };
       });
-      return { ticketNumber: String(registration.ticketNumber), planId: String(registration.planId), selectedEvents: entitlements, status: 'active' };
+      var plan = planSheet ? bundleSheetRows_(planSheet, BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u8ba1\u5212']).filter(function(row) { return String(row.planId) === String(registration.planId); })[0] : null;
+      var answers; try { answers = JSON.parse(String(registration.answers || '{}')); } catch (_ignored) { answers = {}; }
+      var ticketDisplay = buildBundleTicketDisplay_(
+        bundleTicketDisplaySettings_(plan && plan.ticketDisplay),
+        bundleRegistrationFields_(registry, String(registration.planId)), answers, entitlements
+      );
+      return { ticketNumber: String(registration.ticketNumber), planId: String(registration.planId), selectedEvents: entitlements, ticketDisplay: ticketDisplay, status: 'active' };
     });
   });
 }

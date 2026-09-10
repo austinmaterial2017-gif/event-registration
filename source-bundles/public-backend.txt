@@ -4291,6 +4291,17 @@ function staffScannerCheckIn(payload) {
     }
     var pass = readStaffScannerPass_(payload.scannerPass);
     if (!pass) return internalMutationFailure_('STAFF_ACTION_DENIED');
+    // Combination projects are deliberately isolated from ordinary event
+    // workbooks.  Dispatch them directly instead of relying on TOKEN_INVALID
+    // as a fallback, so an ordinary ticket can never be recorded against a
+    // combination project by accident.
+    if (pass.targetKind === 'bundle') {
+      try {
+        return { ok: true, data: staffBundleCheckIn_(payload, pass.actor, pass) };
+      } catch (bundleError) {
+        return internalMutationFailure_(bundleError && bundleError.publicCode ? bundleError.publicCode : 'INTERNAL');
+      }
+    }
     try {
       var data = internalStaffCheckInLocked_({
         token: payload.token,

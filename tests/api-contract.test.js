@@ -86,7 +86,7 @@ test("the production timeout tolerates an Apps Script cold start", async () => {
 test("participant entry modules cache-bust the production API client", async () => {
   const root = new URL("../public/js/", import.meta.url);
   const modules = [
-    ["index-page.js", "20260728-stable"],
+    ["index-page.js", "20260910-bundle-api"],
     ["register-page.js", "20260824-photo"],
     ["ticket-page.js", "20260806-recovery"],
     ["verify-page.js", "20260728-stable"]
@@ -100,7 +100,7 @@ test("participant entry modules cache-bust the production API client", async () 
 test("participant HTML cache-busts each updated entry module", async () => {
   const root = new URL("../public/", import.meta.url);
   const pages = [
-    ["index.html", "index-page.js", "20260910-bundle-priority"],
+    ["index.html", "index-page.js", "20260910-bundle-api-fix"],
     ["register.html", "register-page.js", "20260824-photo"],
     ["ticket.html", "ticket-page.js", "20260806-recovery"],
     ["verify.html", "verify-page.js", "20260728-final"],
@@ -205,6 +205,12 @@ test("the home page loads combination plans without waiting for ordinary activit
   const bundleRead = source.indexOf("await listBundlePlans()");
   const eventRead = source.indexOf("await listEvents()");
   assert.ok(bundleRead >= 0 && eventRead > bundleRead, "combination plans must finish before the ordinary-event request starts");
+});
+
+test("combination plan listing uses the configured public API client", async () => {
+  const source = await readFile(new URL("../public/js/api.js", import.meta.url), "utf8");
+  assert.match(source, /export const listBundlePlans\s*=\s*\(\)\s*=>\s*publicClient\.listBundlePlans\(\)/);
+  assert.doesNotMatch(source, /publicRequest\(/);
 });
 
 test("the public browser client exposes no attendance mutation", () => {

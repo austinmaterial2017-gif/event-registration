@@ -1,4 +1,5 @@
 import { listEvents } from "./api.js?v=20260728-stable";
+import { listBundlePlans } from "./api.js?v=20260728-stable";
 import { refreshActivityCountdowns } from "./activity-countdown-view.js";
 import {
   buildActivityTicketView,
@@ -109,6 +110,24 @@ async function initialise() {
   const timestamp = Date.parse(result.data.serverNow);
   serverOffset = Number.isFinite(timestamp) ? timestamp - Date.now() : Number.NaN;
   renderActivities(result.data.events);
+  const bundles = await listBundlePlans();
+  if (bundles.ok && Array.isArray(bundles.data?.plans)) bundles.data.plans.forEach((plan) => {
+    const article = node("article", "activity-ticket ticket-open");
+    const date = node("div", "ticket-date");
+    date.append(node("span", "", "组合报名"), node("strong", "", "多项目入场券"));
+    const copy = node("div", "ticket-copy");
+    copy.append(
+      node("span", "status open", "报名开放"),
+      node("h3", "", plan.title),
+      node("p", "", plan.description || "选择项目后填写报名资料。"),
+    );
+    const actions = node("div", "ticket-action");
+    const link = node("a", "ticket-button", "立即报名");
+    link.href = plan.registrationUrl || `bundle-register.html?plan=${encodeURIComponent(plan.planId)}`;
+    actions.append(link);
+    article.append(date, copy, actions);
+    list.append(article);
+  });
 }
 
 initialise();

@@ -20,6 +20,7 @@ const publicFiles = [
   "apps-script/AttendanceService.gs",
   "apps-script/StaffScannerService.gs",
   "apps-script/InternalGateway.gs",
+  "apps-script/BundlePlanOverview.gs",
   "apps-script/InternalMutationService.gs",
   "apps-script/SwitchProbeService.gs",
   "apps-script/Code.gs"

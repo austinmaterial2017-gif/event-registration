@@ -303,13 +303,17 @@ test("scanner keeps an ordinary ticket result without attempting a combination f
 });
 
 test("combination attendance overview puts every configured project across one participant row", async () => {
-  const source = await readFile(new URL("../apps-script/InternalMutationService.gs", import.meta.url), "utf8");
+  const [internalSource, overviewSource] = await Promise.all([
+    readFile(new URL("../apps-script/InternalMutationService.gs", import.meta.url), "utf8"),
+    readFile(new URL("../apps-script/BundlePlanOverview.gs", import.meta.url), "utf8")
+  ]);
   const context = vm.createContext({
     Object, Array, String, Number, JSON, Date, Error,
     PUBLIC_BACKEND_URL: "", SWITCH_PROBE_SHARED_SECRET: "", SWITCH_PROBE: "", SWITCH_PROBE_ACK: "", SWITCH_MAINTENANCE: "",
     SHEET_DEFINITIONS: {}, SpreadsheetApp: {}, Utilities: { getUuid: () => "id" }
   });
-  vm.runInContext(source, context);
+  vm.runInContext(internalSource, context);
+  vm.runInContext(overviewSource, context);
   const view = context.buildBundlePlanAttendanceOverview_(
     [{ bundleRegistrationId: "registration-1", ticketNumber: "BND-001", answers: JSON.stringify({ name: "小明", phone: "0123456789" }), status: "active" }],
     [

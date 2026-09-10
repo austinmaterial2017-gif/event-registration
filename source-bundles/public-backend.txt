@@ -7713,7 +7713,9 @@ function getBundlePlan(payload) {
         return item.planId === planId;
       }).map(function(item) {
         var used = entitlements.filter(function(row) { return row.planId === planId && row.eventId === item.bundleItemId && String(row.status || '').toLowerCase() === 'active'; }).length;
-        var availability = bundleRulePublicAvailability_({ status: item.status, opensAt: item.startsAt, closesAt: item.endsAt, capacity: item.capacity }, used, now);
+        // Native item startsAt/endsAt are the event schedule, not its registration window.
+        // The enclosing plan controls when participants may register.
+        var availability = bundleRulePublicAvailability_({ status: item.status, capacity: item.capacity }, used, now);
         return { itemId: String(item.bundleItemId), title: String(item.title), fixedTicketCount: Number(item.fixedTicketCount), capacity: Number(item.capacity || 0), used: used, startsAt: String(item.startsAt), endsAt: String(item.endsAt), status: availability.status, available: availability.available };
       }) : [];
       return {
@@ -7749,7 +7751,9 @@ function createBundleRegistration(payload) {
       var requested = {}; (payload.itemIds || payload.eventIds).forEach(function(id) { if (typeof id === 'string' && id.trim()) requested[id.trim()] = true; });
       if (!Object.keys(requested).length) registrationError_('INVALID_REQUEST');
       var nativeItems = itemSheet ? bundleSheetRows_(itemSheet, BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u9879\u76ee']).filter(function(item) { return item.planId === planId && requested[item.bundleItemId]; }) : [];
-      var rules = nativeItems.length ? nativeItems.map(function(item) { return { eventId: String(item.bundleItemId), fixedTicketCount: Number(item.fixedTicketCount), capacity: Number(item.capacity), opensAt: item.startsAt, closesAt: item.endsAt, status: item.status }; }) : bundleSheetRows_(ruleSheet, BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u6d3b\u52a8\u89c4\u5219']).filter(function(rule) { return rule.planId === planId && requested[rule.eventId]; });
+      // Native item startsAt/endsAt describe when the activity happens.  Registration
+      // availability is governed by the enclosing plan's opensAt/closesAt above.
+      var rules = nativeItems.length ? nativeItems.map(function(item) { return { eventId: String(item.bundleItemId), fixedTicketCount: Number(item.fixedTicketCount), capacity: Number(item.capacity), status: item.status }; }) : bundleSheetRows_(ruleSheet, BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u6d3b\u52a8\u89c4\u5219']).filter(function(rule) { return rule.planId === planId && requested[rule.eventId]; });
       if (rules.length !== Object.keys(requested).length) registrationError_('INVALID_REQUEST');
       var entitlements = bundleSheetRows_(entitlementSheet, BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u8d44\u683c']);
       var total = 0;

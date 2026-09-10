@@ -172,6 +172,13 @@ test("administrator backend exposes a read-only combination plan dashboard", asy
   assert.match(source, /'admin\.getBundleDashboard'/);
 });
 
+test("native combination item event times do not lock an already-open plan", async () => {
+  const source = await readFile(new URL("../apps-script/Code.gs", import.meta.url), "utf8");
+  assert.match(source, /bundleRulePublicAvailability_\(\{ status: item\.status, capacity: item\.capacity \}, used, now\)/);
+  assert.match(source, /capacity: Number\(item\.capacity\), status: item\.status \};/);
+  assert.doesNotMatch(source, /availability = bundleRulePublicAvailability_\(\{ status: item\.status, opensAt: item\.startsAt/);
+});
+
 test("adding the homepage flag keeps existing combination plan rows in their original columns", async () => {
   const context = await loadBundleValidation();
   const oldHeaders = ["planId", "title", "description", "opensAt", "closesAt", "totalTicketLimit", "status", "createdAt", "updatedAt"];

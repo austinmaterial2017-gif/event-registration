@@ -98,19 +98,18 @@ function renderActivities(activities) {
 
 async function initialise() {
   showPageNotice();
-  const result = await listEvents();
+  const [result, bundles] = await Promise.all([listEvents(), listBundlePlans()]);
   const list = document.querySelector("#activity-list");
   const status = document.querySelector("#activity-status");
   if (!result.ok || !Array.isArray(result.data?.events)) {
     list.replaceChildren(node("p", "notice", result.message || "暂时无法加载活动，请稍后重试。"));
     list.setAttribute("aria-busy", "false");
     status.textContent = "活动列表暂时无法加载。";
-    return;
+  } else {
+    const timestamp = Date.parse(result.data.serverNow);
+    serverOffset = Number.isFinite(timestamp) ? timestamp - Date.now() : Number.NaN;
+    renderActivities(result.data.events);
   }
-  const timestamp = Date.parse(result.data.serverNow);
-  serverOffset = Number.isFinite(timestamp) ? timestamp - Date.now() : Number.NaN;
-  renderActivities(result.data.events);
-  const bundles = await listBundlePlans();
   if (bundles.ok && Array.isArray(bundles.data?.plans)) bundles.data.plans.forEach((plan) => {
     const article = node("article", "activity-ticket ticket-open");
     const date = node("div", "ticket-date");

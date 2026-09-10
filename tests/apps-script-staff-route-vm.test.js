@@ -6,8 +6,12 @@ import { readdir, readFile } from "node:fs/promises";
 const staffScriptRoot = new URL("../staff-apps-script/", import.meta.url);
 const ADMIN_RPC_NAMES = [
   "adminRecordAction",
+  "archiveBundleItem",
+  "archiveBundlePlan",
   "deleteAdminDraft",
   "deleteAdminSession",
+  "deleteBundleItem",
+  "deleteBundlePlan",
   "deleteEmptyAdminEvent",
   "finalizeAdminDraft",
   "getAdminDashboard",

@@ -4716,7 +4716,11 @@ var ADMIN_MUTATION_ACTIONS_ = {
   'admin.switchSheet': true,
   'admin.saveBundlePlan': true,
   'admin.saveBundleRule': true,
-  'admin.saveBundleItem': true
+  'admin.saveBundleItem': true,
+  'admin.archiveBundlePlan': true,
+  'admin.deleteBundlePlan': true,
+  'admin.archiveBundleItem': true,
+  'admin.deleteBundleItem': true
 };
 
 function executeInternalActionLocked_(action, payload, actor) {
@@ -4764,6 +4768,10 @@ function executeInternalActionLocked_(action, payload, actor) {
     ,'admin.saveBundlePlan': function() { return saveBundlePlan_(payload, actor); }
     ,'admin.saveBundleRule': function() { return saveBundleRule_(payload, actor); }
     ,'admin.saveBundleItem': function() { return saveBundleItem_(payload, actor); }
+    ,'admin.archiveBundlePlan': function() { return archiveBundlePlan_(payload, actor); }
+    ,'admin.deleteBundlePlan': function() { return deleteBundlePlan_(payload, actor); }
+    ,'admin.archiveBundleItem': function() { return archiveBundleItem_(payload, actor); }
+    ,'admin.deleteBundleItem': function() { return deleteBundleItem_(payload, actor); }
   };
   if (!Object.prototype.hasOwnProperty.call(handlers, action)) {
     return internalMutationFailure_('INTERNAL_REQUEST_DENIED');
@@ -4865,7 +4873,8 @@ function getBundleDashboard_(_payload, _actor) {
           });
         }).length,
         items: items.filter(function(item) { return item.planId === plan.planId; }).map(function(item) {
-          return { bundleItemId: String(item.bundleItemId), title: String(item.title), fixedTicketCount: Number(item.fixedTicketCount), capacity: Number(item.capacity), checkInMode: String(item.checkInMode), status: String(item.status) };
+          var labels; try { labels = JSON.parse(String(item.checkInLabels || '[]')); } catch (_ignored) { labels = []; }
+          return { bundleItemId: String(item.bundleItemId), title: String(item.title), fixedTicketCount: Number(item.fixedTicketCount), capacity: Number(item.capacity), startsAt: String(item.startsAt || ''), endsAt: String(item.endsAt || ''), checkInMode: String(item.checkInMode), checkInCount: Number(item.checkInCount || 0), checkInLabels: labels, status: String(item.status) };
         }),
         rules: rules.filter(function(rule) { return rule.planId === plan.planId; }).map(function(rule) {
           var used = entitlements.filter(function(entitlement) {
@@ -4907,6 +4916,64 @@ function saveBundleItem_(payload, actor) {
   ).filter(function(plan) { return plan.planId === item.planId; });
   if (planMatches.length !== 1) adminError_('NOT_FOUND');
   return saveBundleItemToSheet_(registry.getSheetByName('\u7ec4\u5408\u9879\u76ee'), item);
+}
+
+function requireBundleActionId_(payload, key) {
+  if (!payload || payload.confirm !== true || !bundleText_(payload[key])) adminError_('CONFIRMATION_REQUIRED');
+  return bundleText_(payload[key]);
+}
+
+function archiveBundlePlan_(payload, _actor) {
+  var registry = bundleRegistrySheet_(getRegistrySpreadsheet_());
+  var planId = requireBundleActionId_(payload, 'planId');
+  var planSheet = registry.getSheetByName('\u7ec4\u5408\u8ba1\u5212');
+  var plan = bundleSheetRows_(planSheet, BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u8ba1\u5212']).filter(function(row) { return row.planId === planId; })[0];
+  if (!plan) adminError_('NOT_FOUND');
+  return saveBundlePlanToSheet_(planSheet, {
+    planId: plan.planId, title: plan.title, description: plan.description, opensAt: plan.opensAt,
+    closesAt: plan.closesAt, totalTicketLimit: plan.totalTicketLimit, status: 'inactive'
+  }, new Date().toISOString());
+}
+
+function deleteBundlePlan_(payload, _actor) {
+  var registry = bundleRegistrySheet_(getRegistrySpreadsheet_());
+  var planId = requireBundleActionId_(payload, 'planId');
+  var planSheet = registry.getSheetByName('\u7ec4\u5408\u8ba1\u5212');
+  var plans = bundleSheetRows_(planSheet, BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u8ba1\u5212']).filter(function(row) { return row.planId === planId; });
+  if (plans.length !== 1) adminError_('NOT_FOUND');
+  var registrationSheet = registry.getSheetByName('\u7ec4\u5408\u62a5\u540d');
+  var entitlementSheet = registry.getSheetByName('\u7ec4\u5408\u8d44\u683c');
+  if (bundleSheetRows_(registrationSheet, BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u62a5\u540d']).some(function(row) { return row.planId === planId; }) ||
+      bundleSheetRows_(entitlementSheet, BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u8d44\u683c']).some(function(row) { return row.planId === planId; })) adminError_('CONFLICT');
+  ['\u7ec4\u5408\u9879\u76ee', '\u7ec4\u5408\u6d3b\u52a8\u89c4\u5219', '\u7ec4\u5408\u95ee\u9898'].forEach(function(sheetName) {
+    var sheet = registry.getSheetByName(sheetName);
+    var headers = BUNDLE_SHEET_HEADERS_[sheetName];
+    bundleSheetRows_(sheet, headers).filter(function(row) { return row.planId === planId; }).sort(function(a, b) { return b.rowNumber - a.rowNumber; }).forEach(function(row) { sheet.deleteRow(row.rowNumber); });
+  });
+  planSheet.deleteRow(plans[0].rowNumber);
+  return { planId: planId, deleted: true };
+}
+
+function archiveBundleItem_(payload, _actor) {
+  var registry = bundleRegistrySheet_(getRegistrySpreadsheet_());
+  var itemId = requireBundleActionId_(payload, 'bundleItemId');
+  var itemSheet = registry.getSheetByName('\u7ec4\u5408\u9879\u76ee');
+  var item = bundleSheetRows_(itemSheet, BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u9879\u76ee']).filter(function(row) { return row.bundleItemId === itemId; })[0];
+  if (!item) adminError_('NOT_FOUND');
+  item.status = 'inactive';
+  return saveBundleItemToSheet_(itemSheet, item, new Date().toISOString());
+}
+
+function deleteBundleItem_(payload, _actor) {
+  var registry = bundleRegistrySheet_(getRegistrySpreadsheet_());
+  var itemId = requireBundleActionId_(payload, 'bundleItemId');
+  var itemSheet = registry.getSheetByName('\u7ec4\u5408\u9879\u76ee');
+  var items = bundleSheetRows_(itemSheet, BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u9879\u76ee']).filter(function(row) { return row.bundleItemId === itemId; });
+  if (items.length !== 1) adminError_('NOT_FOUND');
+  var entitlements = bundleSheetRows_(registry.getSheetByName('\u7ec4\u5408\u8d44\u683c'), BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u8d44\u683c']);
+  if (entitlements.some(function(row) { return row.eventId === itemId; })) adminError_('CONFLICT');
+  itemSheet.deleteRow(items[0].rowNumber);
+  return { bundleItemId: itemId, deleted: true };
 }
 
 function runAdminMutationTransaction_(registry, spreadsheet, action, callback) {

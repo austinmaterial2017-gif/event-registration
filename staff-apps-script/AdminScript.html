@@ -481,7 +481,7 @@
           `组合项目 ${Array.isArray(plan.items) ? plan.items.length : 0} 项`,
           `已签到 ${plan.attendanceCount || 0} 次`
         ]);
-        const use = editButton("使用此计划", () => {
+        const use = editButton("编辑计划", () => {
           const form = document.querySelector("#bundle-plan-form");
           form.elements.planId.value = plan.planId;
           form.elements.title.value = plan.title || "";
@@ -495,6 +495,22 @@
         });
         use.dataset.useBundlePlan = plan.planId;
         row.append(use);
+        const close = editButton("关闭计划", () => {
+          if (!window.confirm(`确认关闭“${plan.title}”？已有报名和签到会保留，但新报名会停止。`)) return;
+          runButtonAction_(close, "正在关闭组合计划…", "组合计划已关闭。", (runner) => {
+            runner.archiveBundlePlan({ planId: plan.planId, confirm: true });
+          }, loadBundleDashboard_);
+        });
+        close.dataset.archiveBundlePlan = plan.planId;
+        row.append(close);
+        const remove = editButton("删除计划", () => {
+          if (!window.confirm(`确认永久删除“${plan.title}”？只有完全没有报名记录的计划才能删除。`)) return;
+          runButtonAction_(remove, "正在删除组合计划…", "组合计划已删除。", (runner) => {
+            runner.deleteBundlePlan({ planId: plan.planId, confirm: true });
+          }, loadBundleDashboard_);
+        });
+        remove.dataset.deleteBundlePlan = plan.planId;
+        row.append(remove);
         const copy = editButton("复制报名链接", () => {
           const url = String(plan.registrationUrl || "");
           if (!url) {
@@ -507,6 +523,43 @@
         });
         copy.dataset.copyBundleRegistration = plan.planId;
         row.append(copy);
+        (Array.isArray(plan.items) ? plan.items : []).forEach((item) => {
+          const itemRow = dataRow(`项目：${item.title}`, item.status, [
+            `每人 ${item.fixedTicketCount} 张`, `名额 ${item.capacity || "不限"}`,
+            item.checkInMode === "none" ? "无需签到" : item.checkInMode === "multiple" ? "多次签到" : "签到一次"
+          ]);
+          const editItem = editButton("编辑项目", () => {
+            const form = document.querySelector("#bundle-item-form");
+            form.elements.bundleItemId.value = item.bundleItemId;
+            form.elements.planId.value = plan.planId;
+            form.elements.title.value = item.title || "";
+            form.elements.fixedTicketCount.value = String(item.fixedTicketCount || 1);
+            form.elements.capacity.value = String(item.capacity || 0);
+            form.elements.startsAt.value = localDateInput(item.startsAt);
+            form.elements.endsAt.value = localDateInput(item.endsAt);
+            form.elements.checkInMode.value = item.checkInMode || "none";
+            form.elements.checkInCount.value = String(item.checkInCount || 1);
+            form.elements.checkInLabels.value = Array.isArray(item.checkInLabels) ? item.checkInLabels.join("\n") : "";
+            form.elements.status.value = item.status || "open";
+            setStatus(`正在编辑组合项目：${item.title}`);
+          });
+          itemRow.append(editItem);
+          const closeItem = editButton("关闭项目", () => {
+            if (!window.confirm(`确认关闭“${item.title}”？已有票券和签到会保留。`)) return;
+            runButtonAction_(closeItem, "正在关闭组合项目…", "组合项目已关闭。", (runner) => {
+              runner.archiveBundleItem({ bundleItemId: item.bundleItemId, confirm: true });
+            }, loadBundleDashboard_);
+          });
+          itemRow.append(closeItem);
+          const deleteItem = editButton("删除项目", () => {
+            if (!window.confirm(`确认永久删除“${item.title}”？只有没有报名的项目才能删除。`)) return;
+            runButtonAction_(deleteItem, "正在删除组合项目…", "组合项目已删除。", (runner) => {
+              runner.deleteBundleItem({ bundleItemId: item.bundleItemId, confirm: true });
+            }, loadBundleDashboard_);
+          });
+          itemRow.append(deleteItem);
+          row.append(itemRow);
+        });
         return row;
       });
     }
@@ -1610,6 +1663,7 @@
       event.preventDefault();
       const values = formObject(event.currentTarget);
       const payload = {
+        bundleItemId: String(values.bundleItemId || "").trim(),
         planId: String(values.planId || "").trim(), title: String(values.title || "").trim(),
         fixedTicketCount: Number(values.fixedTicketCount), capacity: Number(values.capacity),
         startsAt: bundleDateValue_(values.startsAt), endsAt: bundleDateValue_(values.endsAt),

@@ -273,6 +273,24 @@ test("scanner keeps an ordinary ticket result without attempting a combination f
   assert.equal(bundleCalls, 0);
 });
 
+test("combination plans expose edit, safe close, and guarded permanent deletion controls", async () => {
+  const internalSource = await readFile(new URL("../apps-script/InternalMutationService.gs", import.meta.url), "utf8");
+  const adminServiceSource = await readFile(new URL("../staff-apps-script/AdminService.gs", import.meta.url), "utf8");
+  const adminScriptSource = await readFile(new URL("../staff-apps-script/AdminScript.html", import.meta.url), "utf8");
+  assert.match(internalSource, /'admin\.archiveBundlePlan'/);
+  assert.match(internalSource, /'admin\.deleteBundlePlan'/);
+  assert.match(internalSource, /'admin\.archiveBundleItem'/);
+  assert.match(internalSource, /'admin\.deleteBundleItem'/);
+  assert.match(adminServiceSource, /function archiveBundlePlan\(payload\)/);
+  assert.match(adminServiceSource, /function deleteBundlePlan\(payload\)/);
+  assert.match(adminScriptSource, /编辑计划/);
+  assert.match(adminScriptSource, /关闭计划/);
+  assert.match(adminScriptSource, /删除计划/);
+  assert.match(adminScriptSource, /编辑项目/);
+  assert.match(adminScriptSource, /关闭项目/);
+  assert.match(adminScriptSource, /删除项目/);
+});
+
 test("staff scanner source exposes active native bundle projects without ordinary event routing", async () => {
   const source = await readFile(new URL("../apps-script/StaffScannerService.gs", import.meta.url), "utf8");
   assert.match(source, /组合项目/);

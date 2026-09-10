@@ -174,6 +174,27 @@ test("administrator backend exposes a read-only combination plan dashboard", asy
   assert.match(source, /'admin\.getBundleDashboard'/);
 });
 
+test("adding the homepage flag keeps existing combination plan rows in their original columns", async () => {
+  const context = await loadBundleValidation();
+  const oldHeaders = ["planId", "title", "description", "opensAt", "closesAt", "totalTicketLimit", "status", "createdAt", "updatedAt"];
+  const rows = [oldHeaders, ["plan-1", "旧计划", "", "2026-09-01T00:00:00.000Z", "2026-09-30T00:00:00.000Z", 6, "open", "old", "old"]];
+  const sheet = {
+    getName: () => "组合计划",
+    getLastRow: () => rows.length,
+    getRange(row, column, rowCount, columnCount) {
+      return {
+        getValues: () => Array.from({ length: rowCount }, (_, y) => Array.from({ length: columnCount }, (_, x) => rows[row - 1 + y]?.[column - 1 + x] ?? "")),
+        setValues: (values) => values.forEach((source, y) => { rows[row - 1 + y] = source.slice(); })
+      };
+    },
+    insertRowsBefore() { throw new Error("should not insert a duplicate header"); }
+  };
+  context.ensureHeaders_(sheet, context.BUNDLE_SHEET_HEADERS_["组合计划"]);
+  assert.equal(rows[0][9], "showOnHome");
+  assert.equal(rows[1][6], "open");
+  assert.equal(rows[1][7], "old");
+});
+
 test("combination administrator editor creates native items instead of selecting an old activity", async () => {
   const html = await readFile(new URL("../staff-apps-script/Admin.html", import.meta.url), "utf8");
   const script = await readFile(new URL("../staff-apps-script/AdminScript.html", import.meta.url), "utf8");
@@ -289,6 +310,25 @@ test("combination plans expose edit, safe close, and guarded permanent deletion 
   assert.match(adminScriptSource, /编辑项目/);
   assert.match(adminScriptSource, /关闭项目/);
   assert.match(adminScriptSource, /删除项目/);
+});
+
+test("combination plans can collect configurable personal information and be shown on the public home page", async () => {
+  const repositorySource = await readFile(new URL("../apps-script/Repository.gs", import.meta.url), "utf8");
+  const internalSource = await readFile(new URL("../apps-script/InternalMutationService.gs", import.meta.url), "utf8");
+  const codeSource = await readFile(new URL("../apps-script/Code.gs", import.meta.url), "utf8");
+  const adminHtml = await readFile(new URL("../staff-apps-script/Admin.html", import.meta.url), "utf8");
+  const adminScript = await readFile(new URL("../staff-apps-script/AdminScript.html", import.meta.url), "utf8");
+  const publicIndex = await readFile(new URL("../public/js/index-page.js", import.meta.url), "utf8");
+  assert.match(repositorySource, /'showOnHome'/);
+  assert.match(internalSource, /'admin\.saveBundleQuestion'/);
+  assert.match(internalSource, /'admin\.deleteBundleQuestion'/);
+  assert.match(codeSource, /'listBundlePlans'/);
+  assert.match(adminHtml, /id="bundle-question-form"/);
+  assert.match(adminHtml, /name="options"/);
+  assert.match(adminHtml, /value="photo"/);
+  assert.match(adminScript, /saveBundleQuestion/);
+  assert.match(adminScript, /deleteBundleQuestion/);
+  assert.match(publicIndex, /listBundlePlans/);
 });
 
 test("staff scanner source exposes active native bundle projects without ordinary event routing", async () => {

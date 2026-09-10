@@ -129,6 +129,8 @@ var ADMIN_MUTATION_ACTIONS_ = {
   'admin.deleteBundlePlan': true,
   'admin.archiveBundleItem': true,
   'admin.deleteBundleItem': true
+  ,'admin.saveBundleQuestion': true
+  ,'admin.deleteBundleQuestion': true
 };
 
 function executeInternalActionLocked_(action, payload, actor) {
@@ -180,6 +182,8 @@ function executeInternalActionLocked_(action, payload, actor) {
     ,'admin.deleteBundlePlan': function() { return deleteBundlePlan_(payload, actor); }
     ,'admin.archiveBundleItem': function() { return archiveBundleItem_(payload, actor); }
     ,'admin.deleteBundleItem': function() { return deleteBundleItem_(payload, actor); }
+    ,'admin.saveBundleQuestion': function() { return saveBundleQuestion_(payload, actor); }
+    ,'admin.deleteBundleQuestion': function() { return deleteBundleQuestion_(payload, actor); }
   };
   if (!Object.prototype.hasOwnProperty.call(handlers, action)) {
     return internalMutationFailure_('INTERNAL_REQUEST_DENIED');
@@ -269,12 +273,13 @@ function getBundleDashboard_(_payload, _actor) {
   var rules = bundleSheetRows_(registry.getSheetByName('组合活动规则'), BUNDLE_SHEET_HEADERS_['组合活动规则']);
   var entitlements = bundleSheetRows_(registry.getSheetByName('组合资格'), BUNDLE_SHEET_HEADERS_['组合资格']);
   var attendance = bundleSheetRows_(registry.getSheetByName('组合签到'), BUNDLE_SHEET_HEADERS_['组合签到']);
+  var questions = bundleSheetRows_(registry.getSheetByName('组合问题'), BUNDLE_SHEET_HEADERS_['组合问题']);
   return {
     plans: plans.sort(function(left, right) { return String(right.updatedAt).localeCompare(String(left.updatedAt)); }).map(function(plan) {
       return {
         planId: String(plan.planId), title: String(plan.title), description: String(plan.description || ''),
         opensAt: String(plan.opensAt), closesAt: String(plan.closesAt), totalTicketLimit: Number(plan.totalTicketLimit),
-        status: String(plan.status), registrationUrl: buildBundleRegistrationUrl_(plan.planId),
+        showOnHome: plan.showOnHome === true || String(plan.showOnHome).toLowerCase() === 'true', status: String(plan.status), registrationUrl: buildBundleRegistrationUrl_(plan.planId),
         attendanceCount: attendance.filter(function(record) {
           return String(record.status || '').toLowerCase() === 'checked_in' && entitlements.some(function(entitlement) {
             return entitlement.entitlementId === record.entitlementId && entitlement.planId === plan.planId;
@@ -284,6 +289,7 @@ function getBundleDashboard_(_payload, _actor) {
           var labels; try { labels = JSON.parse(String(item.checkInLabels || '[]')); } catch (_ignored) { labels = []; }
           return { bundleItemId: String(item.bundleItemId), title: String(item.title), fixedTicketCount: Number(item.fixedTicketCount), capacity: Number(item.capacity), startsAt: String(item.startsAt || ''), endsAt: String(item.endsAt || ''), checkInMode: String(item.checkInMode), checkInCount: Number(item.checkInCount || 0), checkInLabels: labels, status: String(item.status) };
         }),
+        questions: questions.filter(function(question) { return question.planId === plan.planId; }).map(function(question) { try { return JSON.parse(String(question.snapshot || '{}')); } catch (_ignored) { return null; } }).filter(Boolean),
         rules: rules.filter(function(rule) { return rule.planId === plan.planId; }).map(function(rule) {
           var used = entitlements.filter(function(entitlement) {
             return entitlement.planId === plan.planId && entitlement.eventId === rule.eventId &&
@@ -339,7 +345,7 @@ function archiveBundlePlan_(payload, _actor) {
   if (!plan) adminError_('NOT_FOUND');
   return saveBundlePlanToSheet_(planSheet, {
     planId: plan.planId, title: plan.title, description: plan.description, opensAt: plan.opensAt,
-    closesAt: plan.closesAt, totalTicketLimit: plan.totalTicketLimit, status: 'inactive'
+    closesAt: plan.closesAt, totalTicketLimit: plan.totalTicketLimit, showOnHome: false, status: 'inactive'
   }, new Date().toISOString());
 }
 
@@ -382,6 +388,46 @@ function deleteBundleItem_(payload, _actor) {
   if (entitlements.some(function(row) { return row.eventId === itemId; })) adminError_('CONFLICT');
   itemSheet.deleteRow(items[0].rowNumber);
   return { bundleItemId: itemId, deleted: true };
+}
+
+function saveBundleQuestion_(payload, _actor) {
+  var registry = bundleRegistrySheet_(getRegistrySpreadsheet_());
+  if (!payload || !bundleText_(payload.planId) || !bundleText_(payload.label)) adminError_('INVALID_REQUEST');
+  var planId = bundleText_(payload.planId);
+  if (!bundleSheetRows_(registry.getSheetByName('组合计划'), BUNDLE_SHEET_HEADERS_['组合计划']).some(function(plan) {
+    return plan.planId === planId;
+  })) adminError_('NOT_FOUND');
+  var types = ['text', 'textarea', 'number', 'tel', 'email', 'date', 'radio', 'checkbox', 'select', 'photo'];
+  var type = bundleText_(payload.type || 'text');
+  if (types.indexOf(type) === -1) adminError_('INVALID_REQUEST');
+  var choices = Array.isArray(payload.options) ? payload.options.map(bundleText_).filter(Boolean) : [];
+  if (['radio', 'checkbox', 'select'].indexOf(type) !== -1 && !choices.length) adminError_('INVALID_REQUEST');
+  var sheet = registry.getSheetByName('组合问题');
+  var rows = bundleSheetRows_(sheet, BUNDLE_SHEET_HEADERS_['组合问题']);
+  var questionId = bundleText_(payload.questionId) || 'BNQ-' + Utilities.getUuid();
+  var existing = rows.filter(function(row) { return row.planId === planId && row.questionId === questionId; });
+  if (existing.length > 1) adminError_('CONFLICT');
+  var configuration = type === 'photo'
+    ? { upload: { maxFiles: 3, maxBytes: 5242880, accept: ['image/jpeg', 'image/png', 'image/heic', 'image/heif'] } }
+    : { choices: choices };
+  var sortOrder = Number(payload.sortOrder || 100);
+  if (!isFinite(sortOrder) || sortOrder < 4) adminError_('INVALID_REQUEST');
+  var snapshot = { questionId: questionId, label: bundleText_(payload.label), type: type, required: payload.required === true, options: JSON.stringify(configuration), status: payload.status === 'hidden' ? 'hidden' : 'active', sortOrder: sortOrder };
+  var target = existing.length ? existing[0].rowNumber : sheet.getLastRow() + 1;
+  sheet.getRange(target, 1, 1, 3).setValues([[planId, questionId, JSON.stringify(snapshot)]]);
+  return snapshot;
+}
+
+function deleteBundleQuestion_(payload, _actor) {
+  var registry = bundleRegistrySheet_(getRegistrySpreadsheet_());
+  if (!payload || payload.confirm !== true || !bundleText_(payload.planId) || !bundleText_(payload.questionId)) adminError_('CONFIRMATION_REQUIRED');
+  var sheet = registry.getSheetByName('组合问题');
+  var rows = bundleSheetRows_(sheet, BUNDLE_SHEET_HEADERS_['组合问题']).filter(function(row) { return row.planId === payload.planId && row.questionId === payload.questionId; });
+  if (rows.length !== 1) adminError_('NOT_FOUND');
+  var registrations = bundleSheetRows_(registry.getSheetByName('组合报名'), BUNDLE_SHEET_HEADERS_['组合报名']);
+  var hasAnswer = registrations.some(function(row) { try { return row.planId === payload.planId && Object.prototype.hasOwnProperty.call(JSON.parse(String(row.answers || '{}')), payload.questionId); } catch (_ignored) { return false; } });
+  if (hasAnswer) { var snapshot = JSON.parse(String(rows[0].snapshot)); snapshot.status = 'hidden'; sheet.getRange(rows[0].rowNumber, 1, 1, 3).setValues([[rows[0].planId, rows[0].questionId, JSON.stringify(snapshot)]]); return { questionId: payload.questionId, hidden: true }; }
+  sheet.deleteRow(rows[0].rowNumber); return { questionId: payload.questionId, deleted: true };
 }
 
 function runAdminMutationTransaction_(registry, spreadsheet, action, callback) {

@@ -186,6 +186,14 @@ function deleteBundleItem(payload) {
   });
 }
 
+function saveBundleQuestion(payload) {
+  return runAdminService_(function() { var actor = requireAuthorizedAdminSession_(); var result = invokeInternalBackend_('admin.saveBundleQuestion', payload || {}, actor); if (!result.ok) adminError_(result.code); return result.data; });
+}
+
+function deleteBundleQuestion(payload) {
+  return runAdminService_(function() { var actor = requireAuthorizedAdminSession_(); var result = invokeInternalBackend_('admin.deleteBundleQuestion', payload || {}, actor); if (!result.ok) adminError_(result.code); return result.data; });
+}
+
 /** Uploads or replaces one optional image shown with a registration question. */
 function uploadAdminQuestionImage(payload) {
   return runAdminService_(function() {

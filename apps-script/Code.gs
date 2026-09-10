@@ -37,6 +37,7 @@ var PUBLIC_ERROR_MESSAGES = {
 var PUBLIC_ROUTES = {
   'listEvents': function(payload) { return listEvents(payload); },
   'getEvent': function(payload) { return getEvent(payload); },
+  'listBundlePlans': function(payload) { return listBundlePlans(payload); },
   'getBundlePlan': function(payload) { return getBundlePlan(payload); },
   'createBundleRegistration': function(payload) { return createBundleRegistration(payload); },
   'verifyBundleTicket': function(payload) { return verifyBundleTicket(payload); },
@@ -106,7 +107,7 @@ function getBundlePlan(payload) {
       return {
         plan: { planId: planId, title: String(plans[0].title), description: String(plans[0].description || ''), totalTicketLimit: Number(plans[0].totalTicketLimit), opensAt: String(plans[0].opensAt), closesAt: String(plans[0].closesAt) },
         rules: rules, items: items,
-        fields: bundleRegistrationFields_().map(function(field) { return publicQuestionProjection_(field, {}); }),
+        fields: bundleRegistrationFields_(registry, planId).map(function(field) { return publicQuestionProjection_(field, {}); }),
         serverNow: now.toISOString()
       };
     });
@@ -152,7 +153,7 @@ function createBundleRegistration(payload) {
       var registrationId = Utilities.getUuid(); var participantId = Utilities.getUuid();
       var ticketNumber = 'BND-' + Utilities.getUuid().replace(/-/g, '').slice(0, 10).toUpperCase();
       var token = Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, ''); var timestamp = now.toISOString();
-      var questions = bundleRegistrationFields_();
+      var questions = bundleRegistrationFields_(registry, planId);
       var normalizedUploads = validateRegistrationUploads_(questions, payload.uploads);
       var submittedAnswers = {};
       Object.keys(payload.answers || {}).forEach(function(questionId) { submittedAnswers[questionId] = payload.answers[questionId]; });
@@ -193,8 +194,8 @@ function createBundleRegistration(payload) {
   });
 }
 
-function bundleRegistrationFields_() {
-  return [
+function bundleRegistrationFields_(registry, planId) {
+  var fixed = [
     { questionId: 'name', label: '姓名', type: 'text', required: true, options: '{}', status: 'active', sortOrder: 1 },
     { questionId: 'phone', label: '电话号码', type: 'tel', required: true, options: '{}', status: 'active', sortOrder: 2 },
     {
@@ -203,6 +204,25 @@ function bundleRegistrationFields_() {
       status: 'active', sortOrder: 3
     }
   ];
+  if (!registry || !planId) return fixed;
+  var questionSheet = registry.getSheetByName('\u7ec4\u5408\u95ee\u9898');
+  if (!questionSheet) return fixed;
+  return fixed.concat(bundleSheetRows_(questionSheet, BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u95ee\u9898']).filter(function(row) {
+    return row.planId === planId;
+  }).map(function(row) { try { return JSON.parse(String(row.snapshot || '{}')); } catch (_ignored) { return null; } }).filter(function(question) {
+    return question && String(question.status || 'active') === 'active';
+  })).sort(function(left, right) { return Number(left.sortOrder || 0) - Number(right.sortOrder || 0); });
+}
+
+function listBundlePlans(_payload) {
+  return runPublicEventRead_(function() {
+    var registry = getRegistrySpreadsheet_();
+    var now = new Date().getTime();
+    var plans = bundleSheetRows_(registry.getSheetByName('\u7ec4\u5408\u8ba1\u5212'), BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u8ba1\u5212']).filter(function(plan) {
+      return String(plan.status || '').toLowerCase() === 'open' && (plan.showOnHome === true || String(plan.showOnHome).toLowerCase() === 'true') && Date.parse(plan.opensAt) <= now && Date.parse(plan.closesAt) > now;
+    }).map(function(plan) { return { planId: String(plan.planId), title: String(plan.title), description: String(plan.description || ''), opensAt: String(plan.opensAt), closesAt: String(plan.closesAt), registrationUrl: buildBundleRegistrationUrl_(plan.planId) }; });
+    return { plans: plans, serverNow: new Date(now).toISOString() };
+  });
 }
 
 function bundleRulePublicAvailability_(rule, used, now) {

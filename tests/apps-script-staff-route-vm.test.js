@@ -26,7 +26,9 @@ const ADMIN_RPC_NAMES = [
   "saveAdminSession",
   "saveBundleItem",
   "saveBundlePlan",
+  "saveBundleQuestion",
   "saveBundleRule",
+  "deleteBundleQuestion",
   "switchAdminSheet",
   "testAdminSheetConnection",
   "uploadAdminQuestionImage"

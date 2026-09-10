@@ -2,6 +2,8 @@ import { APPS_SCRIPT_WEB_APP_URL } from "./config.js";
 
 export const DEMO_ENDPOINT_PLACEHOLDER = "PASTE_APPS_SCRIPT_WEB_APP_URL_HERE";
 
+export function listBundlePlans() { return publicRequest("listBundlePlans", {}); }
+
 const DEFAULT_TIMEOUT_MS = 60_000;
 const PUBLIC_ERROR_MESSAGES = {
   CANCELLATION_DISABLED: "This event does not allow participant cancellation.",

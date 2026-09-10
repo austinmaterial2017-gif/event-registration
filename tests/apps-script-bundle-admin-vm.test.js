@@ -302,6 +302,28 @@ test("scanner keeps an ordinary ticket result without attempting a combination f
   assert.equal(bundleCalls, 0);
 });
 
+test("combination attendance overview puts every configured project across one participant row", async () => {
+  const source = await readFile(new URL("../apps-script/InternalMutationService.gs", import.meta.url), "utf8");
+  const context = vm.createContext({
+    Object, Array, String, Number, JSON, Date, Error,
+    PUBLIC_BACKEND_URL: "", SWITCH_PROBE_SHARED_SECRET: "", SWITCH_PROBE: "", SWITCH_PROBE_ACK: "", SWITCH_MAINTENANCE: "",
+    SHEET_DEFINITIONS: {}, SpreadsheetApp: {}, Utilities: { getUuid: () => "id" }
+  });
+  vm.runInContext(source, context);
+  const view = context.buildBundlePlanAttendanceOverview_(
+    [{ bundleRegistrationId: "registration-1", ticketNumber: "BND-001", answers: JSON.stringify({ name: "小明", phone: "0123456789" }), status: "active" }],
+    [
+      { entitlementId: "entitlement-a", bundleRegistrationId: "registration-1", eventId: "item-a", status: "active" },
+      { entitlementId: "entitlement-b", bundleRegistrationId: "registration-1", eventId: "item-b", status: "active" }
+    ],
+    [{ entitlementId: "entitlement-a", eventId: "item-a", checkpointId: "checkpoint-1", checkedInAt: "2026-12-12T10:00:00.000Z", status: "checked_in" }],
+    { "item-a": { title: "羽球比赛", checkpoints: ["入场"] }, "item-b": { title: "海边", checkpoints: ["集合"] } },
+    [{ questionId: "name", label: "姓名" }, { questionId: "phone", label: "电话" }]
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(view.headers)), ["电子票", "姓名", "电话", "羽球比赛 · 入场", "海边 · 集合"]);
+  assert.deepEqual(JSON.parse(JSON.stringify(view.rows)), [["BND-001", "小明", "0123456789", "2026-12-12T10:00:00.000Z", "未签到"]]);
+});
+
 test("combination plans expose edit, safe close, and guarded permanent deletion controls", async () => {
   const internalSource = await readFile(new URL("../apps-script/InternalMutationService.gs", import.meta.url), "utf8");
   const adminServiceSource = await readFile(new URL("../staff-apps-script/AdminService.gs", import.meta.url), "utf8");

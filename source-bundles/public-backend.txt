@@ -4969,7 +4969,7 @@ function refreshBundlePlanOverviewFromRegistry_(registry, planId) {
   });
   var attendance = bundleSheetRows_(registry.getSheetByName('组合签到'), BUNDLE_SHEET_HEADERS_['组合签到']);
   var questions = bundlePlanOverviewQuestions_(registry, planId);
-  var itemTitles = bundlePlanOverviewItemTitles_(registry, planId);
+  var itemsById = bundlePlanOverviewItems_(registry, planId, entitlements);
   var usedHeaders = {};
   var questionHeaders = questions.map(function(question) {
     var base = String(question.label || question.questionId || '资料');
@@ -4991,28 +4991,16 @@ function refreshBundlePlanOverviewFromRegistry_(registry, planId) {
     var total = selected.reduce(function(sum, entitlement) { return sum + Number(entitlement.fixedTicketCount || 0); }, 0);
     var selection = selected.map(function(entitlement) {
       var itemId = String(entitlement.eventId || '');
-      return String(itemTitles[itemId] || itemId || '项目') + '（' + Number(entitlement.fixedTicketCount || 0) + '张）';
+      var item = itemsById[itemId] || {};
+      return String(item.title || itemId || '项目') + '（' + Number(entitlement.fixedTicketCount || 0) + '张）';
     }).join('\n');
     return [registration.bundleRegistrationId, registration.ticketNumber, registration.createdAt].concat(answerCells).concat([
       selection, total, bundlePlanOverviewStatus_(registration.status)
     ]);
   });
-  var entitlementById = {};
-  entitlements.forEach(function(entitlement) { entitlementById[String(entitlement.entitlementId)] = entitlement; });
-  var attendanceRows = attendance.filter(function(record) {
-    var entitlement = entitlementById[String(record.entitlementId)];
-    return entitlement && String(record.status || '').toLowerCase() === 'checked_in';
-  }).sort(function(left, right) { return String(left.checkedInAt).localeCompare(String(right.checkedInAt)); }).map(function(record) {
-    var entitlement = entitlementById[String(record.entitlementId)] || {};
-    var registration = registrationById[String(entitlement.bundleRegistrationId)] || {};
-    var itemId = String(record.eventId || entitlement.eventId || '');
-    return [record.checkedInAt, registration.ticketNumber || '', itemTitles[itemId] || itemId,
-      record.checkpointId || '', record.checkedInBy || ''];
-  });
+  var attendanceView = buildBundlePlanAttendanceOverview_(registrations, entitlements, attendance, itemsById, questions);
   var registrationView = writeReadableView_(spreadsheet, '报名总览', { headers: registrationHeaders, rows: registrationRows });
-  var attendanceView = writeReadableView_(spreadsheet, '签到总览', {
-    headers: ['签到时间', '电子票', '项目', '签到点', '工作人员'], rows: attendanceRows
-  });
+  attendanceView = writeReadableView_(spreadsheet, '签到总览', attendanceView);
   return { planId: String(planId), sheetUrl: book.url, registration: registrationView, attendance: attendanceView };
 }
 
@@ -5024,15 +5012,67 @@ function bundlePlanOverviewQuestions_(registry, planId) {
   });
 }
 
-function bundlePlanOverviewItemTitles_(registry, planId) {
-  var titles = {};
+function bundlePlanOverviewItems_(registry, planId, entitlements) {
+  var items = {};
   bundleSheetRows_(registry.getSheetByName('组合项目'), BUNDLE_SHEET_HEADERS_['组合项目']).filter(function(item) {
     return String(item.planId) === String(planId);
-  }).forEach(function(item) { titles[String(item.bundleItemId)] = String(item.title || item.bundleItemId); });
-  readAdminRows_(registry, '活动目录').forEach(function(event) {
-    if (!titles[String(event.eventId)]) titles[String(event.eventId)] = String(event.title || event.eventId);
+  }).forEach(function(item) {
+    var labels = bundlePlanOverviewJson_(item.checkInLabels, []);
+    var count = Math.max(1, Number(item.checkInCount || 1));
+    var mode = String(item.checkInMode || 'none').toLowerCase();
+    var checkpoints = [];
+    if (mode === 'none') checkpoints = ['无需签到'];
+    else if (mode === 'multiple') {
+      for (var index = 0; index < count; index += 1) checkpoints.push(String(labels[index] || ('第 ' + (index + 1) + ' 次签到')));
+    } else checkpoints = [String(labels[0] || '签到')];
+    items[String(item.bundleItemId)] = { title: String(item.title || item.bundleItemId), checkpoints: checkpoints };
   });
-  return titles;
+  readAdminRows_(registry, '活动目录').forEach(function(event) {
+    if (!items[String(event.eventId)]) items[String(event.eventId)] = { title: String(event.title || event.eventId), checkpoints: ['签到'] };
+  });
+  (entitlements || []).forEach(function(entitlement) {
+    var itemId = String(entitlement.eventId || '');
+    if (itemId && !items[itemId]) items[itemId] = { title: itemId, checkpoints: ['签到'] };
+  });
+  return items;
+}
+
+/** Builds the wide, participant-first check-in overview for one combination plan. */
+function buildBundlePlanAttendanceOverview_(registrations, entitlements, attendance, itemsById, questions) {
+  // Object insertion order follows the plan's project-sheet order, so a later
+  // project simply becomes the right-most column instead of reordering history.
+  var itemIds = Object.keys(itemsById || {});
+  var checkInColumns = [];
+  itemIds.forEach(function(itemId) {
+    var item = itemsById[itemId] || {};
+    (item.checkpoints || ['签到']).forEach(function(label, index) {
+      checkInColumns.push({ itemId: itemId, checkpointId: String(label) === '无需签到' ? '' : 'checkpoint-' + (index + 1), label: String(item.title || itemId) + ' · ' + String(label || '签到'), notRequired: String(label) === '无需签到' });
+    });
+  });
+  var fields = (questions || []).slice().sort(function(left, right) { return Number(left.sortOrder || 100) - Number(right.sortOrder || 100); });
+  var headers = ['电子票'].concat(fields.map(function(field) { return String(field.label || field.questionId || '资料'); })).concat(checkInColumns.map(function(column) { return column.label; }));
+  var entitlementByRegistrationAndItem = {};
+  (entitlements || []).forEach(function(entitlement) {
+    if (String(entitlement.status || '').toLowerCase() !== 'active') return;
+    entitlementByRegistrationAndItem[String(entitlement.bundleRegistrationId) + '|' + String(entitlement.eventId)] = entitlement;
+  });
+  var checkIns = {};
+  (attendance || []).forEach(function(record) {
+    if (String(record.status || '').toLowerCase() !== 'checked_in') return;
+    checkIns[String(record.entitlementId) + '|' + String(record.checkpointId || 'checkpoint-1')] = String(record.checkedInAt || '已签到');
+  });
+  var rows = (registrations || []).map(function(registration) {
+    var answers = bundlePlanOverviewJson_(registration.answers, {});
+    var info = fields.map(function(field) { return bundlePlanOverviewValue_(answers[field.questionId]); });
+    var states = checkInColumns.map(function(column) {
+      var entitlement = entitlementByRegistrationAndItem[String(registration.bundleRegistrationId) + '|' + column.itemId];
+      if (!entitlement) return '未报名';
+      if (column.notRequired) return '无需签到';
+      return checkIns[String(entitlement.entitlementId) + '|' + column.checkpointId] || '未签到';
+    });
+    return [String(registration.ticketNumber || '')].concat(info).concat(states);
+  });
+  return { headers: headers, rows: rows };
 }
 
 function bundlePlanOverviewJson_(value, fallback) {

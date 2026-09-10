@@ -1778,7 +1778,15 @@
         planId: String(values.planId || "").trim(), questionId: String(values.questionId || "").trim(),
         label: String(values.label || "").trim(), type: values.type, options,
         sortOrder: Number(values.sortOrder), required: checked(form, "required")
-      }), loadBundleDashboard_);
+      }), (saved) => {
+        const planId = form.elements.planId.value;
+        form.reset();
+        form.elements.planId.value = planId;
+        form.elements.questionId.value = "";
+        form.elements.sortOrder.value = String(Math.max(1, Number(saved && saved.sortOrder) || 0) + 1);
+        setStatus("组合问题已保存。现在可以直接新增下一题。", "success");
+        loadBundleDashboard_();
+      });
     });
     const resetBundleQuestion_ = document.querySelector("#reset-bundle-question");
     if (resetBundleQuestion_) resetBundleQuestion_.addEventListener("click", () => {

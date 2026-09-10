@@ -330,6 +330,7 @@ test("combination plans can collect configurable personal information and be sho
   assert.match(adminHtml, /value="photo"/);
   assert.match(adminScript, /saveBundleQuestion/);
   assert.match(adminScript, /deleteBundleQuestion/);
+  assert.match(adminScript, /现在可以直接新增下一题/);
   assert.match(publicIndex, /listBundlePlans/);
 });
 

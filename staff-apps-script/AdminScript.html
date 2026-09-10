@@ -161,11 +161,7 @@
       if (!dialog || !plan) return;
       document.querySelector("#bundle-preview-title").textContent = `${plan.title || "组合报名"} · 报名预览`;
       document.querySelector("#bundle-preview-description").textContent = plan.description || "参加者选择项目后填写以下资料。";
-      const fields = [
-        { questionId: "name", label: "姓名", type: "text", required: true },
-        { questionId: "phone", label: "电话号码", type: "tel", required: true },
-        { questionId: "photo", label: "付款证明／相关照片（如需要）", type: "photo", required: false }
-      ].concat((plan.questions || []).filter((question) => String(question.status || "active") === "active"));
+      const fields = (plan.questions || []).filter((question) => String(question.status || "active") === "active");
       document.querySelector("#bundle-preview-fields").replaceChildren(...fields.sort((left, right) => Number(left.sortOrder || 0) - Number(right.sortOrder || 0)).map(bundlePreviewControl_));
       if (typeof dialog.showModal === "function") dialog.showModal();
       else dialog.open = true;
@@ -525,6 +521,11 @@
       const plans = Array.isArray(data && data.plans) ? data.plans : [];
       state.bundlePlans = plans;
       replaceList("#bundle-plan-list", plans, (plan) => {
+        const planFold = document.createElement("details");
+        planFold.className = "bundle-plan-fold";
+        planFold.open = false;
+        const planSummary = element("summary", `${plan.title} · 每人最多 ${plan.totalTicketLimit} 张 · 组合项目 ${Array.isArray(plan.items) ? plan.items.length : 0} 项 · 已签到 ${plan.attendanceCount || 0} 次`);
+        planFold.append(planSummary);
         const row = dataRow(plan.title, plan.status, [
           `每人最多 ${plan.totalTicketLimit} 张`,
           `组合项目 ${Array.isArray(plan.items) ? plan.items.length : 0} 项`,
@@ -635,7 +636,8 @@
           fold.append(summary, itemRow);
           row.append(fold);
         });
-        return row;
+        planFold.append(row);
+        return planFold;
       });
     }
 

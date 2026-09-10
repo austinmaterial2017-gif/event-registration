@@ -195,23 +195,16 @@ function createBundleRegistration(payload) {
 }
 
 function bundleRegistrationFields_(registry, planId) {
-  var fixed = [
-    { questionId: 'name', label: '姓名', type: 'text', required: true, options: '{}', status: 'active', sortOrder: 1 },
-    { questionId: 'phone', label: '电话号码', type: 'tel', required: true, options: '{}', status: 'active', sortOrder: 2 },
-    {
-      questionId: 'photo', label: '付款证明／相关照片（如需要）', type: 'photo', required: false,
-      options: JSON.stringify({ upload: { maxFiles: 3, maxBytes: 5242880, accept: ['image/jpeg', 'image/png', 'image/heic', 'image/heif'] } }),
-      status: 'active', sortOrder: 3
-    }
-  ];
-  if (!registry || !planId) return fixed;
+  // Combination plans deliberately have no built-in questions.  Each plan
+  // owns its fields so administrators can add, edit, hide, or remove them.
+  if (!registry || !planId) return [];
   var questionSheet = registry.getSheetByName('\u7ec4\u5408\u95ee\u9898');
-  if (!questionSheet) return fixed;
-  return fixed.concat(bundleSheetRows_(questionSheet, BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u95ee\u9898']).filter(function(row) {
+  if (!questionSheet) return [];
+  return bundleSheetRows_(questionSheet, BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u95ee\u9898']).filter(function(row) {
     return row.planId === planId;
   }).map(function(row) { try { return JSON.parse(String(row.snapshot || '{}')); } catch (_ignored) { return null; } }).filter(function(question) {
     return question && String(question.status || 'active') === 'active';
-  })).sort(function(left, right) { return Number(left.sortOrder || 0) - Number(right.sortOrder || 0); });
+  }).sort(function(left, right) { return Number(left.sortOrder || 0) - Number(right.sortOrder || 0); });
 }
 
 function listBundlePlans(_payload) {

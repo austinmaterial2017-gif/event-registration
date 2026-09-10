@@ -81,14 +81,12 @@ test("bundle activity availability respects its own opening time and fixed capac
   }, 1, now).status, "open");
 });
 
-test("combination registration has the same required name, phone and optional photo fields", async () => {
+test("combination registration starts with no fixed personal-information fields", async () => {
   const source = await readFile(new URL("../apps-script/Code.gs", import.meta.url), "utf8");
   const context = vm.createContext({ Object, Array, String, Number, JSON, Date, Error, isFinite });
   vm.runInContext(source, context);
   const fields = context.bundleRegistrationFields_();
-  assert.equal(JSON.stringify(fields.map((field) => [field.questionId, field.type, field.required])), JSON.stringify([
-    ["name", "text", true], ["phone", "tel", true], ["photo", "photo", false]
-  ]));
+  assert.equal(JSON.stringify(fields), JSON.stringify([]));
 });
 
 test("combination registration validates and saves the submitted photo files", async () => {
@@ -258,6 +256,9 @@ test("combination registration serializes selected photo files before submitting
   const source = await readFile(new URL("../public/js/bundle-register-page.js", import.meta.url), "utf8");
   assert.match(source, /serializePhotoFiles/);
   assert.match(source, /uploads:\s*await serializePhotoFiles/);
+  assert.match(source, /Object\.fromEntries\(fields\.map/);
+  assert.doesNotMatch(source, /form\.elements\.name|form\.elements\.phone|form\.elements\.photo/);
+  assert.match(source, /服务器正在唤醒，请稍候/);
 });
 
 test("scanner checks a combination entitlement only when a normal ticket is unknown", async () => {
@@ -337,7 +338,7 @@ test("combination administrator offers a collapsible project list and a particip
   assert.match(adminHtml, /id="preview-bundle-registration"/);
   assert.match(adminHtml, /id="bundle-registration-preview"/);
   assert.match(adminScript, /预览报名表/);
-  assert.match(adminScript, /details/);
+  assert.match(adminScript, /bundle-plan-fold/);
   assert.match(adminScript, /fold\.open\s*=\s*false/);
 });
 

@@ -322,6 +322,16 @@ function ensureBundlePlanWorkbook_(plan) {
     registrations.appendRow(['报名编号', '电子票', '报名时间', '所选项目', '总票数', '状态']);
     book.insertSheet('签到总览').appendRow(['签到时间', '电子票', '项目', '签到点', '工作人员']);
   }
+  var registrationView = book.getSheetByName('报名总览') || book.getSheetByName('报名资料');
+  if (registrationView && registrationView.getName() === '报名资料') registrationView.setName('报名总览');
+  if (registrationView && registrationView.getLastRow() <= 1) {
+    registrationView.getRange(1, 1, 1, 6).setValues([['报名编号', '电子票', '报名时间', '所选项目', '总票数', '状态']]);
+  }
+  var attendanceView = book.getSheetByName('签到总览') || book.getSheetByName('签到记录');
+  if (attendanceView && attendanceView.getName() === '签到记录') attendanceView.setName('签到总览');
+  if (attendanceView && attendanceView.getLastRow() <= 1) {
+    attendanceView.getRange(1, 1, 1, 5).setValues([['签到时间', '电子票', '项目', '签到点', '工作人员']]);
+  }
   return { id: book.getId(), url: 'https://docs.google.com/spreadsheets/d/' + encodeURIComponent(book.getId()) + '/edit' };
 }
 

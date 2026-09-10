@@ -15,12 +15,11 @@ if (!result.ok) {
 number.textContent = result.data.ticketNumber;
 events.replaceChildren(...result.data.selectedEvents.map((item) => {
   const line = document.createElement("p");
-  line.textContent = `${item.eventId} · ${item.fixedTicketCount} 张票`;
+  line.textContent = `${item.title || item.itemId || item.eventId} · ${item.fixedTicketCount} 张票`;
   return line;
 }));
 
 const verificationUrl = new URL("bundle-ticket.html", window.location.href);
 verificationUrl.searchParams.set("t", token);
 qr.innerHTML = renderQrSvg(verificationUrl.toString());
-
 

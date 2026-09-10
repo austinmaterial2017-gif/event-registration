@@ -81,9 +81,6 @@ function bundlePlanOverviewItems_(registry, planId, entitlements) {
     } else checkpoints = [String(labels[0] || '签到')];
     items[String(item.bundleItemId)] = { title: String(item.title || item.bundleItemId), checkpoints: checkpoints };
   });
-  readAdminRows_(registry, '活动目录').forEach(function(event) {
-    if (!items[String(event.eventId)]) items[String(event.eventId)] = { title: String(event.title || event.eventId), checkpoints: ['签到'] };
-  });
   (entitlements || []).forEach(function(entitlement) {
     var itemId = String(entitlement.eventId || '');
     if (itemId && !items[itemId]) items[itemId] = { title: itemId, checkpoints: ['签到'] };

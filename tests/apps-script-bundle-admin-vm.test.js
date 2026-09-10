@@ -254,6 +254,19 @@ test("combination ticket page uses the public QR SVG renderer", async () => {
   assert.doesNotMatch(source, /renderQr\s*\(/);
 });
 
+test("combination ticket QR contains the short raw token and recovery routes are available", async () => {
+  const page = await readFile(new URL("../public/js/bundle-ticket-page.js", import.meta.url), "utf8");
+  const api = await readFile(new URL("../public/js/api.js", import.meta.url), "utf8");
+  const routes = await readFile(new URL("../apps-script/Code.gs", import.meta.url), "utf8");
+  const recovery = await readFile(new URL("../apps-script/BundleTicketRecovery.gs", import.meta.url), "utf8");
+  assert.match(page, /renderQrSvg\(token\)/);
+  assert.doesNotMatch(page, /new URL\("bundle-ticket\.html"/);
+  assert.match(api, /recoverBundleTicket/);
+  assert.match(api, /listBundleRecoveryPlans/);
+  assert.match(routes, /'recoverBundleTicket'/);
+  assert.match(recovery, /function recoverBundleTicket_/);
+});
+
 test("combination registration page disables activities that the server says are unavailable", async () => {
   const source = await readFile(new URL("../public/js/bundle-register-page.js", import.meta.url), "utf8");
   assert.match(source, /input\.disabled\s*=\s*rule\.available\s*===\s*false/);
@@ -326,6 +339,23 @@ test("combination attendance overview puts every configured project across one p
   );
   assert.deepEqual(JSON.parse(JSON.stringify(view.headers)), ["电子票", "姓名", "电话", "羽球比赛 · 入场", "海边 · 集合"]);
   assert.deepEqual(JSON.parse(JSON.stringify(view.rows)), [["BND-001", "小明", "0123456789", "2026-12-12T10:00:00.000Z", "未签到"]]);
+});
+
+test("combination attendance columns exclude ordinary activities outside the selected plan", async () => {
+  const overviewSource = await readFile(new URL("../apps-script/BundlePlanOverview.gs", import.meta.url), "utf8");
+  const context = vm.createContext({
+    Object, Array, String, Number, JSON, Date, Error,
+    BUNDLE_SHEET_HEADERS_: { "组合项目": [] }
+  });
+  vm.runInContext(overviewSource, context);
+  context.bundleSheetRows_ = (sheet) => sheet.rows;
+  context.readAdminRows_ = () => [{ eventId: "ordinary-event", title: "普通活动" }];
+  const items = context.bundlePlanOverviewItems_(
+    { getSheetByName: () => ({ rows: [{ planId: "plan-1", bundleItemId: "combo-item", title: "组合项目", checkInMode: "single", checkInCount: 1, checkInLabels: "[\"入场\"]" }] }) },
+    "plan-1",
+    []
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(Object.keys(items))), ["combo-item"]);
 });
 
 test("combination plans expose edit, safe close, and guarded permanent deletion controls", async () => {

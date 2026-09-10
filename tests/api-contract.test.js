@@ -102,7 +102,7 @@ test("participant HTML cache-busts each updated entry module", async () => {
   const pages = [
     ["index.html", "index-page.js", "20260910-bundle-api-client"],
     ["register.html", "register-page.js", "20260824-photo"],
-    ["ticket.html", "ticket-page.js", "20260806-recovery"],
+    ["ticket.html", "ticket-page.js", "20260910-bundle-recovery"],
     ["verify.html", "verify-page.js", "20260728-final"],
     ["v.html", "verify-page.js", "20260728-final"]
   ];

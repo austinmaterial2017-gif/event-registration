@@ -100,7 +100,7 @@ test("participant entry modules cache-bust the production API client", async () 
 test("participant HTML cache-busts each updated entry module", async () => {
   const root = new URL("../public/", import.meta.url);
   const pages = [
-    ["index.html", "index-page.js", "20260910-bundle-api-client"],
+    ["index.html", "index-page.js", "20260910-parallel-loading"],
     ["register.html", "register-page.js", "20260824-photo"],
     ["ticket.html", "ticket-page.js", "20260910-bundle-recovery"],
     ["verify.html", "verify-page.js", "20260728-final"],
@@ -200,11 +200,17 @@ test("participant controllers use the public client instead of temporary registr
   assert.doesNotMatch(`${indexPage}\n${registerPage}`, /const\s+serverNow\s*=/);
 });
 
-test("the home page loads combination plans without waiting for ordinary activities", async () => {
-  const source = await readFile(new URL("../public/js/index-page.js", import.meta.url), "utf8");
-  const bundleRead = source.indexOf("await listBundlePlans()");
-  const eventRead = source.indexOf("await listEvents()");
-  assert.ok(bundleRead >= 0 && eventRead > bundleRead, "combination plans must finish before the ordinary-event request starts");
+test("the home page requests ordinary and combination activities together and keeps a visible loading message", async () => {
+  const [source, html] = await Promise.all([
+    readFile(new URL("../public/js/index-page.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/index.html", import.meta.url), "utf8")
+  ]);
+  assert.match(source, /const eventsRequest = listEvents\(\);/);
+  assert.match(source, /const bundlesRequest = listBundlePlans\(\);/);
+  assert.match(source, /bundlesRequest\.then/);
+  assert.match(source, /eventsRequest\.then/);
+  assert.match(html, /id="activity-loading"/);
+  assert.match(source, /activity-loading/);
 });
 
 test("combination plan listing uses the configured public API client", async () => {

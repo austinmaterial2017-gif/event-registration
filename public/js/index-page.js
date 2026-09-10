@@ -122,26 +122,39 @@ async function initialise() {
   showPageNotice();
   const list = document.querySelector("#activity-list");
   const status = document.querySelector("#activity-status");
-  const bundles = await listBundlePlans();
-  if (bundles.ok && Array.isArray(bundles.data?.plans)) {
-    bundlePlans = bundles.data.plans;
-    if (bundlePlans.length) {
-      list.replaceChildren(...bundlePlans.map(bundlePlanCard));
-      list.setAttribute("aria-busy", "false");
-      status.textContent = `已显示 ${bundlePlans.length} 个组合报名。`;
+  const loading = document.querySelector("#activity-loading");
+  const eventsRequest = listEvents();
+  const bundlesRequest = listBundlePlans();
+  const timers = [
+    window.setTimeout(() => { if (loading && !loading.hidden) loading.textContent = "服务器正在唤醒，请稍候…"; }, 3500),
+    window.setTimeout(() => { if (loading && !loading.hidden) loading.textContent = "仍在读取活动资料，请不要重复刷新…"; }, 9000)
+  ];
+  const bundleTask = bundlesRequest.then((bundles) => {
+    if (bundles.ok && Array.isArray(bundles.data?.plans)) {
+      bundlePlans = bundles.data.plans;
+      if (bundlePlans.length) {
+        if (list.querySelector(".notice") || !list.children.length) list.replaceChildren(...bundlePlans.map(bundlePlanCard));
+        else appendBundlePlans();
+        list.setAttribute("aria-busy", "false");
+        status.textContent = `已显示 ${bundlePlans.length} 个组合报名。`;
+      }
     }
-  }
-  const result = await listEvents();
-  if (!result.ok || !Array.isArray(result.data?.events)) {
-    if (!bundlePlans.length) list.replaceChildren(node("p", "notice", result.message || "暂时无法加载活动，请稍后重试。"));
-    list.setAttribute("aria-busy", "false");
-    status.textContent = bundlePlans.length ? "普通活动暂时无法加载；组合报名仍可使用。" : "活动列表暂时无法加载。";
-  } else {
-    const timestamp = Date.parse(result.data.serverNow);
-    serverOffset = Number.isFinite(timestamp) ? timestamp - Date.now() : Number.NaN;
-    renderActivities(result.data.events);
-  }
-  appendBundlePlans();
+  });
+  const eventTask = eventsRequest.then((result) => {
+    if (!result.ok || !Array.isArray(result.data?.events)) {
+      if (!bundlePlans.length) list.replaceChildren(node("p", "notice", result.message || "暂时无法加载活动，请稍后重试。"));
+      list.setAttribute("aria-busy", "false");
+      status.textContent = bundlePlans.length ? "普通活动暂时无法加载；组合报名仍可使用。" : "活动列表暂时无法加载。";
+    } else {
+      const timestamp = Date.parse(result.data.serverNow);
+      serverOffset = Number.isFinite(timestamp) ? timestamp - Date.now() : Number.NaN;
+      renderActivities(result.data.events);
+      appendBundlePlans();
+    }
+  });
+  await Promise.all([bundleTask, eventTask]);
+  timers.forEach((timer) => window.clearTimeout(timer));
+  if (loading) loading.hidden = true;
 }
 
 initialise();

@@ -581,6 +581,13 @@
         });
         openSheet.dataset.openBundleSheet = plan.planId;
         row.append(openSheet);
+        const refreshSheet = editButton("刷新报名总览", () => {
+          runButtonAction_(refreshSheet, "正在更新报名总览…", "报名总览和签到总览已更新。", (runner) => {
+            runner.refreshBundlePlanOverview({ planId: plan.planId });
+          }, loadBundleDashboard_);
+        });
+        refreshSheet.dataset.refreshBundleSheet = plan.planId;
+        row.append(refreshSheet);
         row.append(editButton("预览报名表", () => openBundlePreview_(plan)));
         (plan.questions || []).forEach((question) => {
           const questionRow = dataRow(`资料：${question.label}`, question.status || "active", [question.type, question.required ? "必填" : "选填"]);

@@ -140,6 +140,16 @@ function saveBundleRule(payload) {
   });
 }
 
+/** Rebuilds one combination plan's readable registration and attendance sheets. */
+function refreshBundlePlanOverview(payload) {
+  return runAdminService_(function() {
+    var actor = requireAuthorizedAdminSession_();
+    var result = invokeInternalBackend_('admin.refreshBundlePlanOverview', payload || {}, actor);
+    if (!result.ok) adminError_(result.code);
+    return result.data;
+  });
+}
+
 /** Saves a project created directly inside a combination plan. */
 function saveBundleItem(payload) {
   return runAdminService_(function() {

@@ -188,7 +188,7 @@ function createBundleRegistration(payload) {
           entitlementSheet.getLastRow() + 1, 1, rules.length,
           BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u8d44\u683c'].length
         ).setValues(entitlementRows);
-        appendBundlePlanRegistrationView_(plans[0], { bundleRegistrationId: registrationId, ticketNumber: ticketNumber, createdAt: timestamp, answers: JSON.stringify(answers), status: 'active' }, rules, questions);
+        refreshBundlePlanOverviewFromRegistry_(registry, planId);
       } catch (error) {
         if (registrationRowNumber) registrationSheet.deleteRows(registrationRowNumber, 1);
         if (uploadReceipt) rollbackRegistrationUploads_(uploadReceipt);

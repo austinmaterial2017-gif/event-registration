@@ -122,6 +122,7 @@ var ADMIN_MUTATION_ACTIONS_ = {
   'admin.recordAction': true,
   'admin.refreshReadableViews': true,
   'admin.switchSheet': true,
+  'admin.refreshBundlePlanOverview': true,
   'admin.saveBundlePlan': true,
   'admin.saveBundleRule': true,
   'admin.saveBundleItem': true,
@@ -175,6 +176,7 @@ function executeInternalActionLocked_(action, payload, actor) {
     'admin.refreshReadableViews': function() { return refreshAdminReadableViews_(payload, actor); },
     'admin.testSheet': function() { return testAdminSheetConnection_(payload, actor); },
     'admin.switchSheet': function() { return switchInternalAdminSheet_(payload, actor); }
+    ,'admin.refreshBundlePlanOverview': function() { return refreshBundlePlanOverview_(payload, actor); }
     ,'admin.saveBundlePlan': function() { return saveBundlePlan_(payload, actor); }
     ,'admin.saveBundleRule': function() { return saveBundleRule_(payload, actor); }
     ,'admin.saveBundleItem': function() { return saveBundleItem_(payload, actor); }
@@ -307,6 +309,7 @@ function saveBundlePlan_(payload, actor) {
   var plan = requireBundlePlanPayload_(payload);
   var saved = saveBundlePlanToSheet_(registry.getSheetByName('\u7ec4\u5408\u8ba1\u5212'), plan, new Date().toISOString());
   saved.sheetUrl = ensureBundlePlanWorkbook_(saved).url;
+  refreshBundlePlanOverviewFromRegistry_(registry, saved.planId);
   return saved;
 }
 
@@ -335,24 +338,111 @@ function ensureBundlePlanWorkbook_(plan) {
   return { id: book.getId(), url: 'https://docs.google.com/spreadsheets/d/' + encodeURIComponent(book.getId()) + '/edit' };
 }
 
-function appendBundlePlanRegistrationView_(plan, registration, rules, questions) {
-  var book = ensureBundlePlanWorkbook_(plan); var spreadsheet = SpreadsheetApp.openById(book.id);
-  var sheet = spreadsheet.getSheetByName('报名总览') || spreadsheet.getSheetByName('报名资料');
-  if (sheet.getName() === '报名资料') sheet.setName('报名总览');
-  var labels = (questions || []).map(function(question) { return String(question.label || question.id || '资料'); });
-  var headers = ['报名编号', '电子票', '报名时间'].concat(labels).concat(['所选项目', '总票数', '状态']);
-  if (sheet.getLastRow() <= 1) sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-  var answers = {}; try { answers = JSON.parse(String(registration.answers || '{}')); } catch (_ignored) { answers = {}; }
-  var values = (questions || []).map(function(question) { var value = answers[question.id]; return Array.isArray(value) ? value.map(function(item) { return item.originalName || item; }).join('、') : String(value || ''); });
-  var total = rules.reduce(function(sum, rule) { return sum + Number(rule.fixedTicketCount || 0); }, 0);
-  sheet.appendRow([registration.bundleRegistrationId, registration.ticketNumber, registration.createdAt].concat(values).concat([rules.map(function(rule) { return rule.eventId + '（' + rule.fixedTicketCount + '张）'; }).join('\n'), total, registration.status]));
+/**
+ * Rebuilds the two human-readable sheets from the source-of-truth registry.
+ * This deliberately replaces the older append-only view so question changes,
+ * edits and earlier registrations all appear in one consistent table.
+ */
+function refreshBundlePlanOverview_(payload, _actor) {
+  if (!payload || !bundleText_(payload.planId)) adminError_('INVALID_REQUEST');
+  return refreshBundlePlanOverviewFromRegistry_(bundleRegistrySheet_(getRegistrySpreadsheet_()), bundleText_(payload.planId));
 }
 
-function appendBundlePlanCheckInView_(planId, ticketNumber, eventId, checkpoint, checkedAt, actor) {
-  var plan = { planId: planId, title: planId }; var book = ensureBundlePlanWorkbook_(plan);
-  var spreadsheet = SpreadsheetApp.openById(book.id); var sheet = spreadsheet.getSheetByName('签到总览') || spreadsheet.getSheetByName('签到记录');
-  if (sheet.getName() === '签到记录') sheet.setName('签到总览');
-  sheet.appendRow([checkedAt, ticketNumber, eventId, checkpoint, actor]);
+function refreshBundlePlanOverviewFromRegistry_(registry, planId) {
+  var plans = bundleSheetRows_(registry.getSheetByName('组合计划'), BUNDLE_SHEET_HEADERS_['组合计划']).filter(function(row) {
+    return String(row.planId) === String(planId);
+  });
+  if (plans.length !== 1) adminError_('NOT_FOUND');
+  var plan = plans[0];
+  var book = ensureBundlePlanWorkbook_(plan);
+  var spreadsheet = SpreadsheetApp.openById(book.id);
+  var registrations = bundleSheetRows_(registry.getSheetByName('组合报名'), BUNDLE_SHEET_HEADERS_['组合报名']).filter(function(row) {
+    return String(row.planId) === String(planId);
+  }).sort(function(left, right) { return String(left.createdAt).localeCompare(String(right.createdAt)); });
+  var entitlements = bundleSheetRows_(registry.getSheetByName('组合资格'), BUNDLE_SHEET_HEADERS_['组合资格']).filter(function(row) {
+    return String(row.planId) === String(planId);
+  });
+  var attendance = bundleSheetRows_(registry.getSheetByName('组合签到'), BUNDLE_SHEET_HEADERS_['组合签到']);
+  var questions = bundlePlanOverviewQuestions_(registry, planId);
+  var itemTitles = bundlePlanOverviewItemTitles_(registry, planId);
+  var usedHeaders = {};
+  var questionHeaders = questions.map(function(question) {
+    var base = String(question.label || question.questionId || '资料');
+    var label = base; var suffix = 2;
+    while (usedHeaders[label]) { label = base + ' (' + suffix + ')'; suffix += 1; }
+    usedHeaders[label] = true;
+    return label;
+  });
+  var registrationHeaders = ['报名编号', '电子票', '报名时间'].concat(questionHeaders).concat(['所选项目', '总票数', '状态']);
+  var registrationById = {};
+  var registrationRows = registrations.map(function(registration) {
+    registrationById[String(registration.bundleRegistrationId)] = registration;
+    var answers = bundlePlanOverviewJson_(registration.answers, {});
+    var answerCells = questions.map(function(question) { return bundlePlanOverviewValue_(answers[question.questionId]); });
+    var selected = entitlements.filter(function(entitlement) {
+      return String(entitlement.bundleRegistrationId) === String(registration.bundleRegistrationId) &&
+        String(entitlement.status || '').toLowerCase() === 'active';
+    });
+    var total = selected.reduce(function(sum, entitlement) { return sum + Number(entitlement.fixedTicketCount || 0); }, 0);
+    var selection = selected.map(function(entitlement) {
+      var itemId = String(entitlement.eventId || '');
+      return String(itemTitles[itemId] || itemId || '项目') + '（' + Number(entitlement.fixedTicketCount || 0) + '张）';
+    }).join('\n');
+    return [registration.bundleRegistrationId, registration.ticketNumber, registration.createdAt].concat(answerCells).concat([
+      selection, total, bundlePlanOverviewStatus_(registration.status)
+    ]);
+  });
+  var entitlementById = {};
+  entitlements.forEach(function(entitlement) { entitlementById[String(entitlement.entitlementId)] = entitlement; });
+  var attendanceRows = attendance.filter(function(record) {
+    var entitlement = entitlementById[String(record.entitlementId)];
+    return entitlement && String(record.status || '').toLowerCase() === 'checked_in';
+  }).sort(function(left, right) { return String(left.checkedInAt).localeCompare(String(right.checkedInAt)); }).map(function(record) {
+    var entitlement = entitlementById[String(record.entitlementId)] || {};
+    var registration = registrationById[String(entitlement.bundleRegistrationId)] || {};
+    var itemId = String(record.eventId || entitlement.eventId || '');
+    return [record.checkedInAt, registration.ticketNumber || '', itemTitles[itemId] || itemId,
+      record.checkpointId || '', record.checkedInBy || ''];
+  });
+  var registrationView = writeReadableView_(spreadsheet, '报名总览', { headers: registrationHeaders, rows: registrationRows });
+  var attendanceView = writeReadableView_(spreadsheet, '签到总览', {
+    headers: ['签到时间', '电子票', '项目', '签到点', '工作人员'], rows: attendanceRows
+  });
+  return { planId: String(planId), sheetUrl: book.url, registration: registrationView, attendance: attendanceView };
+}
+
+function bundlePlanOverviewQuestions_(registry, planId) {
+  return bundleSheetRows_(registry.getSheetByName('组合问题'), BUNDLE_SHEET_HEADERS_['组合问题']).filter(function(row) {
+    return String(row.planId) === String(planId);
+  }).map(function(row) { return bundlePlanOverviewJson_(row.snapshot, null); }).filter(Boolean).sort(function(left, right) {
+    return Number(left.sortOrder || 100) - Number(right.sortOrder || 100);
+  });
+}
+
+function bundlePlanOverviewItemTitles_(registry, planId) {
+  var titles = {};
+  bundleSheetRows_(registry.getSheetByName('组合项目'), BUNDLE_SHEET_HEADERS_['组合项目']).filter(function(item) {
+    return String(item.planId) === String(planId);
+  }).forEach(function(item) { titles[String(item.bundleItemId)] = String(item.title || item.bundleItemId); });
+  readAdminRows_(registry, '活动目录').forEach(function(event) {
+    if (!titles[String(event.eventId)]) titles[String(event.eventId)] = String(event.title || event.eventId);
+  });
+  return titles;
+}
+
+function bundlePlanOverviewJson_(value, fallback) {
+  try { return JSON.parse(String(value || '')); } catch (_ignored) { return fallback; }
+}
+
+function bundlePlanOverviewValue_(value) {
+  if (value === undefined || value === null) return '';
+  if (Array.isArray(value)) return value.map(bundlePlanOverviewValue_).filter(Boolean).join('、');
+  if (typeof value === 'object') return String(value.originalName || value.name || value.fileName || value.url || '已上传档案');
+  return String(value);
+}
+
+function bundlePlanOverviewStatus_(value) {
+  return String(value || '').toLowerCase() === 'active' ? '有效' : String(value || '');
 }
 
 function saveBundleRule_(payload, actor) {
@@ -366,7 +456,9 @@ function saveBundleRule_(payload, actor) {
     return String(event.eventId || '') === rule.eventId;
   });
   if (eventMatches.length !== 1) adminError_('NOT_FOUND');
-  return saveBundleRuleToSheet_(registry.getSheetByName('\u7ec4\u5408\u6d3b\u52a8\u89c4\u5219'), rule);
+  var saved = saveBundleRuleToSheet_(registry.getSheetByName('\u7ec4\u5408\u6d3b\u52a8\u89c4\u5219'), rule);
+  refreshBundlePlanOverviewFromRegistry_(registry, rule.planId);
+  return saved;
 }
 
 function saveBundleItem_(payload, actor) {
@@ -376,7 +468,9 @@ function saveBundleItem_(payload, actor) {
     registry.getSheetByName('\u7ec4\u5408\u8ba1\u5212'), BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u8ba1\u5212']
   ).filter(function(plan) { return plan.planId === item.planId; });
   if (planMatches.length !== 1) adminError_('NOT_FOUND');
-  return saveBundleItemToSheet_(registry.getSheetByName('\u7ec4\u5408\u9879\u76ee'), item);
+  var saved = saveBundleItemToSheet_(registry.getSheetByName('\u7ec4\u5408\u9879\u76ee'), item);
+  refreshBundlePlanOverviewFromRegistry_(registry, item.planId);
+  return saved;
 }
 
 function requireBundleActionId_(payload, key) {
@@ -422,7 +516,9 @@ function archiveBundleItem_(payload, _actor) {
   var item = bundleSheetRows_(itemSheet, BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u9879\u76ee']).filter(function(row) { return row.bundleItemId === itemId; })[0];
   if (!item) adminError_('NOT_FOUND');
   item.status = 'inactive';
-  return saveBundleItemToSheet_(itemSheet, item, new Date().toISOString());
+  var saved = saveBundleItemToSheet_(itemSheet, item, new Date().toISOString());
+  refreshBundlePlanOverviewFromRegistry_(registry, item.planId);
+  return saved;
 }
 
 function deleteBundleItem_(payload, _actor) {
@@ -433,7 +529,9 @@ function deleteBundleItem_(payload, _actor) {
   if (items.length !== 1) adminError_('NOT_FOUND');
   var entitlements = bundleSheetRows_(registry.getSheetByName('\u7ec4\u5408\u8d44\u683c'), BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u8d44\u683c']);
   if (entitlements.some(function(row) { return row.eventId === itemId; })) adminError_('CONFLICT');
+  var planId = items[0].planId;
   itemSheet.deleteRow(items[0].rowNumber);
+  refreshBundlePlanOverviewFromRegistry_(registry, planId);
   return { bundleItemId: itemId, deleted: true };
 }
 
@@ -462,6 +560,7 @@ function saveBundleQuestion_(payload, _actor) {
   var snapshot = { questionId: questionId, label: bundleText_(payload.label), type: type, required: payload.required === true, options: JSON.stringify(configuration), status: payload.status === 'hidden' ? 'hidden' : 'active', sortOrder: sortOrder };
   var target = existing.length ? existing[0].rowNumber : sheet.getLastRow() + 1;
   sheet.getRange(target, 1, 1, 3).setValues([[planId, questionId, JSON.stringify(snapshot)]]);
+  refreshBundlePlanOverviewFromRegistry_(registry, planId);
   return snapshot;
 }
 
@@ -473,8 +572,16 @@ function deleteBundleQuestion_(payload, _actor) {
   if (rows.length !== 1) adminError_('NOT_FOUND');
   var registrations = bundleSheetRows_(registry.getSheetByName('组合报名'), BUNDLE_SHEET_HEADERS_['组合报名']);
   var hasAnswer = registrations.some(function(row) { try { return row.planId === payload.planId && Object.prototype.hasOwnProperty.call(JSON.parse(String(row.answers || '{}')), payload.questionId); } catch (_ignored) { return false; } });
-  if (hasAnswer) { var snapshot = JSON.parse(String(rows[0].snapshot)); snapshot.status = 'hidden'; sheet.getRange(rows[0].rowNumber, 1, 1, 3).setValues([[rows[0].planId, rows[0].questionId, JSON.stringify(snapshot)]]); return { questionId: payload.questionId, hidden: true }; }
-  sheet.deleteRow(rows[0].rowNumber); return { questionId: payload.questionId, deleted: true };
+  if (hasAnswer) {
+    var snapshot = JSON.parse(String(rows[0].snapshot)); snapshot.status = 'hidden';
+    sheet.getRange(rows[0].rowNumber, 1, 1, 3).setValues([[rows[0].planId, rows[0].questionId, JSON.stringify(snapshot)]]);
+    refreshBundlePlanOverviewFromRegistry_(registry, rows[0].planId);
+    return { questionId: payload.questionId, hidden: true };
+  }
+  var planId = rows[0].planId;
+  sheet.deleteRow(rows[0].rowNumber);
+  refreshBundlePlanOverviewFromRegistry_(registry, planId);
+  return { questionId: payload.questionId, deleted: true };
 }
 
 function runAdminMutationTransaction_(registry, spreadsheet, action, callback) {
@@ -761,7 +868,7 @@ function staffBundleCheckIn_(payload, actor, scannerPass) {
         checkedInBy: String(actor || '').trim().toLowerCase(), status: 'checked_in'
       })
     ]);
-    appendBundlePlanCheckInView_(registration.planId, registration.ticketNumber, eventId, nativeCheckpoint, nativeCheckedAt, String(actor || '').trim().toLowerCase());
+    refreshBundlePlanOverviewFromRegistry_(registry, registration.planId);
     return { status: 'checked_in', kind: 'bundle', sessionId: 'bundle', checkpointId: nativeCheckpoint,
       checkpointLabel: String(nativeLabels[nativeIndex - 1] || (nativeMode === 'single' ? '项目签到' : '第 ' + nativeIndex + ' 次签到')),
       checkedInAt: nativeCheckedAt };
@@ -825,6 +932,7 @@ function staffBundleCheckIn_(payload, actor, scannerPass) {
       checkedInBy: String(actor || '').trim().toLowerCase(), status: 'checked_in'
     })
   ]);
+  refreshBundlePlanOverviewFromRegistry_(registry, registration.planId);
   return {
     status: 'checked_in', sessionId: sessionId, checkpointId: checkpointId,
     checkpointLabel: checkpointLabel, checkedInAt: checkedInAt, kind: 'bundle'

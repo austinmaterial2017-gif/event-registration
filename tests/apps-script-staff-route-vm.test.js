@@ -18,6 +18,7 @@ const ADMIN_RPC_NAMES = [
   "getAdminSourceBundles",
   "getBundleDashboard",
   "refreshAdminReadableViews",
+  "refreshBundlePlanOverview",
   "removeAdminQuestionImage",
   "saveAdminDraft",
   "saveAdminEvent",

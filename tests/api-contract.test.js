@@ -202,8 +202,9 @@ test("participant controllers use the public client instead of temporary registr
 
 test("the home page loads combination plans without waiting for ordinary activities", async () => {
   const source = await readFile(new URL("../public/js/index-page.js", import.meta.url), "utf8");
-  assert.match(source, /listBundlePlans\(\)\.then/);
-  assert.doesNotMatch(source, /Promise\.all\(\[listEvents\(\), listBundlePlans\(\)\]\)/);
+  const bundleRead = source.indexOf("await listBundlePlans()");
+  const eventRead = source.indexOf("await listEvents()");
+  assert.ok(bundleRead >= 0 && eventRead > bundleRead, "combination plans must finish before the ordinary-event request starts");
 });
 
 test("the public browser client exposes no attendance mutation", () => {

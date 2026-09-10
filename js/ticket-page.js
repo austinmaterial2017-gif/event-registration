@@ -1,5 +1,5 @@
 import {
-  cancelRegistration, exchangeSeat, listEvents, lookupTicket, recoverTicket,
+  cancelRegistration, exchangeSeat, listBundleRecoveryPlans, listEvents, lookupTicket, recoverBundleTicket, recoverTicket,
   updateRegistrationSessions
 } from "./api.js?v=20260806-recovery";
 import { renderQrSvg } from "./qr.js";
@@ -335,6 +335,15 @@ async function initialiseTicketPage() {
   } else {
     eventSelect.replaceChildren(new Option("活动读取失败，请刷新重试", ""));
   }
+  const bundlePlansResult = await listBundleRecoveryPlans();
+  if (bundlePlansResult.ok && Array.isArray(bundlePlansResult.data?.plans) && bundlePlansResult.data.plans.length) {
+    const group = document.createElement("optgroup");
+    group.label = "组合活动";
+    for (const plan of bundlePlansResult.data.plans) {
+      group.append(new Option(`组合 · ${plan.title}`, `bundle:${plan.planId}`));
+    }
+    eventSelect.append(group);
+  }
   recoveryForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const button = recoveryForm.querySelector("button");
@@ -346,10 +355,17 @@ async function initialiseTicketPage() {
       name: recoveryForm.elements.name.value.trim(),
       phone: recoveryForm.elements.phone.value.trim()
     };
-    const result = await recoverTicket(request);
+    const isBundle = request.eventId.startsWith("bundle:");
+    const result = isBundle
+      ? await recoverBundleTicket({ ...request, planId: request.eventId.slice("bundle:".length) })
+      : await recoverTicket(request);
     button.disabled = false;
     if (!result.ok) {
       message.textContent = result.message;
+      return;
+    }
+    if (isBundle) {
+      location.assign(`bundle-ticket.html?t=${encodeURIComponent(result.data.token)}`);
       return;
     }
     const verificationValue = result.data.ownerVerificationRole === "phone"

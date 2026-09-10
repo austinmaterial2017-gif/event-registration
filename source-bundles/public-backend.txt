@@ -7718,7 +7718,17 @@ function verifyBundleTicket(payload) {
       var registrations = bundleSheetRows_(registrationSheet, BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u62a5\u540d']).filter(function(row) { return row.tokenDigest === digest && row.status === 'active'; });
       if (registrations.length !== 1) publicEventReadError_('TOKEN_INVALID');
       var registration = registrations[0];
-      var entitlements = bundleSheetRows_(entitlementSheet, BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u8d44\u683c']).filter(function(row) { return row.bundleRegistrationId === registration.bundleRegistrationId && row.status === 'active'; }).map(function(row) { return { eventId: String(row.eventId), fixedTicketCount: Number(row.fixedTicketCount) }; });
+      var itemSheet = registry.getSheetByName('\u7ec4\u5408\u9879\u76ee');
+      var itemTitles = {};
+      if (itemSheet) {
+        bundleSheetRows_(itemSheet, BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u9879\u76ee']).forEach(function(item) {
+          itemTitles[String(item.bundleItemId)] = String(item.title || '');
+        });
+      }
+      var entitlements = bundleSheetRows_(entitlementSheet, BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u8d44\u683c']).filter(function(row) { return row.bundleRegistrationId === registration.bundleRegistrationId && row.status === 'active'; }).map(function(row) {
+        var itemId = String(row.eventId);
+        return { eventId: itemId, itemId: itemId, title: itemTitles[itemId] || itemId, fixedTicketCount: Number(row.fixedTicketCount) };
+      });
       return { ticketNumber: String(registration.ticketNumber), planId: String(registration.planId), selectedEvents: entitlements, status: 'active' };
     });
   });

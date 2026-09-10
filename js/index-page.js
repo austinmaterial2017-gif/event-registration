@@ -1,5 +1,5 @@
-import { listEvents } from "./api.js?v=20260728-stable";
-import { listBundlePlans } from "./api.js?v=20260728-stable";
+import { listEvents } from "./api.js?v=20260910-bundle-api";
+import { listBundlePlans } from "./api.js?v=20260910-bundle-api";
 import { refreshActivityCountdowns } from "./activity-countdown-view.js";
 import {
   buildActivityTicketView,

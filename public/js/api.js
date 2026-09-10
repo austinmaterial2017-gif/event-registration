@@ -126,10 +126,11 @@ export function createApiClient({ endpoint = APPS_SCRIPT_WEB_APP_URL, fetchImpl 
 
   return {
     listEvents: () => request("listEvents", {}),
+    listBundlePlans: () => request("listBundlePlans", {}),
     getEvent: (eventId) => request("getEvent", { eventId }),
     getBundlePlan: (planId) => request("getBundlePlan", { planId }),
     createBundleRegistration: (requestData) => request("createBundleRegistration", {
-      planId: requestData?.planId, eventIds: requestData?.eventIds,
+      planId: requestData?.planId, itemIds: requestData?.itemIds,
       answers: requestData?.answers, uploads: requestData?.uploads
     }),
     verifyBundleTicket: (token) => request("verifyBundleTicket", { token }),

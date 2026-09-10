@@ -575,6 +575,12 @@
         });
         copy.dataset.copyBundleRegistration = plan.planId;
         row.append(copy);
+        const openSheet = editButton("打开报名表", () => {
+          if (!plan.sheetUrl) { setStatus("正在建立报名表，请刷新后再试。", "error"); return; }
+          window.open(plan.sheetUrl, "_blank", "noopener");
+        });
+        openSheet.dataset.openBundleSheet = plan.planId;
+        row.append(openSheet);
         row.append(editButton("预览报名表", () => openBundlePreview_(plan)));
         (plan.questions || []).forEach((question) => {
           const questionRow = dataRow(`资料：${question.label}`, question.status || "active", [question.type, question.required ? "必填" : "选填"]);

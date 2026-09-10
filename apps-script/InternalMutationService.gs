@@ -279,7 +279,7 @@ function getBundleDashboard_(_payload, _actor) {
       return {
         planId: String(plan.planId), title: String(plan.title), description: String(plan.description || ''),
         opensAt: String(plan.opensAt), closesAt: String(plan.closesAt), totalTicketLimit: Number(plan.totalTicketLimit),
-        showOnHome: plan.showOnHome === true || String(plan.showOnHome).toLowerCase() === 'true', status: String(plan.status), registrationUrl: buildBundleRegistrationUrl_(plan.planId),
+        showOnHome: plan.showOnHome === true || String(plan.showOnHome).toLowerCase() === 'true', status: String(plan.status), registrationUrl: buildBundleRegistrationUrl_(plan.planId), sheetUrl: ensureBundlePlanWorkbook_(plan).url,
         attendanceCount: attendance.filter(function(record) {
           return String(record.status || '').toLowerCase() === 'checked_in' && entitlements.some(function(entitlement) {
             return entitlement.entitlementId === record.entitlementId && entitlement.planId === plan.planId;
@@ -305,7 +305,34 @@ function getBundleDashboard_(_payload, _actor) {
 function saveBundlePlan_(payload, actor) {
   var registry = bundleRegistrySheet_(getRegistrySpreadsheet_());
   var plan = requireBundlePlanPayload_(payload);
-  return saveBundlePlanToSheet_(registry.getSheetByName('\u7ec4\u5408\u8ba1\u5212'), plan, new Date().toISOString());
+  var saved = saveBundlePlanToSheet_(registry.getSheetByName('\u7ec4\u5408\u8ba1\u5212'), plan, new Date().toISOString());
+  saved.sheetUrl = ensureBundlePlanWorkbook_(saved).url;
+  return saved;
+}
+
+function ensureBundlePlanWorkbook_(plan) {
+  var key = 'BUNDLE_PLAN_SHEET_' + String(plan.planId || '');
+  var id = PropertiesService.getScriptProperties().getProperty(key);
+  var book;
+  try { book = id ? SpreadsheetApp.openById(id) : null; } catch (_ignored) { book = null; }
+  if (!book) {
+    book = SpreadsheetApp.create('组合报名 - ' + String(plan.title || plan.planId));
+    PropertiesService.getScriptProperties().setProperty(key, book.getId());
+    var registrations = book.getSheets()[0]; registrations.setName('报名资料');
+    registrations.appendRow(['报名编号', '电子票', '报名时间', '填写资料', '所选项目', '状态']);
+    book.insertSheet('签到记录').appendRow(['签到时间', '电子票', '项目', '签到点', '工作人员']);
+  }
+  return { id: book.getId(), url: 'https://docs.google.com/spreadsheets/d/' + encodeURIComponent(book.getId()) + '/edit' };
+}
+
+function appendBundlePlanRegistrationView_(plan, registration, rules) {
+  var book = ensureBundlePlanWorkbook_(plan); var sheet = SpreadsheetApp.openById(book.id).getSheetByName('报名资料');
+  sheet.appendRow([registration.bundleRegistrationId, registration.ticketNumber, registration.createdAt, registration.answers, rules.map(function(rule) { return rule.eventId + '（' + rule.fixedTicketCount + '张）'; }).join('\n'), registration.status]);
+}
+
+function appendBundlePlanCheckInView_(planId, ticketNumber, eventId, checkpoint, checkedAt, actor) {
+  var plan = { planId: planId, title: planId }; var book = ensureBundlePlanWorkbook_(plan);
+  SpreadsheetApp.openById(book.id).getSheetByName('签到记录').appendRow([checkedAt, ticketNumber, eventId, checkpoint, actor]);
 }
 
 function saveBundleRule_(payload, actor) {
@@ -714,6 +741,7 @@ function staffBundleCheckIn_(payload, actor, scannerPass) {
         checkedInBy: String(actor || '').trim().toLowerCase(), status: 'checked_in'
       })
     ]);
+    appendBundlePlanCheckInView_(registration.planId, registration.ticketNumber, eventId, nativeCheckpoint, nativeCheckedAt, String(actor || '').trim().toLowerCase());
     return { status: 'checked_in', kind: 'bundle', sessionId: 'bundle', checkpointId: nativeCheckpoint,
       checkpointLabel: String(nativeLabels[nativeIndex - 1] || (nativeMode === 'single' ? '项目签到' : '第 ' + nativeIndex + ' 次签到')),
       checkedInAt: nativeCheckedAt };

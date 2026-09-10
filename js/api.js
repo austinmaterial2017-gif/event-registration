@@ -126,18 +126,26 @@ export function createApiClient({ endpoint = APPS_SCRIPT_WEB_APP_URL, fetchImpl 
 
   return {
     listEvents: () => request("listEvents", {}),
+    listBundlePlans: () => request("listBundlePlans", {}),
+    listBundleRecoveryPlans: () => request("listBundleRecoveryPlans", {}),
     getEvent: (eventId) => request("getEvent", { eventId }),
     getBundlePlan: (planId) => request("getBundlePlan", { planId }),
     createBundleRegistration: (requestData) => request("createBundleRegistration", {
-      planId: requestData?.planId, eventIds: requestData?.eventIds,
+      planId: requestData?.planId, itemIds: requestData?.itemIds,
       answers: requestData?.answers, uploads: requestData?.uploads
     }),
     verifyBundleTicket: (token) => request("verifyBundleTicket", { token }),
+    recoverBundleTicket: (requestData) => request("recoverBundleTicket", {
+      planId: requestData?.planId,
+      name: requestData?.name,
+      phone: requestData?.phone
+    }),
     createRegistration: (requestData) => request("createRegistration", {
       eventId: requestData?.eventId,
       sessionIds: requestData?.sessionIds,
       seatChoices: requestData?.seatChoices,
       answers: requestData?.answers,
+      uploads: requestData?.uploads,
       seatHoldOwner: requestData?.seatHoldOwner
     }),
     recoverTicket: (requestData) => request("recoverTicket", {
@@ -179,10 +187,13 @@ export function createApiClient({ endpoint = APPS_SCRIPT_WEB_APP_URL, fetchImpl 
 const publicClient = createApiClient();
 
 export const listEvents = () => publicClient.listEvents();
+export const listBundlePlans = () => publicClient.listBundlePlans();
+export const listBundleRecoveryPlans = () => publicClient.listBundleRecoveryPlans();
 export const getEvent = (eventId) => publicClient.getEvent(eventId);
 export const getBundlePlan = (planId) => publicClient.getBundlePlan(planId);
 export const createBundleRegistration = (request) => publicClient.createBundleRegistration(request);
 export const verifyBundleTicket = (token) => publicClient.verifyBundleTicket(token);
+export const recoverBundleTicket = (request) => publicClient.recoverBundleTicket(request);
 export const createRegistration = (request) => publicClient.createRegistration(request);
 export const recoverTicket = (request) => publicClient.recoverTicket(request);
 export const lookupTicket = (ticketNumber, verificationValue) => publicClient.lookupTicket(ticketNumber, verificationValue);

@@ -200,13 +200,10 @@ test("participant controllers use the public client instead of temporary registr
   assert.doesNotMatch(`${indexPage}\n${registerPage}`, /const\s+serverNow\s*=/);
 });
 
-test("the home page still requests combination plans when ordinary activities fail to load", async () => {
+test("the home page loads combination plans without waiting for ordinary activities", async () => {
   const source = await readFile(new URL("../public/js/index-page.js", import.meta.url), "utf8");
-  const ordinaryFailure = source.indexOf('if (!result.ok || !Array.isArray(result.data?.events))');
-  const bundleRequest = source.indexOf('listBundlePlans()');
-  assert.ok(ordinaryFailure >= 0);
-  assert.ok(bundleRequest >= 0);
-  assert.ok(bundleRequest < ordinaryFailure, "combination plans must load before the ordinary-event early return");
+  assert.match(source, /listBundlePlans\(\)\.then/);
+  assert.doesNotMatch(source, /Promise\.all\(\[listEvents\(\), listBundlePlans\(\)\]\)/);
 });
 
 test("the public browser client exposes no attendance mutation", () => {

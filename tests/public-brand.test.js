@@ -33,3 +33,16 @@ test("public pages use the 现代X好未来 brand and approved palette", async (
     assert.match(css.toLowerCase(), new RegExp(color));
   });
 });
+
+test("combination activities are rendered as large selectable cards", async () => {
+  const [script, css] = await Promise.all([
+    read("public/js/bundle-register-page.js"),
+    read("public/css/app.css")
+  ]);
+  assert.match(script, /label\.className = "bundle-item"/);
+  assert.match(script, /bundle-item-title/);
+  assert.match(script, /bundle-item-status/);
+  assert.match(css, /\.bundle-item \{/);
+  assert.match(css, /\.bundle-item-title \{/);
+  assert.match(css, /\.bundle-item:has\(input:checked\)/);
+});

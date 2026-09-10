@@ -155,9 +155,16 @@ async function load() {
   document.querySelector("#bundle-description").textContent = plan.description;
   events.replaceChildren(...rules.map((rule) => {
     const label = document.createElement("label"); const input = document.createElement("input");
+    const title = rule.title || rule.itemId || rule.eventId;
+    const status = ruleStatusText(rule);
     input.type = "checkbox"; input.value = rule.itemId || rule.eventId; input.disabled = rule.available === false;
+    input.setAttribute("aria-label", `${title}，${status}`);
     input.addEventListener("change", renderTotal);
-    label.append(input, document.createTextNode(`${rule.title || rule.itemId || rule.eventId} · ${ruleStatusText(rule)}`));
+    label.className = "bundle-item";
+    const copy = node("span", "bundle-item-copy");
+    copy.append(node("strong", "bundle-item-title", title));
+    copy.append(node("span", "bundle-item-status", status));
+    label.append(input, copy);
     if (input.disabled) label.classList.add("is-unavailable");
     return label;
   }));

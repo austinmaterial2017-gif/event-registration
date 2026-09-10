@@ -1,6 +1,6 @@
 export function validateBundleSelection({ rules, selectedEventIds, totalTicketLimit }) {
   const selected = Array.isArray(selectedEventIds) ? [...new Set(selectedEventIds.map(String))] : [];
-  const byId = new Map((Array.isArray(rules) ? rules : []).map((rule) => [String(rule?.eventId || ""), rule]));
+  const byId = new Map((Array.isArray(rules) ? rules : []).map((rule) => [String(rule?.itemId || rule?.eventId || ""), rule]));
   let totalTickets = 0;
   for (const eventId of selected) {
     const rule = byId.get(eventId);

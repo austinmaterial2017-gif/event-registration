@@ -292,17 +292,20 @@
                 </div>
                 <button id="save-bundle-plan" type="submit">保存组合计划</button>
               </form>
-              <form id="bundle-rule-form">
+              <form id="bundle-item-form">
                 <label>组合计划 ID<input name="planId" required placeholder="先保存组合计划"></label>
                 <div class="fields">
-                  <label>选择活动<select name="eventId" id="bundle-event-selector" required><option value="">请先选择活动</option></select></label>
-                  <label>此活动固定票数<input name="fixedTicketCount" type="number" min="1" step="1" value="1" required></label>
-                  <label>此活动总名额（0 = 不限）<input name="capacity" type="number" min="0" step="1" value="0" required></label>
-                  <label>开放时间（可留空）<input name="opensAt" type="datetime-local"></label>
-                  <label>截止时间（可留空）<input name="closesAt" type="datetime-local"></label>
+                  <label>项目名称<input name="title" required placeholder="例如：亲子科学工作坊"></label>
+                  <label>每人获得票数<input name="fixedTicketCount" type="number" min="1" step="1" value="1" required></label>
+                  <label>项目总名额（0 = 不限）<input name="capacity" type="number" min="0" step="1" value="0" required></label>
+                  <label>开始时间<input name="startsAt" type="datetime-local" required></label>
+                  <label>结束时间<input name="endsAt" type="datetime-local" required></label>
+                  <label>签到方式<select name="checkInMode"><option value="none">不需要签到</option><option value="single">只签到一次</option><option value="multiple">多次签到</option></select></label>
+                  <label>需要签到几次<input name="checkInCount" type="number" min="1" step="1" value="1"></label>
+                  <label class="wide">签到点名称（多次签到时每行一个）<textarea name="checkInLabels" placeholder="例如：入场签到&#10;离场签到"></textarea></label>
                   <label>状态<select name="status"><option value="open">启用</option><option value="inactive">停用</option></select></label>
                 </div>
-                <button id="save-bundle-rule" type="submit">保存活动规则</button>
+                <button id="save-bundle-item" type="submit">保存组合项目</button>
               </form>
             </div>
             <div class="panel-body"><h3>已有组合计划</h3><div id="bundle-plan-list" class="data-list" aria-live="polite"></div></div>

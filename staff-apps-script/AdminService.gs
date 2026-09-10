@@ -140,6 +140,16 @@ function saveBundleRule(payload) {
   });
 }
 
+/** Saves a project created directly inside a combination plan. */
+function saveBundleItem(payload) {
+  return runAdminService_(function() {
+    var actor = requireAuthorizedAdminSession_();
+    var result = invokeInternalBackend_('admin.saveBundleItem', payload || {}, actor);
+    if (!result.ok) adminError_(result.code);
+    return result.data;
+  });
+}
+
 /** Uploads or replaces one optional image shown with a registration question. */
 function uploadAdminQuestionImage(payload) {
   return runAdminService_(function() {

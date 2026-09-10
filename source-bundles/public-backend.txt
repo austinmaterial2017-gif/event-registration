@@ -379,6 +379,7 @@ function ensureHeaders_(sheet, headers) {
  */
 var BUNDLE_SHEET_HEADERS_ = {
   '\u7ec4\u5408\u8ba1\u5212': ['planId', 'title', 'description', 'opensAt', 'closesAt', 'totalTicketLimit', 'status', 'createdAt', 'updatedAt'],
+  '\u7ec4\u5408\u9879\u76ee': ['bundleItemId', 'planId', 'title', 'startsAt', 'endsAt', 'fixedTicketCount', 'capacity', 'checkInMode', 'checkInCount', 'checkInLabels', 'status', 'createdAt', 'updatedAt'],
   '\u7ec4\u5408\u6d3b\u52a8\u89c4\u5219': ['ruleId', 'planId', 'eventId', 'fixedTicketCount', 'capacity', 'opensAt', 'closesAt', 'status'],
   '\u7ec4\u5408\u62a5\u540d': ['bundleRegistrationId', 'planId', 'participantId', 'ticketNumber', 'tokenDigest', 'answers', 'status', 'createdAt'],
   '\u7ec4\u5408\u8d44\u683c': ['entitlementId', 'planId', 'bundleRegistrationId', 'eventId', 'fixedTicketCount', 'status', 'createdAt', 'updatedAt'],
@@ -455,6 +456,30 @@ function requireBundleRulePayload_(payload) {
   };
 }
 
+/** Validates one project created directly inside a combination plan. */
+function requireBundleItemPayload_(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) bundlePayloadError_();
+  var planId = bundleText_(payload.planId);
+  var title = bundleText_(payload.title);
+  var startsAt = bundleIsoTime_(payload.startsAt);
+  var endsAt = bundleIsoTime_(payload.endsAt);
+  var checkInMode = bundleText_(payload.checkInMode || 'none').toLowerCase();
+  var checkInCount = checkInMode === 'none' ? 0 : bundlePositiveInteger_(payload.checkInCount || 1);
+  var labels = Array.isArray(payload.checkInLabels) ? payload.checkInLabels.map(bundleText_).filter(Boolean) : [];
+  if (!planId || !title || Date.parse(endsAt) <= Date.parse(startsAt) ||
+      ['none', 'single', 'multiple'].indexOf(checkInMode) === -1 ||
+      (checkInMode === 'single' && checkInCount !== 1) ||
+      (checkInMode === 'multiple' && labels.length && labels.length !== checkInCount)) bundlePayloadError_();
+  return {
+    bundleItemId: bundleText_(payload.bundleItemId), planId: planId, title: title,
+    startsAt: startsAt, endsAt: endsAt,
+    fixedTicketCount: bundlePositiveInteger_(payload.fixedTicketCount),
+    capacity: bundleCapacity_(payload.capacity), checkInMode: checkInMode,
+    checkInCount: checkInCount, checkInLabels: labels,
+    status: bundleText_(payload.status || 'open').toLowerCase()
+  };
+}
+
 function bundleRowObject_(headers, values, rowNumber) {
   var row = { rowNumber: rowNumber };
   headers.forEach(function(header, index) { row[header] = values[index] === undefined ? '' : values[index]; });
@@ -503,6 +528,26 @@ function saveBundleRuleToSheet_(sheet, rule) {
     ruleId: rule.ruleId || (existing.length ? existing[0].ruleId : 'BNR-' + Utilities.getUuid()),
     planId: rule.planId, eventId: rule.eventId, fixedTicketCount: rule.fixedTicketCount,
     capacity: rule.capacity, opensAt: rule.opensAt || '', closesAt: rule.closesAt || '', status: status
+  };
+  var targetRow = existing.length ? existing[0].rowNumber : sheet.getLastRow() + 1;
+  sheet.getRange(targetRow, 1, 1, headers.length).setValues([bundleValues_(headers, row)]);
+  return row;
+}
+
+function saveBundleItemToSheet_(sheet, item, now) {
+  var headers = BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u9879\u76ee'];
+  var existing = bundleSheetRows_(sheet, headers).filter(function(row) {
+    return row.bundleItemId === item.bundleItemId && item.bundleItemId;
+  });
+  if (existing.length > 1 || ['open', 'inactive'].indexOf(item.status) === -1) bundlePayloadError_();
+  var timestamp = bundleIsoTime_(now || new Date().toISOString());
+  var row = {
+    bundleItemId: item.bundleItemId || 'BNI-' + Utilities.getUuid(), planId: item.planId,
+    title: item.title, startsAt: item.startsAt, endsAt: item.endsAt,
+    fixedTicketCount: item.fixedTicketCount, capacity: item.capacity,
+    checkInMode: item.checkInMode, checkInCount: item.checkInCount,
+    checkInLabels: JSON.stringify(item.checkInLabels), status: item.status,
+    createdAt: existing.length ? existing[0].createdAt : timestamp, updatedAt: timestamp
   };
   var targetRow = existing.length ? existing[0].rowNumber : sheet.getLastRow() + 1;
   sheet.getRange(targetRow, 1, 1, headers.length).setValues([bundleValues_(headers, row)]);
@@ -4193,7 +4238,7 @@ function internalStaffCheckInTargets_() {
   var registry = getRegistrySpreadsheet_();
   var settings = getAdminSettings(registry);
   var policies = settings && settings.registration && settings.registration.events || {};
-  return readRows(registry, '活动目录').filter(function(event) {
+  var ordinaryTargets = readRows(registry, '活动目录').filter(function(event) {
     return ['upcoming', 'open', 'live'].indexOf(String(event.status || '').toLowerCase()) !== -1;
   }).map(function(event) {
     var eventId = String(event.eventId || '');
@@ -4216,8 +4261,26 @@ function internalStaffCheckInTargets_() {
         checkInMode: policy.checkInMode, checkpoints: checkpoints
       };
     });
-    return { eventId: eventId, title: String(event.title || ''), sessions: sessions };
+    return { eventId: eventId, title: String(event.title || ''), targetKind: 'ordinary', sessions: sessions };
   }).filter(function(event) { return event.sessions.length > 0; });
+  initializeBundleSpreadsheet_(registry);
+  var plans = bundleSheetRows_(registry.getSheetByName('组合计划'), BUNDLE_SHEET_HEADERS_['组合计划']);
+  var bundleTargets = bundleSheetRows_(registry.getSheetByName('组合项目'), BUNDLE_SHEET_HEADERS_['组合项目']).filter(function(item) {
+    return String(item.status || '').toLowerCase() === 'open' && plans.some(function(plan) {
+      return plan.planId === item.planId && String(plan.status || '').toLowerCase() === 'open';
+    });
+  }).map(function(item) {
+    var labels; try { labels = JSON.parse(String(item.checkInLabels || '[]')); } catch (_ignored) { labels = []; }
+    var count = Number(item.checkInCount || 0);
+    var checkpoints = String(item.checkInMode || '') === 'multiple' ? Array.from({ length: count }, function(_value, index) {
+      return { checkpointId: 'checkpoint-' + (index + 1), label: String(labels[index] || ('第 ' + (index + 1) + ' 次签到')) };
+    }) : [];
+    var plan = plans.filter(function(candidate) { return candidate.planId === item.planId; })[0];
+    return { eventId: String(item.bundleItemId), bundleItemId: String(item.bundleItemId), targetKind: 'bundle',
+      title: '组合 · ' + String(plan.title || '') + ' · ' + String(item.title || ''),
+      sessions: [{ sessionId: 'bundle', title: String(item.title || ''), startsAt: String(item.startsAt || ''), checkInMode: String(item.checkInMode || 'none') === 'multiple' ? 'manual' : 'single', checkpoints: checkpoints }] };
+  });
+  return ordinaryTargets.concat(bundleTargets);
 }
 
 /** Executes one scan using a short-lived pass created by an authenticated staff account. */
@@ -4274,7 +4337,7 @@ function createInternalStaffScannerPass_(payload, actor) {
   PropertiesService.getScriptProperties().setProperty(
     STAFF_SCANNER_PASS_PREFIX_ + digestTicketToken_(rawPass),
     JSON.stringify({
-      actor: String(actor || '').trim().toLowerCase(), eventId: eventId,
+      actor: String(actor || '').trim().toLowerCase(), eventId: eventId, targetKind: target.targetKind || 'ordinary',
       sessionId: sessionId, checkpointId: checkpointId, expiresAt: expiresAt
     })
   );
@@ -4641,7 +4704,8 @@ var ADMIN_MUTATION_ACTIONS_ = {
   'admin.refreshReadableViews': true,
   'admin.switchSheet': true,
   'admin.saveBundlePlan': true,
-  'admin.saveBundleRule': true
+  'admin.saveBundleRule': true,
+  'admin.saveBundleItem': true
 };
 
 function executeInternalActionLocked_(action, payload, actor) {
@@ -4688,6 +4752,7 @@ function executeInternalActionLocked_(action, payload, actor) {
     'admin.switchSheet': function() { return switchInternalAdminSheet_(payload, actor); }
     ,'admin.saveBundlePlan': function() { return saveBundlePlan_(payload, actor); }
     ,'admin.saveBundleRule': function() { return saveBundleRule_(payload, actor); }
+    ,'admin.saveBundleItem': function() { return saveBundleItem_(payload, actor); }
   };
   if (!Object.prototype.hasOwnProperty.call(handlers, action)) {
     return internalMutationFailure_('INTERNAL_REQUEST_DENIED');
@@ -4773,6 +4838,7 @@ function bundleRegistrySheet_(registry) {
 function getBundleDashboard_(_payload, _actor) {
   var registry = bundleRegistrySheet_(getRegistrySpreadsheet_());
   var plans = bundleSheetRows_(registry.getSheetByName('组合计划'), BUNDLE_SHEET_HEADERS_['组合计划']);
+  var items = bundleSheetRows_(registry.getSheetByName('组合项目'), BUNDLE_SHEET_HEADERS_['组合项目']);
   var rules = bundleSheetRows_(registry.getSheetByName('组合活动规则'), BUNDLE_SHEET_HEADERS_['组合活动规则']);
   var entitlements = bundleSheetRows_(registry.getSheetByName('组合资格'), BUNDLE_SHEET_HEADERS_['组合资格']);
   var attendance = bundleSheetRows_(registry.getSheetByName('组合签到'), BUNDLE_SHEET_HEADERS_['组合签到']);
@@ -4787,6 +4853,9 @@ function getBundleDashboard_(_payload, _actor) {
             return entitlement.entitlementId === record.entitlementId && entitlement.planId === plan.planId;
           });
         }).length,
+        items: items.filter(function(item) { return item.planId === plan.planId; }).map(function(item) {
+          return { bundleItemId: String(item.bundleItemId), title: String(item.title), fixedTicketCount: Number(item.fixedTicketCount), capacity: Number(item.capacity), checkInMode: String(item.checkInMode), status: String(item.status) };
+        }),
         rules: rules.filter(function(rule) { return rule.planId === plan.planId; }).map(function(rule) {
           var used = entitlements.filter(function(entitlement) {
             return entitlement.planId === plan.planId && entitlement.eventId === rule.eventId &&
@@ -4817,6 +4886,16 @@ function saveBundleRule_(payload, actor) {
   });
   if (eventMatches.length !== 1) adminError_('NOT_FOUND');
   return saveBundleRuleToSheet_(registry.getSheetByName('\u7ec4\u5408\u6d3b\u52a8\u89c4\u5219'), rule);
+}
+
+function saveBundleItem_(payload, actor) {
+  var registry = bundleRegistrySheet_(getRegistrySpreadsheet_());
+  var item = requireBundleItemPayload_(payload);
+  var planMatches = bundleSheetRows_(
+    registry.getSheetByName('\u7ec4\u5408\u8ba1\u5212'), BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u8ba1\u5212']
+  ).filter(function(plan) { return plan.planId === item.planId; });
+  if (planMatches.length !== 1) adminError_('NOT_FOUND');
+  return saveBundleItemToSheet_(registry.getSheetByName('\u7ec4\u5408\u9879\u76ee'), item);
 }
 
 function runAdminMutationTransaction_(registry, spreadsheet, action, callback) {
@@ -5073,6 +5152,40 @@ function staffBundleCheckIn_(payload, actor, scannerPass) {
   });
   if (entitlements.length !== 1) adminError_('SESSION_NOT_REGISTERED');
   var entitlement = entitlements[0];
+
+  // Native combination projects deliberately do not have an ordinary event
+  // spreadsheet. Their check-ins stay in the isolated combination sheet.
+  var nativeItemSheet = registry.getSheetByName('组合项目');
+  var nativeItems = nativeItemSheet ? bundleSheetRows_(nativeItemSheet, BUNDLE_SHEET_HEADERS_['组合项目']).filter(function(item) {
+    return item.bundleItemId === eventId && String(item.status || '').toLowerCase() === 'open';
+  }) : [];
+  if (nativeItems.length === 1) {
+    var nativeItem = nativeItems[0];
+    var nativeMode = String(nativeItem.checkInMode || 'none').toLowerCase();
+    if (nativeMode === 'none') adminError_('CHECK_IN_DISABLED');
+    var nativeCheckpoint = nativeMode === 'multiple' ? scannerPassId_(scannerPass && scannerPass.checkpointId) : 'checkpoint-1';
+    if (!nativeCheckpoint) adminError_('CHECKPOINT_REQUIRED');
+    var nativeCount = Number(nativeItem.checkInCount || 1);
+    if (!internalCheckpointIndex_(nativeCheckpoint, nativeCount)) adminError_('CHECKPOINT_INVALID');
+    var alreadyChecked = bundleSheetRows_(attendanceSheet, BUNDLE_SHEET_HEADERS_['组合签到']).some(function(row) {
+      return row.entitlementId === entitlement.entitlementId && row.sessionId === 'bundle' &&
+        row.checkpointId === nativeCheckpoint && String(row.status || '').toLowerCase() === 'checked_in';
+    });
+    if (alreadyChecked) adminError_('ALREADY_CHECKED_IN');
+    var nativeLabels; try { nativeLabels = JSON.parse(String(nativeItem.checkInLabels || '[]')); } catch (_ignored) { nativeLabels = []; }
+    var nativeIndex = internalCheckpointIndex_(nativeCheckpoint, nativeCount);
+    var nativeCheckedAt = new Date().toISOString();
+    attendanceSheet.getRange(attendanceSheet.getLastRow() + 1, 1, 1, BUNDLE_SHEET_HEADERS_['组合签到'].length).setValues([
+      bundleValues_(BUNDLE_SHEET_HEADERS_['组合签到'], {
+        attendanceId: Utilities.getUuid(), entitlementId: entitlement.entitlementId, eventId: eventId,
+        sessionId: 'bundle', checkpointId: nativeCheckpoint, checkedInAt: nativeCheckedAt,
+        checkedInBy: String(actor || '').trim().toLowerCase(), status: 'checked_in'
+      })
+    ]);
+    return { status: 'checked_in', kind: 'bundle', sessionId: 'bundle', checkpointId: nativeCheckpoint,
+      checkpointLabel: String(nativeLabels[nativeIndex - 1] || (nativeMode === 'single' ? '项目签到' : '第 ' + nativeIndex + ' 次签到')),
+      checkedInAt: nativeCheckedAt };
+  }
 
   var eventBook = getEventSpreadsheet_(registry, eventId);
   var event = readRows(eventBook, '活动').filter(function(row) { return row.eventId === eventId; })[0];
@@ -7426,6 +7539,7 @@ function getBundlePlan(payload) {
       var registry = getRegistrySpreadsheet_();
       var planSheet = registry.getSheetByName('\u7ec4\u5408\u8ba1\u5212');
       var ruleSheet = registry.getSheetByName('\u7ec4\u5408\u6d3b\u52a8\u89c4\u5219');
+      var itemSheet = registry.getSheetByName('\u7ec4\u5408\u9879\u76ee');
       var entitlementSheet = registry.getSheetByName('\u7ec4\u5408\u8d44\u683c');
       if (!planSheet || !ruleSheet || !entitlementSheet) publicEventReadError_('EVENT_NOT_FOUND');
       var planId = payload.planId.trim();
@@ -7457,9 +7571,16 @@ function getBundlePlan(payload) {
           status: availability.status, available: availability.available
         };
       });
+      var items = itemSheet ? bundleSheetRows_(itemSheet, BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u9879\u76ee']).filter(function(item) {
+        return item.planId === planId;
+      }).map(function(item) {
+        var used = entitlements.filter(function(row) { return row.planId === planId && row.eventId === item.bundleItemId && String(row.status || '').toLowerCase() === 'active'; }).length;
+        var availability = bundleRulePublicAvailability_({ status: item.status, opensAt: item.startsAt, closesAt: item.endsAt, capacity: item.capacity }, used, now);
+        return { itemId: String(item.bundleItemId), title: String(item.title), fixedTicketCount: Number(item.fixedTicketCount), capacity: Number(item.capacity || 0), used: used, startsAt: String(item.startsAt), endsAt: String(item.endsAt), status: availability.status, available: availability.available };
+      }) : [];
       return {
         plan: { planId: planId, title: String(plans[0].title), description: String(plans[0].description || ''), totalTicketLimit: Number(plans[0].totalTicketLimit), opensAt: String(plans[0].opensAt), closesAt: String(plans[0].closesAt) },
-        rules: rules,
+        rules: rules, items: items,
         fields: bundleRegistrationFields_().map(function(field) { return publicQuestionProjection_(field, {}); }),
         serverNow: now.toISOString()
       };
@@ -7470,7 +7591,7 @@ function getBundlePlan(payload) {
 function createBundleRegistration(payload) {
   return runRegistrationService_(function() {
     return withScriptLock(function() {
-      if (!payload || typeof payload.planId !== 'string' || !Array.isArray(payload.eventIds)) registrationError_('INVALID_REQUEST');
+      if (!payload || typeof payload.planId !== 'string' || !Array.isArray(payload.itemIds || payload.eventIds)) registrationError_('INVALID_REQUEST');
       if (payload.answers && (typeof payload.answers !== 'object' || Array.isArray(payload.answers)) ||
           payload.uploads && (typeof payload.uploads !== 'object' || Array.isArray(payload.uploads))) {
         registrationError_('INVALID_REQUEST');
@@ -7478,6 +7599,7 @@ function createBundleRegistration(payload) {
       var registry = getRegistrySpreadsheet_();
       var planSheet = registry.getSheetByName('\u7ec4\u5408\u8ba1\u5212');
       var ruleSheet = registry.getSheetByName('\u7ec4\u5408\u6d3b\u52a8\u89c4\u5219');
+      var itemSheet = registry.getSheetByName('\u7ec4\u5408\u9879\u76ee');
       var registrationSheet = registry.getSheetByName('\u7ec4\u5408\u62a5\u540d');
       var entitlementSheet = registry.getSheetByName('\u7ec4\u5408\u8d44\u683c');
       if (!planSheet || !ruleSheet || !registrationSheet || !entitlementSheet) registrationError_('EVENT_NOT_FOUND');
@@ -7486,9 +7608,10 @@ function createBundleRegistration(payload) {
       if (plans.length !== 1 || String(plans[0].status || '').toLowerCase() !== 'open') registrationError_('REGISTRATION_CLOSED');
       if (Date.parse(plans[0].opensAt) > now.getTime()) registrationError_('REGISTRATION_NOT_OPEN');
       if (Date.parse(plans[0].closesAt) <= now.getTime()) registrationError_('REGISTRATION_CLOSED');
-      var requested = {}; payload.eventIds.forEach(function(id) { if (typeof id === 'string' && id.trim()) requested[id.trim()] = true; });
+      var requested = {}; (payload.itemIds || payload.eventIds).forEach(function(id) { if (typeof id === 'string' && id.trim()) requested[id.trim()] = true; });
       if (!Object.keys(requested).length) registrationError_('INVALID_REQUEST');
-      var rules = bundleSheetRows_(ruleSheet, BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u6d3b\u52a8\u89c4\u5219']).filter(function(rule) { return rule.planId === planId && requested[rule.eventId]; });
+      var nativeItems = itemSheet ? bundleSheetRows_(itemSheet, BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u9879\u76ee']).filter(function(item) { return item.planId === planId && requested[item.bundleItemId]; }) : [];
+      var rules = nativeItems.length ? nativeItems.map(function(item) { return { eventId: String(item.bundleItemId), fixedTicketCount: Number(item.fixedTicketCount), capacity: Number(item.capacity), opensAt: item.startsAt, closesAt: item.endsAt, status: item.status }; }) : bundleSheetRows_(ruleSheet, BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u6d3b\u52a8\u89c4\u5219']).filter(function(rule) { return rule.planId === planId && requested[rule.eventId]; });
       if (rules.length !== Object.keys(requested).length) registrationError_('INVALID_REQUEST');
       var entitlements = bundleSheetRows_(entitlementSheet, BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u8d44\u683c']);
       var total = 0;

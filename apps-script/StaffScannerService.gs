@@ -6,7 +6,7 @@ function internalStaffCheckInTargets_() {
   var registry = getRegistrySpreadsheet_();
   var settings = getAdminSettings(registry);
   var policies = settings && settings.registration && settings.registration.events || {};
-  return readRows(registry, '活动目录').filter(function(event) {
+  var ordinaryTargets = readRows(registry, '活动目录').filter(function(event) {
     return ['upcoming', 'open', 'live'].indexOf(String(event.status || '').toLowerCase()) !== -1;
   }).map(function(event) {
     var eventId = String(event.eventId || '');
@@ -29,8 +29,26 @@ function internalStaffCheckInTargets_() {
         checkInMode: policy.checkInMode, checkpoints: checkpoints
       };
     });
-    return { eventId: eventId, title: String(event.title || ''), sessions: sessions };
+    return { eventId: eventId, title: String(event.title || ''), targetKind: 'ordinary', sessions: sessions };
   }).filter(function(event) { return event.sessions.length > 0; });
+  initializeBundleSpreadsheet_(registry);
+  var plans = bundleSheetRows_(registry.getSheetByName('组合计划'), BUNDLE_SHEET_HEADERS_['组合计划']);
+  var bundleTargets = bundleSheetRows_(registry.getSheetByName('组合项目'), BUNDLE_SHEET_HEADERS_['组合项目']).filter(function(item) {
+    return String(item.status || '').toLowerCase() === 'open' && plans.some(function(plan) {
+      return plan.planId === item.planId && String(plan.status || '').toLowerCase() === 'open';
+    });
+  }).map(function(item) {
+    var labels; try { labels = JSON.parse(String(item.checkInLabels || '[]')); } catch (_ignored) { labels = []; }
+    var count = Number(item.checkInCount || 0);
+    var checkpoints = String(item.checkInMode || '') === 'multiple' ? Array.from({ length: count }, function(_value, index) {
+      return { checkpointId: 'checkpoint-' + (index + 1), label: String(labels[index] || ('第 ' + (index + 1) + ' 次签到')) };
+    }) : [];
+    var plan = plans.filter(function(candidate) { return candidate.planId === item.planId; })[0];
+    return { eventId: String(item.bundleItemId), bundleItemId: String(item.bundleItemId), targetKind: 'bundle',
+      title: '组合 · ' + String(plan.title || '') + ' · ' + String(item.title || ''),
+      sessions: [{ sessionId: 'bundle', title: String(item.title || ''), startsAt: String(item.startsAt || ''), checkInMode: String(item.checkInMode || 'none') === 'multiple' ? 'manual' : 'single', checkpoints: checkpoints }] };
+  });
+  return ordinaryTargets.concat(bundleTargets);
 }
 
 /** Executes one scan using a short-lived pass created by an authenticated staff account. */
@@ -87,7 +105,7 @@ function createInternalStaffScannerPass_(payload, actor) {
   PropertiesService.getScriptProperties().setProperty(
     STAFF_SCANNER_PASS_PREFIX_ + digestTicketToken_(rawPass),
     JSON.stringify({
-      actor: String(actor || '').trim().toLowerCase(), eventId: eventId,
+      actor: String(actor || '').trim().toLowerCase(), eventId: eventId, targetKind: target.targetKind || 'ordinary',
       sessionId: sessionId, checkpointId: checkpointId, expiresAt: expiresAt
     })
   );

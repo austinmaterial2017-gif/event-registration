@@ -123,7 +123,8 @@ var ADMIN_MUTATION_ACTIONS_ = {
   'admin.refreshReadableViews': true,
   'admin.switchSheet': true,
   'admin.saveBundlePlan': true,
-  'admin.saveBundleRule': true
+  'admin.saveBundleRule': true,
+  'admin.saveBundleItem': true
 };
 
 function executeInternalActionLocked_(action, payload, actor) {
@@ -170,6 +171,7 @@ function executeInternalActionLocked_(action, payload, actor) {
     'admin.switchSheet': function() { return switchInternalAdminSheet_(payload, actor); }
     ,'admin.saveBundlePlan': function() { return saveBundlePlan_(payload, actor); }
     ,'admin.saveBundleRule': function() { return saveBundleRule_(payload, actor); }
+    ,'admin.saveBundleItem': function() { return saveBundleItem_(payload, actor); }
   };
   if (!Object.prototype.hasOwnProperty.call(handlers, action)) {
     return internalMutationFailure_('INTERNAL_REQUEST_DENIED');
@@ -255,6 +257,7 @@ function bundleRegistrySheet_(registry) {
 function getBundleDashboard_(_payload, _actor) {
   var registry = bundleRegistrySheet_(getRegistrySpreadsheet_());
   var plans = bundleSheetRows_(registry.getSheetByName('组合计划'), BUNDLE_SHEET_HEADERS_['组合计划']);
+  var items = bundleSheetRows_(registry.getSheetByName('组合项目'), BUNDLE_SHEET_HEADERS_['组合项目']);
   var rules = bundleSheetRows_(registry.getSheetByName('组合活动规则'), BUNDLE_SHEET_HEADERS_['组合活动规则']);
   var entitlements = bundleSheetRows_(registry.getSheetByName('组合资格'), BUNDLE_SHEET_HEADERS_['组合资格']);
   var attendance = bundleSheetRows_(registry.getSheetByName('组合签到'), BUNDLE_SHEET_HEADERS_['组合签到']);
@@ -269,6 +272,9 @@ function getBundleDashboard_(_payload, _actor) {
             return entitlement.entitlementId === record.entitlementId && entitlement.planId === plan.planId;
           });
         }).length,
+        items: items.filter(function(item) { return item.planId === plan.planId; }).map(function(item) {
+          return { bundleItemId: String(item.bundleItemId), title: String(item.title), fixedTicketCount: Number(item.fixedTicketCount), capacity: Number(item.capacity), checkInMode: String(item.checkInMode), status: String(item.status) };
+        }),
         rules: rules.filter(function(rule) { return rule.planId === plan.planId; }).map(function(rule) {
           var used = entitlements.filter(function(entitlement) {
             return entitlement.planId === plan.planId && entitlement.eventId === rule.eventId &&
@@ -299,6 +305,16 @@ function saveBundleRule_(payload, actor) {
   });
   if (eventMatches.length !== 1) adminError_('NOT_FOUND');
   return saveBundleRuleToSheet_(registry.getSheetByName('\u7ec4\u5408\u6d3b\u52a8\u89c4\u5219'), rule);
+}
+
+function saveBundleItem_(payload, actor) {
+  var registry = bundleRegistrySheet_(getRegistrySpreadsheet_());
+  var item = requireBundleItemPayload_(payload);
+  var planMatches = bundleSheetRows_(
+    registry.getSheetByName('\u7ec4\u5408\u8ba1\u5212'), BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u8ba1\u5212']
+  ).filter(function(plan) { return plan.planId === item.planId; });
+  if (planMatches.length !== 1) adminError_('NOT_FOUND');
+  return saveBundleItemToSheet_(registry.getSheetByName('\u7ec4\u5408\u9879\u76ee'), item);
 }
 
 function runAdminMutationTransaction_(registry, spreadsheet, action, callback) {
@@ -555,6 +571,40 @@ function staffBundleCheckIn_(payload, actor, scannerPass) {
   });
   if (entitlements.length !== 1) adminError_('SESSION_NOT_REGISTERED');
   var entitlement = entitlements[0];
+
+  // Native combination projects deliberately do not have an ordinary event
+  // spreadsheet. Their check-ins stay in the isolated combination sheet.
+  var nativeItemSheet = registry.getSheetByName('组合项目');
+  var nativeItems = nativeItemSheet ? bundleSheetRows_(nativeItemSheet, BUNDLE_SHEET_HEADERS_['组合项目']).filter(function(item) {
+    return item.bundleItemId === eventId && String(item.status || '').toLowerCase() === 'open';
+  }) : [];
+  if (nativeItems.length === 1) {
+    var nativeItem = nativeItems[0];
+    var nativeMode = String(nativeItem.checkInMode || 'none').toLowerCase();
+    if (nativeMode === 'none') adminError_('CHECK_IN_DISABLED');
+    var nativeCheckpoint = nativeMode === 'multiple' ? scannerPassId_(scannerPass && scannerPass.checkpointId) : 'checkpoint-1';
+    if (!nativeCheckpoint) adminError_('CHECKPOINT_REQUIRED');
+    var nativeCount = Number(nativeItem.checkInCount || 1);
+    if (!internalCheckpointIndex_(nativeCheckpoint, nativeCount)) adminError_('CHECKPOINT_INVALID');
+    var alreadyChecked = bundleSheetRows_(attendanceSheet, BUNDLE_SHEET_HEADERS_['组合签到']).some(function(row) {
+      return row.entitlementId === entitlement.entitlementId && row.sessionId === 'bundle' &&
+        row.checkpointId === nativeCheckpoint && String(row.status || '').toLowerCase() === 'checked_in';
+    });
+    if (alreadyChecked) adminError_('ALREADY_CHECKED_IN');
+    var nativeLabels; try { nativeLabels = JSON.parse(String(nativeItem.checkInLabels || '[]')); } catch (_ignored) { nativeLabels = []; }
+    var nativeIndex = internalCheckpointIndex_(nativeCheckpoint, nativeCount);
+    var nativeCheckedAt = new Date().toISOString();
+    attendanceSheet.getRange(attendanceSheet.getLastRow() + 1, 1, 1, BUNDLE_SHEET_HEADERS_['组合签到'].length).setValues([
+      bundleValues_(BUNDLE_SHEET_HEADERS_['组合签到'], {
+        attendanceId: Utilities.getUuid(), entitlementId: entitlement.entitlementId, eventId: eventId,
+        sessionId: 'bundle', checkpointId: nativeCheckpoint, checkedInAt: nativeCheckedAt,
+        checkedInBy: String(actor || '').trim().toLowerCase(), status: 'checked_in'
+      })
+    ]);
+    return { status: 'checked_in', kind: 'bundle', sessionId: 'bundle', checkpointId: nativeCheckpoint,
+      checkpointLabel: String(nativeLabels[nativeIndex - 1] || (nativeMode === 'single' ? '项目签到' : '第 ' + nativeIndex + ' 次签到')),
+      checkedInAt: nativeCheckedAt };
+  }
 
   var eventBook = getEventSpreadsheet_(registry, eventId);
   var event = readRows(eventBook, '活动').filter(function(row) { return row.eventId === eventId; })[0];

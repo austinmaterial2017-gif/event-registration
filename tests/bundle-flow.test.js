@@ -19,3 +19,12 @@ test("bundle selection rejects an over-limit or full activity", () => {
   assert.equal(validateBundleSelection({ rules: availableDegree, selectedEventIds: ["science", "parents", "degree"], totalTicketLimit: 5 }).error, "所选活动合计超过总票数上限。");
   assert.equal(validateBundleSelection({ rules, selectedEventIds: ["degree"], totalTicketLimit: 6 }).error, "所选活动名额已满。" );
 });
+
+test("bundle selection accepts a direct combination project ID", () => {
+  const result = validateBundleSelection({
+    rules: [{ itemId: "bundle-item-1", fixedTicketCount: 2, capacity: 10, used: 0, status: "open" }],
+    selectedEventIds: ["bundle-item-1"], totalTicketLimit: 6
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.totalTickets, 2);
+});

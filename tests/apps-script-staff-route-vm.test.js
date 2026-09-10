@@ -20,6 +20,7 @@ const ADMIN_RPC_NAMES = [
   "saveAdminQuestion",
   "saveAdminSeatPlan",
   "saveAdminSession",
+  "saveBundleItem",
   "saveBundlePlan",
   "saveBundleRule",
   "switchAdminSheet",

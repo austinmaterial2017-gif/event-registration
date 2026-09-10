@@ -50,6 +50,21 @@ test("bundle rule rejects zero fixed tickets and invalid capacity", async () => 
   }), /INVALID_REQUEST/);
 });
 
+test("native bundle item does not accept or require an ordinary event id", async () => {
+  const context = await loadBundleValidation();
+  const item = context.requireBundleItemPayload_({
+    planId: "plan-1", title: "亲子科学工作坊", fixedTicketCount: 2, capacity: 40,
+    startsAt: "2026-09-20T02:00:00.000Z", endsAt: "2026-09-20T04:00:00.000Z",
+    checkInMode: "single", checkInCount: 1, checkInLabels: [], status: "open"
+  });
+  assert.equal(item.title, "亲子科学工作坊");
+  assert.equal(item.eventId, undefined);
+  assert.throws(() => context.requireBundleItemPayload_({
+    planId: "plan-1", title: "", fixedTicketCount: 1, capacity: 0,
+    checkInMode: "single", checkInCount: 1, checkInLabels: [], status: "open"
+  }), /INVALID_REQUEST/);
+});
+
 test("bundle activity availability respects its own opening time and fixed capacity", async () => {
   const source = await readFile(new URL("../apps-script/Code.gs", import.meta.url), "utf8");
   const context = vm.createContext({ Object, Array, String, Number, JSON, Date, Error, isFinite });
@@ -159,6 +174,15 @@ test("administrator backend exposes a read-only combination plan dashboard", asy
   assert.match(source, /'admin\.getBundleDashboard'/);
 });
 
+test("combination administrator editor creates native items instead of selecting an old activity", async () => {
+  const html = await readFile(new URL("../staff-apps-script/Admin.html", import.meta.url), "utf8");
+  const script = await readFile(new URL("../staff-apps-script/AdminScript.html", import.meta.url), "utf8");
+  assert.match(html, /id="bundle-item-form"/);
+  assert.match(html, /name="title" required placeholder="例如：亲子科学工作坊"/);
+  assert.doesNotMatch(html, /bundle-event-selector/);
+  assert.match(script, /saveBundleItem/);
+});
+
 test("combination plan dashboard includes its separate check-in count", async () => {
   const source = await readFile(new URL("../apps-script/InternalMutationService.gs", import.meta.url), "utf8");
   assert.match(source, /getSheetByName\('组合签到'\)/);
@@ -247,4 +271,11 @@ test("scanner keeps an ordinary ticket result without attempting a combination f
   assert.equal(result.data.status, "checked_in");
   assert.equal(result.data.kind, "ordinary");
   assert.equal(bundleCalls, 0);
+});
+
+test("staff scanner source exposes active native bundle projects without ordinary event routing", async () => {
+  const source = await readFile(new URL("../apps-script/StaffScannerService.gs", import.meta.url), "utf8");
+  assert.match(source, /组合项目/);
+  assert.match(source, /targetKind:\s*'bundle'/);
+  assert.match(source, /bundleItemId/);
 });

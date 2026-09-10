@@ -478,7 +478,7 @@
       replaceList("#bundle-plan-list", plans, (plan) => {
         const row = dataRow(plan.title, plan.status, [
           `每人最多 ${plan.totalTicketLimit} 张`,
-          `活动规则 ${Array.isArray(plan.rules) ? plan.rules.length : 0} 项`,
+          `组合项目 ${Array.isArray(plan.items) ? plan.items.length : 0} 项`,
           `已签到 ${plan.attendanceCount || 0} 次`
         ]);
         const use = editButton("使用此计划", () => {
@@ -490,7 +490,7 @@
           form.elements.closesAt.value = localDateInput(plan.closesAt);
           form.elements.status.value = plan.status || "draft";
           form.elements.description.value = plan.description || "";
-          document.querySelector("#bundle-rule-form").elements.planId.value = plan.planId;
+          document.querySelector("#bundle-item-form").elements.planId.value = plan.planId;
           setStatus(`正在编辑组合计划：${plan.title}`);
         });
         use.dataset.useBundlePlan = plan.planId;
@@ -1600,22 +1600,25 @@
         runner.saveBundlePlan(payload);
       }, (plan) => {
         form.elements.planId.value = plan.planId;
-        document.querySelector("#bundle-rule-form").elements.planId.value = plan.planId;
+        document.querySelector("#bundle-item-form").elements.planId.value = plan.planId;
         loadBundleDashboard_();
       });
     });
 
-    const bundleRuleForm_ = document.querySelector("#bundle-rule-form");
-    if (bundleRuleForm_) bundleRuleForm_.addEventListener("submit", (event) => {
+    const bundleItemForm_ = document.querySelector("#bundle-item-form");
+    if (bundleItemForm_) bundleItemForm_.addEventListener("submit", (event) => {
       event.preventDefault();
       const values = formObject(event.currentTarget);
       const payload = {
-        planId: String(values.planId || "").trim(), eventId: String(values.eventId || "").trim(),
+        planId: String(values.planId || "").trim(), title: String(values.title || "").trim(),
         fixedTicketCount: Number(values.fixedTicketCount), capacity: Number(values.capacity),
-        opensAt: bundleDateValue_(values.opensAt), closesAt: bundleDateValue_(values.closesAt), status: values.status
+        startsAt: bundleDateValue_(values.startsAt), endsAt: bundleDateValue_(values.endsAt),
+        checkInMode: values.checkInMode, checkInCount: Number(values.checkInCount),
+        checkInLabels: String(values.checkInLabels || "").split(/\r?\n/).map((value) => value.trim()).filter(Boolean),
+        status: values.status
       };
-      runButtonAction_(document.querySelector("#save-bundle-rule"), "正在保存活动规则…", "活动规则已保存。", (runner) => {
-        runner.saveBundleRule(payload);
+      runButtonAction_(document.querySelector("#save-bundle-item"), "正在保存组合项目…", "组合项目已保存。", (runner) => {
+        runner.saveBundleItem(payload);
       }, loadBundleDashboard_);
     });
 

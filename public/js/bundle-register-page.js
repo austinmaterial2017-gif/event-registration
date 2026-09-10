@@ -41,17 +41,17 @@ async function load() {
   const result = await getBundlePlan(planId);
   if (!result.ok) { showError(result.message); return; }
   plan = result.data.plan;
-  rules = result.data.rules || [];
+  rules = result.data.items?.length ? result.data.items : (result.data.rules || []);
   document.querySelector("#bundle-title").textContent = plan.title;
   document.querySelector("#bundle-description").textContent = plan.description;
   events.replaceChildren(...rules.map((rule) => {
     const label = document.createElement("label");
     const input = document.createElement("input");
     input.type = "checkbox";
-    input.value = rule.eventId;
+    input.value = rule.itemId || rule.eventId;
     input.disabled = rule.available === false;
     input.addEventListener("change", renderTotal);
-    label.append(input, document.createTextNode(`${rule.title || rule.eventId} · ${ruleStatusText(rule)}`));
+    label.append(input, document.createTextNode(`${rule.title || rule.itemId || rule.eventId} · ${ruleStatusText(rule)}`));
     if (input.disabled) label.classList.add("is-unavailable");
     return label;
   }));
@@ -67,7 +67,7 @@ form.addEventListener("submit", async (event) => {
   let result;
   try {
     result = await createBundleRegistration({
-      planId, eventIds: selection.selectedEventIds,
+      planId, itemIds: selection.selectedEventIds,
       answers: { name: form.elements.name.value, phone: form.elements.phone.value },
       uploads: await serializePhotoFiles({ photo: photoFiles })
     });

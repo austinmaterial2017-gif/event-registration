@@ -362,6 +362,7 @@ function ensureHeaders_(sheet, headers) {
  */
 var BUNDLE_SHEET_HEADERS_ = {
   '\u7ec4\u5408\u8ba1\u5212': ['planId', 'title', 'description', 'opensAt', 'closesAt', 'totalTicketLimit', 'status', 'createdAt', 'updatedAt'],
+  '\u7ec4\u5408\u9879\u76ee': ['bundleItemId', 'planId', 'title', 'startsAt', 'endsAt', 'fixedTicketCount', 'capacity', 'checkInMode', 'checkInCount', 'checkInLabels', 'status', 'createdAt', 'updatedAt'],
   '\u7ec4\u5408\u6d3b\u52a8\u89c4\u5219': ['ruleId', 'planId', 'eventId', 'fixedTicketCount', 'capacity', 'opensAt', 'closesAt', 'status'],
   '\u7ec4\u5408\u62a5\u540d': ['bundleRegistrationId', 'planId', 'participantId', 'ticketNumber', 'tokenDigest', 'answers', 'status', 'createdAt'],
   '\u7ec4\u5408\u8d44\u683c': ['entitlementId', 'planId', 'bundleRegistrationId', 'eventId', 'fixedTicketCount', 'status', 'createdAt', 'updatedAt'],
@@ -438,6 +439,30 @@ function requireBundleRulePayload_(payload) {
   };
 }
 
+/** Validates one project created directly inside a combination plan. */
+function requireBundleItemPayload_(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) bundlePayloadError_();
+  var planId = bundleText_(payload.planId);
+  var title = bundleText_(payload.title);
+  var startsAt = bundleIsoTime_(payload.startsAt);
+  var endsAt = bundleIsoTime_(payload.endsAt);
+  var checkInMode = bundleText_(payload.checkInMode || 'none').toLowerCase();
+  var checkInCount = checkInMode === 'none' ? 0 : bundlePositiveInteger_(payload.checkInCount || 1);
+  var labels = Array.isArray(payload.checkInLabels) ? payload.checkInLabels.map(bundleText_).filter(Boolean) : [];
+  if (!planId || !title || Date.parse(endsAt) <= Date.parse(startsAt) ||
+      ['none', 'single', 'multiple'].indexOf(checkInMode) === -1 ||
+      (checkInMode === 'single' && checkInCount !== 1) ||
+      (checkInMode === 'multiple' && labels.length && labels.length !== checkInCount)) bundlePayloadError_();
+  return {
+    bundleItemId: bundleText_(payload.bundleItemId), planId: planId, title: title,
+    startsAt: startsAt, endsAt: endsAt,
+    fixedTicketCount: bundlePositiveInteger_(payload.fixedTicketCount),
+    capacity: bundleCapacity_(payload.capacity), checkInMode: checkInMode,
+    checkInCount: checkInCount, checkInLabels: labels,
+    status: bundleText_(payload.status || 'open').toLowerCase()
+  };
+}
+
 function bundleRowObject_(headers, values, rowNumber) {
   var row = { rowNumber: rowNumber };
   headers.forEach(function(header, index) { row[header] = values[index] === undefined ? '' : values[index]; });
@@ -486,6 +511,26 @@ function saveBundleRuleToSheet_(sheet, rule) {
     ruleId: rule.ruleId || (existing.length ? existing[0].ruleId : 'BNR-' + Utilities.getUuid()),
     planId: rule.planId, eventId: rule.eventId, fixedTicketCount: rule.fixedTicketCount,
     capacity: rule.capacity, opensAt: rule.opensAt || '', closesAt: rule.closesAt || '', status: status
+  };
+  var targetRow = existing.length ? existing[0].rowNumber : sheet.getLastRow() + 1;
+  sheet.getRange(targetRow, 1, 1, headers.length).setValues([bundleValues_(headers, row)]);
+  return row;
+}
+
+function saveBundleItemToSheet_(sheet, item, now) {
+  var headers = BUNDLE_SHEET_HEADERS_['\u7ec4\u5408\u9879\u76ee'];
+  var existing = bundleSheetRows_(sheet, headers).filter(function(row) {
+    return row.bundleItemId === item.bundleItemId && item.bundleItemId;
+  });
+  if (existing.length > 1 || ['open', 'inactive'].indexOf(item.status) === -1) bundlePayloadError_();
+  var timestamp = bundleIsoTime_(now || new Date().toISOString());
+  var row = {
+    bundleItemId: item.bundleItemId || 'BNI-' + Utilities.getUuid(), planId: item.planId,
+    title: item.title, startsAt: item.startsAt, endsAt: item.endsAt,
+    fixedTicketCount: item.fixedTicketCount, capacity: item.capacity,
+    checkInMode: item.checkInMode, checkInCount: item.checkInCount,
+    checkInLabels: JSON.stringify(item.checkInLabels), status: item.status,
+    createdAt: existing.length ? existing[0].createdAt : timestamp, updatedAt: timestamp
   };
   var targetRow = existing.length ? existing[0].rowNumber : sheet.getLastRow() + 1;
   sheet.getRange(targetRow, 1, 1, headers.length).setValues([bundleValues_(headers, row)]);

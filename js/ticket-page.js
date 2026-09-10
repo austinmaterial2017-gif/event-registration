@@ -1,7 +1,7 @@
 import {
   cancelRegistration, exchangeSeat, listBundleRecoveryPlans, listEvents, lookupTicket, recoverBundleTicket, recoverTicket,
   updateRegistrationSessions
-} from "./api.js?v=20260806-recovery";
+} from "./api.js?v=20260910-recovery-choices";
 import { renderQrSvg } from "./qr.js";
 import { consumeStoredTicketResult } from "./registration-success.js";
 import { PUBLIC_BASE_URL } from "./config.js";
@@ -326,7 +326,7 @@ async function initialiseTicketPage() {
     showTicket(storedTicket);
   }
   const eventSelect = recoveryForm.elements.eventId;
-  const eventsResult = await listEvents();
+  const [eventsResult, bundlePlansResult] = await Promise.all([listEvents(), listBundleRecoveryPlans()]);
   eventSelect.replaceChildren(new Option("请选择活动", ""));
   if (eventsResult.ok) {
     for (const event of eventsResult.data.events || []) {
@@ -335,7 +335,6 @@ async function initialiseTicketPage() {
   } else {
     eventSelect.replaceChildren(new Option("活动读取失败，请刷新重试", ""));
   }
-  const bundlePlansResult = await listBundleRecoveryPlans();
   if (bundlePlansResult.ok && Array.isArray(bundlePlansResult.data?.plans) && bundlePlansResult.data.plans.length) {
     const group = document.createElement("optgroup");
     group.label = "组合活动";

@@ -25,7 +25,7 @@ test("public pages use the 现代X好未来 brand and approved palette", async (
     assert.match(page, /href="css\/app\.css\?v=20260728-timer"/);
   });
   assert.match(pages[1], /href="css\/app\.css\?v=20260824-photo"/);
-  assert.match(pages[0], /src="js\/index-page\.js\?v=20260910-bundle-fast"/);
+  assert.match(pages[0], /src="js\/index-page\.js\?v=20260910-bundle-priority"/);
   assert.match(pages[0], />请选择你参加的活动</);
   assert.doesNotMatch(pages[0], /SUMMER PROGRAMME|为好奇心|把想见的人/);
 

@@ -123,6 +123,54 @@
       return button;
     }
 
+    function bundleQuestionChoices_(question) {
+      try {
+        const options = typeof question.options === "string" ? JSON.parse(question.options) : (question.options || {});
+        return Array.isArray(options.choices) ? options.choices.filter((choice) => typeof choice === "string") : [];
+      } catch (_ignored) { return []; }
+    }
+
+    function bundlePreviewControl_(question) {
+      const wrap = element("label");
+      const title = `${question.label || "未命名问题"}${question.required ? " *" : ""}`;
+      wrap.append(element("span", title));
+      const type = String(question.type || "text").toLowerCase();
+      const choices = bundleQuestionChoices_(question);
+      if (type === "textarea") {
+        const input = document.createElement("textarea"); input.placeholder = "参加者会在这里填写"; wrap.append(input); return wrap;
+      }
+      if (type === "photo") {
+        const input = document.createElement("input"); input.type = "file"; input.accept = "image/jpeg,image/png,image/heic,image/heif"; wrap.append(input); return wrap;
+      }
+      if (type === "radio" || type === "checkbox") {
+        const choicesWrap = element("div", undefined, "checks");
+        choices.forEach((choice) => { const label = element("label", undefined, "check"); const input = document.createElement("input"); input.type = type; input.name = String(question.questionId || question.label); input.value = choice; label.append(input, document.createTextNode(choice)); choicesWrap.append(label); });
+        wrap.append(choicesWrap); return wrap;
+      }
+      if (type === "select") {
+        const input = document.createElement("select"); input.append(new Option("请选择", "")); choices.forEach((choice) => input.append(new Option(choice, choice))); wrap.append(input); return wrap;
+      }
+      const input = document.createElement("input");
+      input.type = ["number", "tel", "email", "date"].includes(type) ? type : "text";
+      input.placeholder = "参加者会在这里填写";
+      wrap.append(input); return wrap;
+    }
+
+    function openBundlePreview_(plan) {
+      const dialog = document.querySelector("#bundle-registration-preview");
+      if (!dialog || !plan) return;
+      document.querySelector("#bundle-preview-title").textContent = `${plan.title || "组合报名"} · 报名预览`;
+      document.querySelector("#bundle-preview-description").textContent = plan.description || "参加者选择项目后填写以下资料。";
+      const fields = [
+        { questionId: "name", label: "姓名", type: "text", required: true },
+        { questionId: "phone", label: "电话号码", type: "tel", required: true },
+        { questionId: "photo", label: "付款证明／相关照片（如需要）", type: "photo", required: false }
+      ].concat((plan.questions || []).filter((question) => String(question.status || "active") === "active"));
+      document.querySelector("#bundle-preview-fields").replaceChildren(...fields.sort((left, right) => Number(left.sortOrder || 0) - Number(right.sortOrder || 0)).map(bundlePreviewControl_));
+      if (typeof dialog.showModal === "function") dialog.showModal();
+      else dialog.open = true;
+    }
+
     function safeSheetUrl(value) {
       try {
         const url = new URL(String(value || ""));
@@ -475,6 +523,7 @@
     function renderBundleDashboard_(data) {
       if (!document.querySelector("#bundle-plan-list")) return;
       const plans = Array.isArray(data && data.plans) ? data.plans : [];
+      state.bundlePlans = plans;
       replaceList("#bundle-plan-list", plans, (plan) => {
         const row = dataRow(plan.title, plan.status, [
           `每人最多 ${plan.totalTicketLimit} 张`,
@@ -525,6 +574,7 @@
         });
         copy.dataset.copyBundleRegistration = plan.planId;
         row.append(copy);
+        row.append(editButton("预览报名表", () => openBundlePreview_(plan)));
         (plan.questions || []).forEach((question) => {
           const questionRow = dataRow(`资料：${question.label}`, question.status || "active", [question.type, question.required ? "必填" : "选填"]);
           const editQuestion = editButton("编辑问题", () => {
@@ -578,7 +628,12 @@
             }, loadBundleDashboard_);
           });
           itemRow.append(deleteItem);
-          row.append(itemRow);
+          const fold = document.createElement("details");
+          fold.className = "bundle-item-fold";
+          fold.open = false;
+          const summary = element("summary", `${item.title} · 每人 ${item.fixedTicketCount} 张 · ${item.checkInMode === "none" ? "无需签到" : item.checkInMode === "multiple" ? "多次签到" : "签到一次"}`);
+          fold.append(summary, itemRow);
+          row.append(fold);
         });
         return row;
       });
@@ -1676,6 +1731,21 @@
         document.querySelector("#bundle-item-form").elements.planId.value = plan.planId;
         loadBundleDashboard_();
       });
+    });
+    const previewBundleRegistration_ = document.querySelector("#preview-bundle-registration");
+    if (previewBundleRegistration_) previewBundleRegistration_.addEventListener("click", () => {
+      const planId = String(document.querySelector("#bundle-plan-form").elements.planId.value || "").trim();
+      const plan = (state.bundlePlans || []).find((candidate) => candidate.planId === planId);
+      if (!plan) {
+        setStatus("请先保存组合计划，再按「编辑计划」选择它进行预览。", "error");
+        return;
+      }
+      openBundlePreview_(plan);
+    });
+    const closeBundlePreview_ = document.querySelector("#close-bundle-preview");
+    if (closeBundlePreview_) closeBundlePreview_.addEventListener("click", () => {
+      const dialog = document.querySelector("#bundle-registration-preview");
+      if (dialog && typeof dialog.close === "function") dialog.close(); else if (dialog) dialog.open = false;
     });
 
     const bundleItemForm_ = document.querySelector("#bundle-item-form");

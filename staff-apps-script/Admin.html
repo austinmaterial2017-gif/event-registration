@@ -88,6 +88,14 @@
       .data-row { display: grid; gap: 6px; padding: 13px 14px; border: 1px solid rgba(89, 68, 99, .8); border-radius: 12px; background: rgba(16, 13, 19, .48); }
       .data-row strong { color: var(--ivory); }
       .data-row small, .empty { color: var(--muted); }
+      .bundle-item-fold { border: 1px solid rgba(89, 68, 99, .7); border-radius: 12px; background: rgba(16, 13, 19, .26); }
+      .bundle-item-fold > summary { padding: 11px 13px; cursor: pointer; color: var(--ivory); font-weight: 800; }
+      .bundle-item-fold > .data-row { margin: 0 10px 10px; }
+      dialog.bundle-preview { width: min(720px, calc(100vw - 30px)); max-height: min(820px, calc(100vh - 30px)); padding: 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); color: var(--ivory); box-shadow: 0 28px 100px rgba(0,0,0,.7); }
+      dialog.bundle-preview::backdrop { background: rgba(0,0,0,.68); }
+      .bundle-preview-content { display: grid; gap: 15px; padding: 24px; overflow: auto; }
+      .bundle-preview-content h3, .bundle-preview-content p { margin: 0; }
+      .bundle-preview-fields { display: grid; gap: 14px; }
       .pill { display: inline-flex; width: fit-content; padding: 3px 8px; border: 1px solid var(--line); border-radius: 999px; color: var(--green); font: 700 10px/1.3 "Consolas", monospace; text-transform: uppercase; }
       .warning { margin: 0; padding: 13px 15px; border-left: 3px solid var(--magenta); background: rgba(255, 79, 163, .07); color: var(--ivory); }
       .question-media { display: grid; gap: 10px; padding: 13px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-deep); }
@@ -291,7 +299,7 @@
                   <label><input name="showOnHome" type="checkbox"> 显示在报名首页</label>
                   <label class="wide">说明<textarea name="description" placeholder="参加者会看到的说明"></textarea></label>
                 </div>
-                <button id="save-bundle-plan" type="submit">保存组合计划</button>
+                <div class="actions"><button id="save-bundle-plan" type="submit">保存组合计划</button><button id="preview-bundle-registration" class="secondary" type="button">预览报名表</button></div>
               </form>
               <form id="bundle-item-form">
                 <input name="bundleItemId" type="hidden">
@@ -313,6 +321,7 @@
             <div class="panel-body"><h3>已有组合计划</h3><div id="bundle-plan-list" class="data-list" aria-live="polite"></div></div>
             <div class="panel-body"><h3>组合报名资料问题</h3><p class="hint">先按「编辑计划」选择计划，再新增资料问题。姓名、电话和付款图片会自动保留；这里添加的是额外资料。</p><form id="bundle-question-form"><input name="questionId" type="hidden"><div class="fields"><label>计划 ID<input name="planId" required readonly></label><label>问题文字<input name="label" required placeholder="例如：学生姓名"></label><label>类型<select name="type"><option value="text">简短回答</option><option value="textarea">段落</option><option value="number">数字</option><option value="tel">电话号码</option><option value="email">电邮</option><option value="date">日期</option><option value="radio">单选题</option><option value="checkbox">多选题</option><option value="select">下拉列表</option><option value="photo">上传图片</option></select></label><label>排序<input name="sortOrder" type="number" min="4" value="10"></label><label class="full-width">选项（单选、多选、下拉才需要；每行一个）<textarea name="options" rows="4" placeholder="选项一&#10;选项二"></textarea></label><label><input name="required" type="checkbox"> 必填</label></div><button type="submit">保存组合问题</button><button type="button" id="reset-bundle-question">新增另一题</button></form><div id="bundle-question-list" class="data-list"></div></div>
           </section>
+          <dialog id="bundle-registration-preview" class="bundle-preview" aria-labelledby="bundle-preview-title"><div class="bundle-preview-content"><div class="actions"><div><p class="eyebrow">Participant preview</p><h3 id="bundle-preview-title">报名表预览</h3><p id="bundle-preview-description"></p></div><button id="close-bundle-preview" class="secondary" type="button">关闭预览</button></div><div id="bundle-preview-fields" class="bundle-preview-fields"></div><button type="button" disabled>这是预览，不能提交</button></div></dialog>
 
           <section id="selected-activity" class="activity-context" aria-live="polite" hidden>
             <div><p class="eyebrow">Current activity</p><h2 id="selected-activity-title"></h2><p id="selected-activity-meta"></p></div>

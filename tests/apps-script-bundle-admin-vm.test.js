@@ -331,6 +331,16 @@ test("combination plans can collect configurable personal information and be sho
   assert.match(publicIndex, /listBundlePlans/);
 });
 
+test("combination administrator offers a collapsible project list and a participant-form preview", async () => {
+  const adminHtml = await readFile(new URL("../staff-apps-script/Admin.html", import.meta.url), "utf8");
+  const adminScript = await readFile(new URL("../staff-apps-script/AdminScript.html", import.meta.url), "utf8");
+  assert.match(adminHtml, /id="preview-bundle-registration"/);
+  assert.match(adminHtml, /id="bundle-registration-preview"/);
+  assert.match(adminScript, /预览报名表/);
+  assert.match(adminScript, /details/);
+  assert.match(adminScript, /fold\.open\s*=\s*false/);
+});
+
 test("staff scanner source exposes active native bundle projects without ordinary event routing", async () => {
   const source = await readFile(new URL("../apps-script/StaffScannerService.gs", import.meta.url), "utf8");
   assert.match(source, /组合项目/);

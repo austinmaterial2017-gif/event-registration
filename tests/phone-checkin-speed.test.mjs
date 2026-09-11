@@ -25,7 +25,9 @@ test("scanner reports staged progress while the server is still working", () => 
 test("camera is tuned for phone QR recognition and keeps scanning after success", () => {
   assert.match(source, /width:\s*\{\s*ideal:\s*1280/);
   assert.match(source, /height:\s*\{\s*ideal:\s*720/);
-  assert.match(source, /delayBetweenScanAttempts:\s*80/);
+  assert.match(source, /delayBetweenScanAttempts:\s*55/);
+  assert.match(source, /TRY_HARDER/);
+  assert.match(source, /正在识别二维码/);
   assert.match(source, /请继续扫下一位/);
 });
 

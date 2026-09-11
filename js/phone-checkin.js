@@ -19,6 +19,7 @@ let busy = false;
 let lastTicket = "";
 let lastTicketAt = 0;
 let progressTimer = 0;
+let cameraHintTimer = 0;
 let audioContext = null;
 
 function setStatus(text, isError = false) {
@@ -162,6 +163,7 @@ async function recordScan(rawValue) {
   const now = Date.now();
   if (ticket === lastTicket && now - lastTicketAt < 1500) return;
   busy = true;
+  window.clearTimeout(cameraHintTimer);
   let scanSucceeded = false;
   lastTicket = ticket;
   lastTicketAt = now;
@@ -201,8 +203,14 @@ async function startCamera() {
   try {
     controls?.stop?.();
     reader?.reset?.();
-    reader = new window.ZXingBrowser.BrowserQRCodeReader(undefined, {
-      delayBetweenScanAttempts: 80,
+    const hints = new Map();
+    const { DecodeHintType, BarcodeFormat } = window.ZXingBrowser;
+    if (DecodeHintType?.TRY_HARDER) hints.set(DecodeHintType.TRY_HARDER, true);
+    if (DecodeHintType?.POSSIBLE_FORMATS && BarcodeFormat?.QR_CODE) {
+      hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.QR_CODE]);
+    }
+    reader = new window.ZXingBrowser.BrowserQRCodeReader(hints, {
+      delayBetweenScanAttempts: 55,
       delayBetweenScanSuccess: 250
     });
     controls = await reader.decodeFromConstraints(
@@ -221,6 +229,9 @@ async function startCamera() {
       }
     );
     setStatus("相机已开启，请连续扫描参与者电子票 QR 码。");
+    cameraHintTimer = window.setTimeout(() => {
+      if (!busy) setStatus("正在识别二维码…请把电子票放大，让 QR 码占画面约一半，并保持清楚、不要反光。");
+    }, 1600);
   } catch {
     startButton.disabled = false;
     setStatus("无法打开相机。请在 Safari／Chrome 的网站权限允许相机，再按一次开始连续扫码。", true);
@@ -232,4 +243,4 @@ eventSelect.addEventListener("change", fillSessions);
 sessionSelect.addEventListener("change", fillCheckpoints);
 checkpointSelect.addEventListener("change", () => { startButton.disabled = !checkpointSelect.value; });
 startButton.addEventListener("click", startCamera);
-window.addEventListener("pagehide", () => controls?.stop?.());
+window.addEventListener("pagehide", () => { window.clearTimeout(cameraHintTimer); controls?.stop?.(); });

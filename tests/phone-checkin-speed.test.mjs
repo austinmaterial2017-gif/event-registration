@@ -28,6 +28,14 @@ test("a decoded ticket gets a clear timeout response within five seconds", () =>
   assert.match(source, /签到系统超过 5 秒没有回应/);
 });
 
+test("the phone blocks an early or finished session before it sends a check-in request", () => {
+  assert.match(source, /function selectedTimeMessage\(\)/);
+  assert.match(source, /还未到这个项目的签到时间。/);
+  assert.match(source, /这个项目的签到时间已结束。/);
+  assert.match(source, /const timeMessage = selectedTimeMessage\(\);/);
+  assert.match(source, /if \(timeMessage\) \{[\s\S]*showResult\(timeMessage, false\)/);
+});
+
 test("camera uses the proven direct camera decoder and keeps scanning after success", () => {
   assert.match(source, /new window\.ZXingBrowser\.BrowserQRCodeReader\(\)/);
   assert.match(source, /decodeFromConstraints\(\s*\{ video: \{ facingMode: \{ ideal: "environment" \} \}, audio: false \}/);

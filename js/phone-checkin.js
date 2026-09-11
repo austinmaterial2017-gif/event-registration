@@ -51,6 +51,21 @@ function options(select, list, placeholder) {
 function currentEvent() { return targets.find((item) => item.eventId === eventSelect.value); }
 function currentSession() { return currentEvent()?.sessions.find((item) => item.sessionId === sessionSelect.value); }
 
+function selectedTimeMessage() {
+  const session = currentSession();
+  if (!session) return "";
+  const now = Date.now();
+  const startsAt = Date.parse(String(session.startsAt || ""));
+  const endsAt = Date.parse(String(session.endsAt || ""));
+  if (Number.isFinite(startsAt) && now < startsAt) {
+    return "还未到这个项目的签到时间。";
+  }
+  if (Number.isFinite(endsAt) && now > endsAt) {
+    return "这个项目的签到时间已结束。";
+  }
+  return "";
+}
+
 function fillEvents() {
   options(eventSelect, targets.map((item) => ({ value: item.eventId, label: item.title })), "请选择活动");
   eventSelect.disabled = false;
@@ -84,9 +99,9 @@ function showResult(message, ok) {
   window.clearTimeout(progressTimer);
   resultText.textContent = message;
   result.className = `visible ${ok ? "success" : "error"}`;
-  // A successful scan needs to stay visible long enough for the worker to
-  // confirm it before the camera accepts the next ticket.
-  window.setTimeout(() => { result.className = ""; }, ok ? 2200 : 1400);
+  // Keep every result visible long enough for the worker to read it before
+  // the continuous scanner accepts the next ticket.
+  window.setTimeout(() => { result.className = ""; }, ok ? 3200 : 3400);
 }
 
 function playTone(frequency = 880, duration = 70) {
@@ -165,6 +180,13 @@ async function recordScan(rawValue) {
   let scanSucceeded = false;
   lastTicket = ticket;
   lastTicketAt = now;
+  const timeMessage = selectedTimeMessage();
+  if (timeMessage) {
+    showResult(timeMessage, false);
+    setStatus(timeMessage, true);
+    window.setTimeout(() => { busy = false; }, 3400);
+    return;
+  }
   showScanningFeedback();
   startProgressFeedback();
   try {
@@ -191,7 +213,7 @@ async function recordScan(rawValue) {
     showResult(message, false);
     setStatus(message, true);
   } finally {
-    window.setTimeout(() => { busy = false; }, scanSucceeded ? 2250 : 1050);
+    window.setTimeout(() => { busy = false; }, scanSucceeded ? 3200 : 3400);
   }
 }
 

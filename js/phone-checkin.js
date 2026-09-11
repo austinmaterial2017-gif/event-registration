@@ -6,6 +6,7 @@ const eventSelect = document.querySelector("#event");
 const sessionSelect = document.querySelector("#session");
 const checkpointSelect = document.querySelector("#checkpoint");
 const startButton = document.querySelector("#start");
+const qrImageInput = document.querySelector("#qr-image");
 const video = document.querySelector("#camera");
 const status = document.querySelector("#status");
 const result = document.querySelector("#result");
@@ -157,6 +158,42 @@ async function unlock() {
   }
 }
 
+async function readQrImage() {
+  const file = qrImageInput.files?.[0];
+  if (!file) return;
+  if (!staffSession || !eventSelect.value || !sessionSelect.value || !checkpointSelect.value) {
+    setStatus("请先选择活动、讲座／老师和签到次数。", true);
+    qrImageInput.value = "";
+    return;
+  }
+  if (!window.ZXingBrowser?.BrowserQRCodeReader) {
+    setStatus("扫码组件未载入，请检查网络后刷新页面。", true);
+    qrImageInput.value = "";
+    return;
+  }
+  setStatus("正在读取电子票 QR 图片…");
+  const imageUrl = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    await new Promise((resolve, reject) => {
+      image.onload = resolve;
+      image.onerror = reject;
+      image.src = imageUrl;
+    });
+    const imageReader = new window.ZXingBrowser.BrowserQRCodeReader();
+    const scan = await imageReader.decodeFromImageElement(image);
+    const text = scan && (typeof scan.getText === "function" ? scan.getText() : scan.text);
+    if (!text) throw new Error("empty");
+    void recordScan(text);
+  } catch {
+    showResult("这张图片没有读到 QR 码，请选清楚的电子票截图。", false);
+    setStatus("图片未读到 QR 码，请选清楚的电子票截图。", true);
+  } finally {
+    URL.revokeObjectURL(imageUrl);
+    qrImageInput.value = "";
+  }
+}
+
 async function recordScan(rawValue) {
   const ticket = ticketValue(rawValue);
   if (!ticket || busy) return;
@@ -243,4 +280,5 @@ eventSelect.addEventListener("change", fillSessions);
 sessionSelect.addEventListener("change", fillCheckpoints);
 checkpointSelect.addEventListener("change", () => { startButton.disabled = !checkpointSelect.value; });
 startButton.addEventListener("click", startCamera);
+qrImageInput.addEventListener("change", () => { void readQrImage(); });
 window.addEventListener("pagehide", () => { window.clearTimeout(cameraHintTimer); controls?.stop?.(); });

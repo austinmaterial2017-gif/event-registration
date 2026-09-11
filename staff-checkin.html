@@ -22,6 +22,9 @@
       <label>&#x7B7E;&#x5230;&#x6B21;&#x6570;<select id="checkpoint" disabled><option>&#x8BF7;&#x5148;&#x9009;&#x8BB2;&#x5EA7;</option></select></label>
       <button id="start" type="button" disabled>&#x5F00;&#x59CB;&#x8FDE;&#x7EED;&#x626B;&#x7801;</button>
       <p id="status" role="status">&#x8BF7;&#x8F93;&#x5165;&#x5DE5;&#x4F5C;&#x4EBA;&#x5458;&#x5BC6;&#x7801;&#x3002;</p>
+      <label class="image-scan">相机一时扫不到？选择电子票 QR 图片
+        <input id="qr-image" type="file" accept="image/*" capture="environment">
+      </label>
     </section>
     <section id="camera-wrap" aria-label="QR scanner">
       <video id="camera" playsinline muted></video>
@@ -29,6 +32,6 @@
     </section>
   </main>
   <script src="https://unpkg.com/@zxing/browser@0.1.5/umd/zxing-browser.min.js"></script>
-  <script type="module" src="js/phone-checkin.js?v=20260911-qr-focus"></script>
+  <script type="module" src="js/phone-checkin.js?v=20260911-qr-image"></script>
 </body>
 </html>

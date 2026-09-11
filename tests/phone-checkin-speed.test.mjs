@@ -36,3 +36,9 @@ test("scanner overlay exposes a processing state without changing success stylin
   assert.match(page, /#result\.success strong/);
   assert.match(page, /aria-live="assertive"/);
 });
+
+test("scanner provides an image fallback when live camera recognition is difficult", () => {
+  assert.match(page, /id="qr-image"/);
+  assert.match(source, /decodeFromImageElement/);
+  assert.match(source, /正在读取电子票 QR 图片/);
+});

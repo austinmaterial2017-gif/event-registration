@@ -30,7 +30,10 @@ function jsonp(params) {
   return new Promise((resolve, reject) => {
     const callback = `phoneCheckInCallback_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const script = document.createElement("script");
-    const timer = window.setTimeout(fail, 15000);
+    // Apps Script can take longer than 15 seconds on its first request after
+    // an idle period.  Do not turn a still-running request into a fake
+    // "network" failure before it has a chance to populate the target cache.
+    const timer = window.setTimeout(fail, 60_000);
     const query = new URLSearchParams({ ...params, callback });
     function clean() { window.clearTimeout(timer); delete window[callback]; script.remove(); }
     function fail() { clean(); reject(new Error("network")); }
@@ -128,7 +131,10 @@ async function unlock() {
   const code = codeInput.value.trim();
   if (!code) { setStatus("请输入工作人员密码。", true); return; }
   unlockButton.disabled = true;
-  setStatus("正在读取签到活动…");
+  setStatus("正在连接签到系统…");
+  const wakeTimer = window.setTimeout(() => {
+    setStatus("系统正在启动，正在读取活动资料，请不要重复按。");
+  }, 3000);
   try {
     const started = await jsonp({ action: "start", code });
     if (!started?.ok) throw new Error(started?.message || "denied");
@@ -143,7 +149,10 @@ async function unlock() {
     staffSession = "";
     sessionStorage.removeItem("phone-checkin-session");
     setStatus(error.message || "无法读取签到活动，请检查密码或网络。", true);
-  } finally { unlockButton.disabled = false; }
+  } finally {
+    window.clearTimeout(wakeTimer);
+    unlockButton.disabled = false;
+  }
 }
 
 async function recordScan(rawValue) {

@@ -84,7 +84,9 @@ function showResult(message, ok) {
   window.clearTimeout(progressTimer);
   resultText.textContent = message;
   result.className = `visible ${ok ? "success" : "error"}`;
-  window.setTimeout(() => { result.className = ""; }, ok ? 900 : 1400);
+  // A successful scan needs to stay visible long enough for the worker to
+  // confirm it before the camera accepts the next ticket.
+  window.setTimeout(() => { result.className = ""; }, ok ? 2200 : 1400);
 }
 
 function playTone(frequency = 880, duration = 70) {
@@ -160,6 +162,7 @@ async function recordScan(rawValue) {
   const now = Date.now();
   if (ticket === lastTicket && now - lastTicketAt < 1500) return;
   busy = true;
+  let scanSucceeded = false;
   lastTicket = ticket;
   lastTicketAt = now;
   showScanningFeedback();
@@ -171,9 +174,10 @@ async function recordScan(rawValue) {
       checkpointId: checkpointSelect.value === "auto" ? "" : checkpointSelect.value
     });
     const message = response?.ok
-      ? `${response.data.name || "参与者"}：${response.data.checkpointLabel || "签到成功"}`
+      ? `${response.data.name || "参与者"}：${response.data.checkpointLabel || "签到成功"}（签到成功）`
       : (response?.message || "本票无法签到。");
     showResult(message, Boolean(response?.ok));
+    scanSucceeded = Boolean(response?.ok);
     if (response?.ok) {
       navigator.vibrate?.([55, 35, 55]);
       playTone(1180, 95);
@@ -183,7 +187,7 @@ async function recordScan(rawValue) {
     showResult("网络未完成，请再试一次。", false);
     setStatus("网络未完成，请继续扫描或检查网络。", true);
   } finally {
-    window.setTimeout(() => { busy = false; }, 1050);
+    window.setTimeout(() => { busy = false; }, scanSucceeded ? 2250 : 1050);
   }
 }
 

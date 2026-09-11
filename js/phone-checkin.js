@@ -27,21 +27,20 @@ function setStatus(text, isError = false) {
 }
 
 function jsonp(params) {
-  return new Promise((resolve, reject) => {
-    const callback = `phoneCheckInCallback_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    const script = document.createElement("script");
-    // Apps Script can take longer than 15 seconds on its first request after
-    // an idle period.  Do not turn a still-running request into a fake
-    // "network" failure before it has a chance to populate the target cache.
-    const timer = window.setTimeout(fail, 60_000);
-    const query = new URLSearchParams({ ...params, callback });
-    function clean() { window.clearTimeout(timer); delete window[callback]; script.remove(); }
-    function fail() { clean(); reject(new Error("network")); }
-    window[callback] = (payload) => { clean(); resolve(payload); };
-    script.onerror = fail;
-    script.src = `${PHONE_CHECKIN_WEB_APP_URL}?${query.toString()}`;
-    document.head.append(script);
-  });
+  // The phone service exposes CORS headers. Fetch is more reliable than a
+  // dynamically injected JSONP script on mobile browsers and still keeps the
+  // request read-only.
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 60_000);
+  const query = new URLSearchParams(params);
+  return fetch(`${PHONE_CHECKIN_WEB_APP_URL}?${query.toString()}`, {
+    method: "GET",
+    cache: "no-store",
+    signal: controller.signal
+  }).then(async (response) => {
+    if (!response.ok) throw new Error("network");
+    return response.json();
+  }).finally(() => window.clearTimeout(timer));
 }
 
 function options(select, list, placeholder) {

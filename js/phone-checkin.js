@@ -6,7 +6,6 @@ const eventSelect = document.querySelector("#event");
 const sessionSelect = document.querySelector("#session");
 const checkpointSelect = document.querySelector("#checkpoint");
 const startButton = document.querySelector("#start");
-const qrImageInput = document.querySelector("#qr-image");
 const video = document.querySelector("#camera");
 const status = document.querySelector("#status");
 const result = document.querySelector("#result");
@@ -20,7 +19,6 @@ let busy = false;
 let lastTicket = "";
 let lastTicketAt = 0;
 let progressTimer = 0;
-let cameraHintTimer = 0;
 let audioContext = null;
 
 function setStatus(text, isError = false) {
@@ -28,12 +26,12 @@ function setStatus(text, isError = false) {
   status.classList.toggle("error", isError);
 }
 
-function jsonp(params) {
+function request(params, timeoutMs = 60_000) {
   // The phone service exposes CORS headers. Fetch is more reliable than a
   // dynamically injected JSONP script on mobile browsers and still keeps the
   // request read-only.
   const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), 60_000);
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
   const query = new URLSearchParams(params);
   return fetch(`${PHONE_CHECKIN_WEB_APP_URL}?${query.toString()}`, {
     method: "GET",
@@ -139,11 +137,11 @@ async function unlock() {
     setStatus("系统正在启动，正在读取活动资料，请不要重复按。");
   }, 3000);
   try {
-    const started = await jsonp({ action: "start", code });
+    const started = await request({ action: "start", code });
     if (!started?.ok) throw new Error(started?.message || "denied");
     staffSession = started.data.session;
     sessionStorage.setItem("phone-checkin-session", staffSession);
-    const loaded = await jsonp({ action: "targets", session: staffSession });
+    const loaded = await request({ action: "targets", session: staffSession });
     if (!loaded?.ok || !(loaded.data?.events || []).length) throw new Error(loaded?.message || "empty");
     targets = loaded.data.events;
     fillEvents();
@@ -158,60 +156,23 @@ async function unlock() {
   }
 }
 
-async function readQrImage() {
-  const file = qrImageInput.files?.[0];
-  if (!file) return;
-  if (!staffSession || !eventSelect.value || !sessionSelect.value || !checkpointSelect.value) {
-    setStatus("请先选择活动、讲座／老师和签到次数。", true);
-    qrImageInput.value = "";
-    return;
-  }
-  if (!window.ZXingBrowser?.BrowserQRCodeReader) {
-    setStatus("扫码组件未载入，请检查网络后刷新页面。", true);
-    qrImageInput.value = "";
-    return;
-  }
-  setStatus("正在读取电子票 QR 图片…");
-  const imageUrl = URL.createObjectURL(file);
-  try {
-    const image = new Image();
-    await new Promise((resolve, reject) => {
-      image.onload = resolve;
-      image.onerror = reject;
-      image.src = imageUrl;
-    });
-    const imageReader = new window.ZXingBrowser.BrowserQRCodeReader();
-    const scan = await imageReader.decodeFromImageElement(image);
-    const text = scan && (typeof scan.getText === "function" ? scan.getText() : scan.text);
-    if (!text) throw new Error("empty");
-    void recordScan(text);
-  } catch {
-    showResult("这张图片没有读到 QR 码，请选清楚的电子票截图。", false);
-    setStatus("图片未读到 QR 码，请选清楚的电子票截图。", true);
-  } finally {
-    URL.revokeObjectURL(imageUrl);
-    qrImageInput.value = "";
-  }
-}
-
 async function recordScan(rawValue) {
   const ticket = ticketValue(rawValue);
   if (!ticket || busy) return;
   const now = Date.now();
   if (ticket === lastTicket && now - lastTicketAt < 1500) return;
   busy = true;
-  window.clearTimeout(cameraHintTimer);
   let scanSucceeded = false;
   lastTicket = ticket;
   lastTicketAt = now;
   showScanningFeedback();
   startProgressFeedback();
   try {
-    const response = await jsonp({
+    const response = await request({
       action: "checkin", session: staffSession, ticket,
       eventId: eventSelect.value, sessionId: sessionSelect.value,
       checkpointId: checkpointSelect.value === "auto" ? "" : checkpointSelect.value
-    });
+    }, 5_000);
     const message = response?.ok
       ? `${response.data.name || "参与者"}：${response.data.checkpointLabel || "签到成功"}（签到成功）`
       : (response?.message || "本票无法签到。");
@@ -222,9 +183,13 @@ async function recordScan(rawValue) {
       playTone(1180, 95);
     }
     setStatus(response?.ok ? "签到成功，请继续扫下一位。" : message, !response?.ok);
-  } catch {
-    showResult("网络未完成，请再试一次。", false);
-    setStatus("网络未完成，请继续扫描或检查网络。", true);
+  } catch (error) {
+    const timedOut = error?.name === "AbortError";
+    const message = timedOut
+      ? "签到系统超过 5 秒没有回应，请再扫一次。"
+      : "网络未完成，请再试一次。";
+    showResult(message, false);
+    setStatus(message, true);
   } finally {
     window.setTimeout(() => { busy = false; }, scanSucceeded ? 2250 : 1050);
   }
@@ -240,25 +205,12 @@ async function startCamera() {
   try {
     controls?.stop?.();
     reader?.reset?.();
-    const hints = new Map();
-    const { DecodeHintType, BarcodeFormat } = window.ZXingBrowser;
-    if (DecodeHintType?.TRY_HARDER) hints.set(DecodeHintType.TRY_HARDER, true);
-    if (DecodeHintType?.POSSIBLE_FORMATS && BarcodeFormat?.QR_CODE) {
-      hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.QR_CODE]);
-    }
-    reader = new window.ZXingBrowser.BrowserQRCodeReader(hints, {
-      delayBetweenScanAttempts: 55,
-      delayBetweenScanSuccess: 250
-    });
+    // This is the same minimal reader configuration as the original scanner.
+    // iPhone Safari opened the camera with the newer tuned hints but did not
+    // deliver decoded QR results, so keep the direct, known-good path here.
+    reader = new window.ZXingBrowser.BrowserQRCodeReader();
     controls = await reader.decodeFromConstraints(
-      {
-        video: {
-          facingMode: { ideal: "environment" },
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        },
-        audio: false
-      },
+      { video: { facingMode: { ideal: "environment" } }, audio: false },
       video,
       (scan) => {
         const text = scan && (typeof scan.getText === "function" ? scan.getText() : scan.text);
@@ -266,9 +218,6 @@ async function startCamera() {
       }
     );
     setStatus("相机已开启，请连续扫描参与者电子票 QR 码。");
-    cameraHintTimer = window.setTimeout(() => {
-      if (!busy) setStatus("正在识别二维码…请把电子票放大，让 QR 码占画面约一半，并保持清楚、不要反光。");
-    }, 1600);
   } catch {
     startButton.disabled = false;
     setStatus("无法打开相机。请在 Safari／Chrome 的网站权限允许相机，再按一次开始连续扫码。", true);
@@ -280,5 +229,4 @@ eventSelect.addEventListener("change", fillSessions);
 sessionSelect.addEventListener("change", fillCheckpoints);
 checkpointSelect.addEventListener("change", () => { startButton.disabled = !checkpointSelect.value; });
 startButton.addEventListener("click", startCamera);
-qrImageInput.addEventListener("change", () => { void readQrImage(); });
-window.addEventListener("pagehide", () => { window.clearTimeout(cameraHintTimer); controls?.stop?.(); });
+window.addEventListener("pagehide", () => { controls?.stop?.(); });

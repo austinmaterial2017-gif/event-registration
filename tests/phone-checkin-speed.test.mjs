@@ -22,12 +22,17 @@ test("scanner reports staged progress while the server is still working", () => 
   assert.match(source, /startProgressFeedback/);
 });
 
-test("camera is tuned for phone QR recognition and keeps scanning after success", () => {
-  assert.match(source, /width:\s*\{\s*ideal:\s*1280/);
-  assert.match(source, /height:\s*\{\s*ideal:\s*720/);
-  assert.match(source, /delayBetweenScanAttempts:\s*55/);
-  assert.match(source, /TRY_HARDER/);
-  assert.match(source, /正在识别二维码/);
+test("a decoded ticket gets a clear timeout response within five seconds", () => {
+  assert.match(source, /function request\(params, timeoutMs = 60_000\)/);
+  assert.match(source, /await request\(\{[\s\S]*action: "checkin"[\s\S]*\}, 5_000\)/);
+  assert.match(source, /签到系统超过 5 秒没有回应/);
+});
+
+test("camera uses the proven direct camera decoder and keeps scanning after success", () => {
+  assert.match(source, /new window\.ZXingBrowser\.BrowserQRCodeReader\(\)/);
+  assert.match(source, /decodeFromConstraints\(\s*\{ video: \{ facingMode: \{ ideal: "environment" \} \}, audio: false \}/);
+  assert.doesNotMatch(source, /TRY_HARDER/);
+  assert.doesNotMatch(source, /POSSIBLE_FORMATS/);
   assert.match(source, /请继续扫下一位/);
 });
 
@@ -37,8 +42,8 @@ test("scanner overlay exposes a processing state without changing success stylin
   assert.match(page, /aria-live="assertive"/);
 });
 
-test("scanner provides an image fallback when live camera recognition is difficult", () => {
-  assert.match(page, /id="qr-image"/);
-  assert.match(source, /decodeFromImageElement/);
-  assert.match(source, /正在读取电子票 QR 图片/);
+test("scanner is camera-only and does not show an image-upload fallback", () => {
+  assert.doesNotMatch(page, /id="qr-image"/);
+  assert.doesNotMatch(source, /decodeFromImageElement/);
+  assert.doesNotMatch(source, /readQrImage/);
 });

@@ -21,6 +21,8 @@ let lastTicket = "";
 let lastTicketAt = 0;
 let progressTimer = 0;
 let audioContext = null;
+let hardwareScanBuffer = "";
+let hardwareScanTimer = 0;
 
 function setStatus(text, isError = false) {
   status.textContent = text;
@@ -57,6 +59,49 @@ function focusHardwareScanner() {
   hardwareScanInput.focus({ preventScroll: true });
 }
 
+function clearHardwareScanBuffer() {
+  window.clearTimeout(hardwareScanTimer);
+  hardwareScanTimer = 0;
+  hardwareScanBuffer = "";
+  hardwareScanInput.value = "";
+}
+
+function hardwareScannerReady() {
+  return Boolean(
+    staffSession && eventSelect.value && sessionSelect.value && checkpointSelect.value
+      && hardwareScanInput && !hardwareScanInput.disabled
+  );
+}
+
+function submitHardwareScan() {
+  window.clearTimeout(hardwareScanTimer);
+  hardwareScanTimer = 0;
+  const value = hardwareScanBuffer || hardwareScanInput.value;
+  hardwareScanBuffer = "";
+  hardwareScanInput.value = "";
+  if (value) void recordScan(value);
+}
+
+function handleHardwareScannerKey(event) {
+  if (!hardwareScannerReady() || busy) return;
+  // Never treat staff password or dropdown interaction as a ticket scan.
+  if ([codeInput, eventSelect, sessionSelect, checkpointSelect].includes(event.target)) return;
+  if (event.key === "Enter") {
+    if (!hardwareScanBuffer && !hardwareScanInput.value) return;
+    event.preventDefault();
+    submitHardwareScan();
+    return;
+  }
+  if (event.key.length !== 1 || event.ctrlKey || event.metaKey || event.altKey) return;
+  event.preventDefault();
+  hardwareScanBuffer += event.key;
+  // Many small QR scanners behave exactly like a keyboard but do not send an
+  // Enter suffix. A short pause is therefore treated as the end of one scan.
+  hardwareScanInput.value = hardwareScanBuffer;
+  window.clearTimeout(hardwareScanTimer);
+  hardwareScanTimer = window.setTimeout(submitHardwareScan, 150);
+}
+
 function selectedTimeMessage() {
   const session = currentSession();
   if (!session) return "";
@@ -89,7 +134,7 @@ function fillSessions() {
   checkpointSelect.disabled = true;
   startButton.disabled = true;
   hardwareScanInput.disabled = true;
-  hardwareScanInput.value = "";
+  clearHardwareScanBuffer();
 }
 
 function fillCheckpoints() {
@@ -102,7 +147,7 @@ function fillCheckpoints() {
   checkpointSelect.disabled = list.length === 0;
   startButton.disabled = true;
   hardwareScanInput.disabled = true;
-  hardwareScanInput.value = "";
+  clearHardwareScanBuffer();
 }
 
 function showResult(message, ok) {
@@ -262,17 +307,15 @@ sessionSelect.addEventListener("change", fillCheckpoints);
 checkpointSelect.addEventListener("change", () => { startButton.disabled = !checkpointSelect.value; });
 checkpointSelect.addEventListener("change", () => {
   hardwareScanInput.disabled = !checkpointSelect.value;
-  hardwareScanInput.value = "";
+  clearHardwareScanBuffer();
   if (checkpointSelect.value) {
     setStatus("可用手机相机，或直接用小白盒扫描电子票。", false);
     focusHardwareScanner();
   }
 });
 startButton.addEventListener("click", startCamera);
-hardwareScanInput.addEventListener("keydown", (event) => {
-  if (event.key !== "Enter") return;
-  event.preventDefault();
-  void recordScan(hardwareScanInput.value);
-  hardwareScanInput.value = "";
+window.addEventListener("keydown", handleHardwareScannerKey, true);
+window.addEventListener("pagehide", () => {
+  window.clearTimeout(hardwareScanTimer);
+  controls?.stop?.();
 });
-window.addEventListener("pagehide", () => { controls?.stop?.(); });

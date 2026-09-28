@@ -20,7 +20,7 @@
       <label>&#x6D3B;&#x52A8;<select id="event" disabled><option>&#x8BF7;&#x5148;&#x8F93;&#x5165;&#x5BC6;&#x7801;</option></select></label>
       <label>&#x8BB2;&#x5EA7; / &#x8001;&#x5E08;<select id="session" disabled><option>&#x8BF7;&#x5148;&#x9009;&#x6D3B;&#x52A8;</option></select></label>
       <label>&#x7B7E;&#x5230;&#x6B21;&#x6570;<select id="checkpoint" disabled><option>&#x8BF7;&#x5148;&#x9009;&#x8BB2;&#x5EA7;</option></select></label>
-      <label>小白盒／扫码枪扫码<input id="hardware-scan" type="text" inputmode="none" autocomplete="off" disabled placeholder="选好项目后，直接用小白盒扫描"></label>
+      <label>小白盒／扫码枪扫码<input id="hardware-scan" type="text" inputmode="none" autocomplete="off" readonly disabled placeholder="选好项目后，直接用小白盒扫描，不需要按 Enter"></label>
       <button id="start" type="button" disabled>&#x5F00;&#x59CB;&#x8FDE;&#x7EED;&#x626B;&#x7801;</button>
       <p id="status" role="status">&#x8BF7;&#x8F93;&#x5165;&#x5DE5;&#x4F5C;&#x4EBA;&#x5458;&#x5BC6;&#x7801;&#x3002;</p>
     </section>
@@ -30,6 +30,6 @@
     </section>
   </main>
   <script src="https://unpkg.com/@zxing/browser@0.1.5/umd/zxing-browser.min.js"></script>
-  <script type="module" src="js/phone-checkin.js?v=20260928-hardware-scanner-v1"></script>
+  <script type="module" src="js/phone-checkin.js?v=20260928-hardware-autosubmit-v1"></script>
 </body>
 </html>

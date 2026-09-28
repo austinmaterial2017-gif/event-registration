@@ -58,8 +58,15 @@ test("scanner is camera-only and does not show an image-upload fallback", () => 
 
 test("a keyboard-mode QR scanner submits its scan after Enter", () => {
   assert.match(page, /id="hardware-scan"/);
-  assert.match(source, /hardwareScanInput\.addEventListener\("keydown"/);
-  assert.match(source, /event\.key !== "Enter"/);
-  assert.match(source, /void recordScan\(hardwareScanInput\.value\)/);
+  assert.match(source, /function handleHardwareScannerKey\(/);
+  assert.match(source, /event\.key === "Enter"/);
+  assert.match(source, /void recordScan\(value\)/);
   assert.match(source, /function focusHardwareScanner\(\)/);
+});
+
+test("a keyboard scanner also submits a rapid scan when it does not send Enter", () => {
+  assert.match(source, /let hardwareScanBuffer = ""/);
+  assert.match(source, /window\.addEventListener\("keydown", handleHardwareScannerKey, true\)/);
+  assert.match(source, /window\.setTimeout\(submitHardwareScan, 150\)/);
+  assert.match(source, /function submitHardwareScan\(\)/);
 });

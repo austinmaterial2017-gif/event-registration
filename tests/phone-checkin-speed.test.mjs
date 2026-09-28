@@ -55,3 +55,11 @@ test("scanner is camera-only and does not show an image-upload fallback", () => 
   assert.doesNotMatch(source, /decodeFromImageElement/);
   assert.doesNotMatch(source, /readQrImage/);
 });
+
+test("a keyboard-mode QR scanner submits its scan after Enter", () => {
+  assert.match(page, /id="hardware-scan"/);
+  assert.match(source, /hardwareScanInput\.addEventListener\("keydown"/);
+  assert.match(source, /event\.key !== "Enter"/);
+  assert.match(source, /void recordScan\(hardwareScanInput\.value\)/);
+  assert.match(source, /function focusHardwareScanner\(\)/);
+});

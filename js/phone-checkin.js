@@ -6,6 +6,7 @@ const eventSelect = document.querySelector("#event");
 const sessionSelect = document.querySelector("#session");
 const checkpointSelect = document.querySelector("#checkpoint");
 const startButton = document.querySelector("#start");
+const hardwareScanInput = document.querySelector("#hardware-scan");
 const video = document.querySelector("#camera");
 const status = document.querySelector("#status");
 const result = document.querySelector("#result");
@@ -51,6 +52,11 @@ function options(select, list, placeholder) {
 function currentEvent() { return targets.find((item) => item.eventId === eventSelect.value); }
 function currentSession() { return currentEvent()?.sessions.find((item) => item.sessionId === sessionSelect.value); }
 
+function focusHardwareScanner() {
+  if (!hardwareScanInput || hardwareScanInput.disabled) return;
+  hardwareScanInput.focus({ preventScroll: true });
+}
+
 function selectedTimeMessage() {
   const session = currentSession();
   if (!session) return "";
@@ -82,6 +88,8 @@ function fillSessions() {
   options(checkpointSelect, [], "请先选择讲座／老师");
   checkpointSelect.disabled = true;
   startButton.disabled = true;
+  hardwareScanInput.disabled = true;
+  hardwareScanInput.value = "";
 }
 
 function fillCheckpoints() {
@@ -93,6 +101,8 @@ function fillCheckpoints() {
   options(checkpointSelect, list, "请选择签到次数");
   checkpointSelect.disabled = list.length === 0;
   startButton.disabled = true;
+  hardwareScanInput.disabled = true;
+  hardwareScanInput.value = "";
 }
 
 function showResult(message, ok) {
@@ -184,7 +194,7 @@ async function recordScan(rawValue) {
   if (timeMessage) {
     showResult(timeMessage, false);
     setStatus(timeMessage, true);
-    window.setTimeout(() => { busy = false; }, 3400);
+    window.setTimeout(() => { busy = false; focusHardwareScanner(); }, 3400);
     return;
   }
   showScanningFeedback();
@@ -213,7 +223,7 @@ async function recordScan(rawValue) {
     showResult(message, false);
     setStatus(message, true);
   } finally {
-    window.setTimeout(() => { busy = false; }, scanSucceeded ? 3200 : 3400);
+    window.setTimeout(() => { busy = false; focusHardwareScanner(); }, scanSucceeded ? 3200 : 3400);
   }
 }
 
@@ -250,5 +260,19 @@ unlockButton.addEventListener("click", unlock);
 eventSelect.addEventListener("change", fillSessions);
 sessionSelect.addEventListener("change", fillCheckpoints);
 checkpointSelect.addEventListener("change", () => { startButton.disabled = !checkpointSelect.value; });
+checkpointSelect.addEventListener("change", () => {
+  hardwareScanInput.disabled = !checkpointSelect.value;
+  hardwareScanInput.value = "";
+  if (checkpointSelect.value) {
+    setStatus("可用手机相机，或直接用小白盒扫描电子票。", false);
+    focusHardwareScanner();
+  }
+});
 startButton.addEventListener("click", startCamera);
+hardwareScanInput.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  void recordScan(hardwareScanInput.value);
+  hardwareScanInput.value = "";
+});
 window.addEventListener("pagehide", () => { controls?.stop?.(); });

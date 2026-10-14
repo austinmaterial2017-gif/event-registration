@@ -1,4 +1,5 @@
-import { listEvents } from "./api.js?v=20260728-stable";
+import { listEvents } from "./api.js?v=20260910-bundle-api-client";
+import { listBundlePlans } from "./api.js?v=20260910-bundle-api-client";
 import { refreshActivityCountdowns } from "./activity-countdown-view.js";
 import {
   buildActivityTicketView,
@@ -10,6 +11,7 @@ import { getRegistrationAvailability } from "./registration-flow.js";
 const statusNames = { upcoming: "即将开放", open: "报名开放", closed: "报名截止", live: "正在进行", ended: "活动结束", cancelled: "活动取消" };
 const countdownEntries = [];
 let serverOffset = Number.NaN;
+let bundlePlans = [];
 
 function serverTimestamp() { return Date.now() + serverOffset; }
 
@@ -95,20 +97,64 @@ function renderActivities(activities) {
   refreshCountdownText();
 }
 
+function bundlePlanCard(plan) {
+  const article = node("article", "activity-ticket ticket-open");
+  article.dataset.bundlePlan = String(plan.planId);
+  const date = node("div", "ticket-date");
+  date.append(node("span", "", "组合报名"), node("strong", "", "多项目入场券"));
+  const copy = node("div", "ticket-copy");
+  copy.append(node("span", "status open", "报名开放"), node("h3", "", plan.title), node("p", "", plan.description || "选择项目后填写报名资料。"));
+  const actions = node("div", "ticket-action");
+  const link = node("a", "ticket-button", "立即报名");
+  link.href = plan.registrationUrl || `bundle-register.html?plan=${encodeURIComponent(plan.planId)}`;
+  actions.append(link); article.append(date, copy, actions);
+  return article;
+}
+
+function appendBundlePlans() {
+  const list = document.querySelector("#activity-list");
+  const rendered = new Set([...list.querySelectorAll("[data-bundle-plan]")].map((item) => item.dataset.bundlePlan));
+  bundlePlans.filter((plan) => !rendered.has(String(plan.planId))).forEach((plan) => list.append(bundlePlanCard(plan)));
+  if (bundlePlans.length) list.setAttribute("aria-busy", "false");
+}
+
 async function initialise() {
   showPageNotice();
-  const result = await listEvents();
   const list = document.querySelector("#activity-list");
   const status = document.querySelector("#activity-status");
-  if (!result.ok || !Array.isArray(result.data?.events)) {
-    list.replaceChildren(node("p", "notice", result.message || "暂时无法加载活动，请稍后重试。"));
-    list.setAttribute("aria-busy", "false");
-    status.textContent = "活动列表暂时无法加载。";
-    return;
-  }
-  const timestamp = Date.parse(result.data.serverNow);
-  serverOffset = Number.isFinite(timestamp) ? timestamp - Date.now() : Number.NaN;
-  renderActivities(result.data.events);
+  const loading = document.querySelector("#activity-loading");
+  const eventsRequest = listEvents();
+  const bundlesRequest = listBundlePlans();
+  const timers = [
+    window.setTimeout(() => { if (loading && !loading.hidden) loading.textContent = "服务器正在唤醒，请稍候…"; }, 3500),
+    window.setTimeout(() => { if (loading && !loading.hidden) loading.textContent = "仍在读取活动资料，请不要重复刷新…"; }, 9000)
+  ];
+  const bundleTask = bundlesRequest.then((bundles) => {
+    if (bundles.ok && Array.isArray(bundles.data?.plans)) {
+      bundlePlans = bundles.data.plans;
+      if (bundlePlans.length) {
+        if (list.querySelector(".notice") || !list.children.length) list.replaceChildren(...bundlePlans.map(bundlePlanCard));
+        else appendBundlePlans();
+        list.setAttribute("aria-busy", "false");
+        status.textContent = `已显示 ${bundlePlans.length} 个组合报名。`;
+      }
+    }
+  });
+  const eventTask = eventsRequest.then((result) => {
+    if (!result.ok || !Array.isArray(result.data?.events)) {
+      if (!bundlePlans.length) list.replaceChildren(node("p", "notice", result.message || "暂时无法加载活动，请稍后重试。"));
+      list.setAttribute("aria-busy", "false");
+      status.textContent = bundlePlans.length ? "普通活动暂时无法加载；组合报名仍可使用。" : "活动列表暂时无法加载。";
+    } else {
+      const timestamp = Date.parse(result.data.serverNow);
+      serverOffset = Number.isFinite(timestamp) ? timestamp - Date.now() : Number.NaN;
+      renderActivities(result.data.events);
+      appendBundlePlans();
+    }
+  });
+  await Promise.all([bundleTask, eventTask]);
+  timers.forEach((timer) => window.clearTimeout(timer));
+  if (loading) loading.hidden = true;
 }
 
 initialise();

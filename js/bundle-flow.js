@@ -25,4 +25,3 @@ export function validateBundleSelection({ rules, selectedEventIds, totalTicketLi
   }
   return { ok: true, totalTickets, error: "", selectedEventIds: selected };
 }
-

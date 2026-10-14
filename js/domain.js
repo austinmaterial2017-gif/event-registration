@@ -42,6 +42,9 @@ function getChoiceBound(event, property, fallback) {
 }
 
 function hasAnswer(value, type) {
+  if (type === "photo") {
+    return Array.isArray(value) && value.some((item) => item && typeof item === "object");
+  }
   if (type === "checkbox") {
     if (value === true) return true;
     if (!Array.isArray(value)) return false;
@@ -116,6 +119,16 @@ function validateAnswerConstraints(field, value, errors) {
   }
   if (field.type === "boolean") {
     if (typeof value !== "boolean") invalid("必须是是／否值。");
+    return;
+  }
+  if (field.type === "photo") {
+    if (!Array.isArray(value) || value.some((item) =>
+      !item || typeof item !== "object" ||
+      typeof item.originalName !== "string" || item.originalName.trim() === "" ||
+      typeof item.mimeType !== "string" || item.mimeType.trim() === "" ||
+      !Number.isFinite(Number(item.size)) || Number(item.size) < 0)) {
+      invalid("的照片资料无效。");
+    }
     return;
   }
   if (field.type === "number") {

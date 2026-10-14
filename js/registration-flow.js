@@ -24,6 +24,7 @@ export function getSeatModeState(seatMode) {
 }
 
 export function getFieldControlSpec(type) {
+  if (type === "photo") return { tag: "input", inputType: "file" };
   if (["text", "number", "tel", "email", "date", "radio", "checkbox"].includes(type)) return { tag: "input", inputType: type };
   if (type === "boolean") return { tag: "input", inputType: "checkbox" };
   if (type === "textarea" || type === "select") return { tag: type, inputType: null };

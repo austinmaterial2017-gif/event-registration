@@ -195,6 +195,25 @@
         html { scroll-behavior: auto; }
         *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
       }
+      /* Clear light administrator workspace: existing controls keep their IDs and handlers. */
+      :root { --charcoal:#fff3cf; --panel:#fffaf0; --panel-deep:#fff6dd; --ivory:#34140f; --muted:#72564d; --line:#d77a61; --magenta:#8f0715; --purple:#a42a2d; --green:#17673f; --danger:#a31324; }
+      body { background:linear-gradient(135deg,#fff3cf,#fce2b1); color:var(--ink, #34140f); }
+      .sidebar { background:rgba(255,250,240,.94); border-right-color:var(--line); }
+      .sidebar-copy, nav a, .masthead p, .panel-head p, label, .data-row small, .empty { color:var(--muted); }
+      nav a:hover, nav a[aria-current="page"] { color:#34140f; background:#ffe2b1; }
+      .panel, .advanced-maintenance { background:rgba(255,250,240,.97); box-shadow:0 16px 40px rgba(112,45,19,.12); }
+      input, select, textarea { border-color:#c88970; background:#fffdf7; color:#34140f; }
+      button { background:var(--magenta); color:#fffaf0; }
+      button.secondary, a.secondary { border-color:#b9705c; background:#fffaf0; color:#6c160f; }
+      .data-row, .bundle-item-fold, .bundle-plan-fold, .source-card { background:#fff7e8; border-color:#deb095; }
+      .data-row strong, .bundle-item-fold > summary, .bundle-plan-fold > summary, .source-card h3 { color:#34140f; }
+      .activity-context { background:#fff7e8; border-color:#b83527; }.activity-context .pill { color:#6c160f; border-color:#b83527; }
+      .lifecycle-rail { background:#fff7e8; }.lifecycle-rail [data-public="true"] { color:#34140f; }
+      .admin-home { max-width:1420px; margin:0 auto 24px; padding:clamp(22px,4vw,38px); border:1px solid #e3a28a; border-radius:24px; background:rgba(255,250,240,.94); box-shadow:0 18px 52px rgba(112,45,19,.12); }
+      .admin-home h2 { margin:7px 0; color:#8f0715; font:800 clamp(30px,4vw,48px)/1.05 "Microsoft YaHei", "Noto Sans SC", sans-serif; }.admin-home > p:not(.eyebrow) { margin:0; color:var(--muted); }
+      .admin-home-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; margin-top:24px; }.admin-home-card { display:grid; min-height:158px; padding:20px; border:1px solid #e2b9a7; border-radius:18px; background:#fffdf7; color:#34140f; text-align:left; box-shadow:none; }.admin-home-card:hover { border-color:#8f0715; background:#fff0cd; transform:translateY(-2px); }.admin-home-card span { font-size:27px; }.admin-home-card strong { margin-top:8px; color:#8f0715; font-size:20px; }.admin-home-card small { color:var(--muted); font-weight:600; }.admin-return-home { max-width:1420px; margin:0 auto 14px; }.workspace-hidden { display:none !important; }.bundle-preview-field-section { display:grid; gap:12px; padding:15px; border:1px solid #e3b096; border-radius:14px; background:#fff7e8; }.bundle-preview-field-section h4 { margin:0; color:#8f0715; }
+      @media (max-width:900px) { .admin-home-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }.admin-home-card { min-height:132px; }
+      @media (max-width:560px) { .admin-home-grid { grid-template-columns:1fr; } }
     </style>
   </head>
   <body>
@@ -224,8 +243,21 @@
         </header>
         <p id="admin-status" class="status-line" role="status" aria-live="polite">正在读取管理数据…</p>
 
+        <section id="admin-home" class="admin-home" aria-labelledby="admin-home-title">
+          <p class="eyebrow">管理员首页</p><h2 id="admin-home-title">你要管理哪一部分？</h2>
+          <p>选一个功能进入；完成后随时回到这里，不会把所有工具、表格和按钮混在同一页。</p>
+          <div class="admin-home-grid">
+            <button type="button" class="admin-home-card" data-workspace="activity"><span>📅</span><strong>活动设置</strong><small>活动、场次、座位与一般报名问题</small></button>
+            <button type="button" class="admin-home-card" data-workspace="bundle"><span>🎟️</span><strong>组合报名</strong><small>计划、项目、专属资料与报名表预览</small></button>
+            <button type="button" class="admin-home-card" data-workspace="attendance"><span>✅</span><strong>签到管理</strong><small>查看签到记录和工作人员扫码入口</small></button>
+            <button type="button" class="admin-home-card" data-workspace="records"><span>🧾</span><strong>报名与 Sheet</strong><small>报名记录、清晰总览与数据表设置</small></button>
+            <button type="button" class="admin-home-card" data-workspace="system"><span>⚙️</span><strong>系统工具</strong><small>部署源码包与连接设置</small></button>
+          </div>
+        </section>
+        <div id="admin-return-home" class="admin-return-home" hidden><button type="button" class="secondary" data-workspace="home">← 返回管理员首页</button></div>
+
         <div class="stack">
-          <section id="events" class="panel">
+          <section id="events" class="panel" data-admin-workspace="activity">
             <div class="panel-head"><div><p class="eyebrow">Lifecycle</p><h2>活动</h2><p>先选择或新建活动，再编辑该活动的场次、座位、问题和记录。</p></div><label class="activity-picker">当前活动<select id="activity-selector" aria-label="选择当前活动"></select></label></div>
             <div class="panel-body split">
               <form id="event-form">
@@ -288,7 +320,7 @@
             </div>
           </section>
 
-          <section id="bundle-registration" class="panel">
+          <section id="bundle-registration" class="panel" data-admin-workspace="bundle">
             <div class="panel-head"><div><p class="eyebrow">组合活动</p><h2>组合报名</h2><p>参加者填写一次资料，选择多个活动；每个活动的票数、名额与时间独立设定。</p></div></div>
             <div class="panel-body split">
               <form id="bundle-plan-form">
@@ -324,11 +356,11 @@
               </form>
             </div>
             <div class="panel-body"><h3>已有组合计划</h3><div id="bundle-plan-list" class="data-list" aria-live="polite"></div></div>
-            <div class="panel-body"><h3>组合报名资料问题</h3><p class="hint">组合报名没有固定问题。先按「编辑计划」选择计划，再在这里自由新增姓名、电话、照片或任何所需资料。</p><form id="bundle-question-form"><input name="questionId" type="hidden"><div class="fields"><label>计划 ID<input name="planId" required readonly></label><label>问题文字<input name="label" required placeholder="例如：学生姓名"></label><label>类型<select name="type"><option value="text">简短回答</option><option value="textarea">段落</option><option value="number">数字</option><option value="tel">电话号码</option><option value="email">电邮</option><option value="date">日期</option><option value="radio">单选题</option><option value="checkbox">多选题</option><option value="select">下拉列表</option><option value="photo">上传图片</option></select></label><label>排序<input name="sortOrder" type="number" min="1" value="10"></label><label class="full-width">选项（单选、多选、下拉才需要；每行一个）<textarea name="options" rows="4" placeholder="选项一&#10;选项二"></textarea></label><label><input name="required" type="checkbox"> 必填</label></div><button type="submit">保存组合问题</button><button type="button" id="reset-bundle-question">新增另一题</button></form><div id="bundle-question-list" class="data-list"></div></div>
+            <div class="panel-body"><h3>组合报名资料问题</h3><p class="hint">先按「编辑计划」选择计划。资料可以设为所有报名者共用，也可以只在勾选指定项目时显示，例如双打的组合名称和队友姓名。</p><form id="bundle-question-form"><input name="questionId" type="hidden"><div class="fields"><label>计划 ID<input name="planId" required readonly></label><label>问题文字<input name="label" required placeholder="例如：学生姓名"></label><label>类型<select name="type"><option value="text">简短回答</option><option value="textarea">段落</option><option value="number">数字</option><option value="tel">电话号码</option><option value="email">电邮</option><option value="date">日期</option><option value="radio">单选题</option><option value="checkbox">多选题</option><option value="select">下拉列表</option><option value="photo">上传图片</option></select></label><label>排序<input name="sortOrder" type="number" min="1" value="10"></label><fieldset id="bundle-question-item-ids" class="wide"><legend>显示范围</legend><p class="hint">不勾选任何项目 = 所有报名者都要填。勾选项目 = 只在报名者选择该项目时显示。</p><div id="bundle-question-item-choices" class="checks"></div></fieldset><label class="full-width">选项（单选、多选、下拉才需要；每行一个）<textarea name="options" rows="4" placeholder="选项一&#10;选项二"></textarea></label><label><input name="required" type="checkbox"> 必填</label></div><button type="submit">保存组合问题</button><button type="button" id="reset-bundle-question">新增另一题</button></form><div id="bundle-question-list" class="data-list"></div></div>
           </section>
           <dialog id="bundle-registration-preview" class="bundle-preview" aria-labelledby="bundle-preview-title"><div class="bundle-preview-content"><div class="actions"><div><p class="eyebrow">Participant preview</p><h3 id="bundle-preview-title">报名表预览</h3><p id="bundle-preview-description"></p></div><button id="close-bundle-preview" class="secondary" type="button">关闭预览</button></div><div id="bundle-preview-fields" class="bundle-preview-fields"></div><button type="button" disabled>这是预览，不能提交</button></div></dialog>
 
-          <section id="selected-activity" class="activity-context" aria-live="polite" hidden>
+          <section id="selected-activity" class="activity-context" aria-live="polite" hidden data-admin-workspace="activity">
             <div><p class="eyebrow">Current activity</p><h2 id="selected-activity-title"></h2><p id="selected-activity-meta"></p></div>
             <div class="actions">
               <button id="finalize-draft" type="button" hidden>确认建立活动并生成数据表</button>
@@ -339,7 +371,7 @@
           </section>
           <p id="activity-empty-state" class="empty-selection">请选择一个活动，或先新建活动。</p>
 
-          <section id="sessions" class="panel selected-required">
+          <section id="sessions" class="panel selected-required" data-admin-workspace="activity">
             <div class="panel-head"><div><p class="eyebrow">Programme</p><h2>场次</h2><p>编辑讲题、讲师、时间、地点、容量、必选和分组规则。</p></div></div>
             <div class="panel-body split">
               <form id="session-form">
@@ -386,7 +418,7 @@
             </div>
           </section>
 
-          <section id="seats" class="panel selected-required">
+          <section id="seats" class="panel selected-required" data-admin-workspace="activity">
             <div class="panel-head"><div><p class="eyebrow">Floor plan</p><h2>座位</h2><p>按活动／场次生成座位；已有座位只会保留或改变状态。</p></div></div>
             <div class="panel-body seat-workspace">
               <form id="seat-form">
@@ -422,7 +454,7 @@
             </div>
           </section>
 
-          <section id="questions" class="panel selected-required">
+          <section id="questions" class="panel selected-required" data-admin-workspace="activity">
             <div class="panel-head"><div><p class="eyebrow">Registration form</p><h2>报名问题</h2><p>支持排序、显示／隐藏、必填、选项、验证、票面显示和重复身份判断。</p></div></div>
             <div class="panel-body split">
               <form id="question-form">
@@ -472,7 +504,7 @@
             </div>
           </section>
 
-          <section id="records" class="panel selected-required generated-required">
+          <section id="records" class="panel selected-required generated-required" data-admin-workspace="records">
             <div class="panel-head"><div><p class="eyebrow">History</p><h2>报名记录</h2><p>列表与搜索只显示脱敏资料；取消和调整座位保留全部历史。</p></div></div>
             <div class="panel-body">
               <div class="actions">
@@ -497,14 +529,14 @@
             </div>
           </section>
 
-          <section id="attendance" class="panel selected-required generated-required">
+          <section id="attendance" class="panel selected-required generated-required" data-admin-workspace="attendance">
             <div class="panel-head"><div><p class="eyebrow">Door log</p><h2>签到记录</h2><p>按场次查看服务器时间签到历史。</p></div></div>
             <div class="panel-body"><div id="attendance-list" class="data-list" aria-label="签到记录"></div></div>
           </section>
 
           <details class="advanced-maintenance">
             <summary>高级维护</summary>
-          <section id="sheet-settings" class="panel">
+          <section id="sheet-settings" class="panel" data-admin-workspace="records">
             <div class="panel-head"><div><p class="eyebrow">Connection</p><h2>数据表连接</h2><p id="connection-status">尚未读取连接状态。</p></div></div>
             <div class="panel-body">
               <form id="sheet-form">
@@ -515,7 +547,7 @@
             </div>
           </section>
 
-          <section id="source-bundles" class="panel">
+          <section id="source-bundles" class="panel" data-admin-workspace="system">
             <div class="panel-head"><div><p class="eyebrow">Two deployments</p><h2>Apps Script 部署源码</h2><p>分别建立公开后端项目与员工／管理员项目；不可合并为同一个部署。</p></div></div>
             <div class="panel-body">
               <div class="source-grid">

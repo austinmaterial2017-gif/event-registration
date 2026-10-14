@@ -28,7 +28,7 @@ function refreshBundlePlanOverviewFromRegistry_(registry, planId) {
   var itemsById = bundlePlanOverviewItems_(registry, planId, entitlements);
   var usedHeaders = {};
   var questionHeaders = questions.map(function(question) {
-    var base = String(question.label || question.questionId || '资料');
+    var base = bundlePlanOverviewQuestionHeader_(question, itemsById);
     var label = base; var suffix = 2;
     while (usedHeaders[label]) { label = base + ' (' + suffix + ')'; suffix += 1; }
     usedHeaders[label] = true;
@@ -88,6 +88,17 @@ function bundlePlanOverviewItems_(registry, planId, entitlements) {
   return items;
 }
 
+function bundlePlanOverviewQuestionHeader_(question, itemsById) {
+  var label = String(question && (question.label || question.questionId) || '资料');
+  var itemIds = question && Array.isArray(question.itemIds) ? question.itemIds : [];
+  if (!itemIds.length) return label;
+  var titles = itemIds.map(function(itemId) {
+    var item = (itemsById || {})[String(itemId)] || {};
+    return String(item.title || itemId || '项目');
+  }).filter(Boolean);
+  return (titles.length ? titles.join('／') : '项目') + '：' + label;
+}
+
 /** Builds the wide, participant-first check-in overview for one combination plan. */
 function buildBundlePlanAttendanceOverview_(registrations, entitlements, attendance, itemsById, questions) {
   // Object insertion order follows the plan's project-sheet order, so a later
@@ -101,7 +112,9 @@ function buildBundlePlanAttendanceOverview_(registrations, entitlements, attenda
     });
   });
   var fields = (questions || []).slice().sort(function(left, right) { return Number(left.sortOrder || 100) - Number(right.sortOrder || 100); });
-  var headers = ['电子票'].concat(fields.map(function(field) { return String(field.label || field.questionId || '资料'); })).concat(checkInColumns.map(function(column) { return column.label; }));
+  var headers = ['电子票'].concat(fields.map(function(field) {
+    return bundlePlanOverviewQuestionHeader_(field, itemsById);
+  })).concat(checkInColumns.map(function(column) { return column.label; }));
   var entitlementByRegistrationAndItem = {};
   (entitlements || []).forEach(function(entitlement) {
     if (String(entitlement.status || '').toLowerCase() !== 'active') return;

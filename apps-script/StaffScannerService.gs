@@ -1,8 +1,20 @@
 var STAFF_SCANNER_PASS_PREFIX_ = 'STAFF_SCANNER_PASS_';
 var STAFF_SCANNER_PASS_TTL_MS_ = 7200000;
+var STAFF_SCANNER_TARGETS_CACHE_KEY_ = 'STAFF_SCANNER_TARGETS_V1';
+// The activity picker is read-only.  Keeping it briefly prevents a second
+// full sweep of every activity workbook when staff select a session.
+var STAFF_SCANNER_TARGETS_CACHE_TTL_SECONDS_ = 120;
 
 /** Returns only the activity/session metadata needed to start a staff scanner. */
 function internalStaffCheckInTargets_() {
+  var cached = readStaffScannerTargetsCache_();
+  if (cached) return cached;
+  var targets = buildInternalStaffCheckInTargets_();
+  writeStaffScannerTargetsCache_(targets);
+  return targets;
+}
+
+function buildInternalStaffCheckInTargets_() {
   var registry = getRegistrySpreadsheet_();
   var settings = getAdminSettings(registry);
   var policies = settings && settings.registration && settings.registration.events || {};
@@ -49,6 +61,30 @@ function internalStaffCheckInTargets_() {
       sessions: [{ sessionId: 'bundle', title: String(item.title || ''), startsAt: String(item.startsAt || ''), checkInMode: String(item.checkInMode || 'none') === 'multiple' ? 'manual' : 'single', checkpoints: checkpoints }] };
   });
   return ordinaryTargets.concat(bundleTargets);
+}
+
+function readStaffScannerTargetsCache_() {
+  if (typeof CacheService === 'undefined' || !CacheService.getScriptCache) return null;
+  try {
+    var serialized = CacheService.getScriptCache().get(STAFF_SCANNER_TARGETS_CACHE_KEY_);
+    var targets = JSON.parse(serialized || '');
+    return Array.isArray(targets) ? targets : null;
+  } catch (_ignored) {
+    return null;
+  }
+}
+
+function writeStaffScannerTargetsCache_(targets) {
+  if (typeof CacheService === 'undefined' || !CacheService.getScriptCache || !Array.isArray(targets)) return;
+  try {
+    CacheService.getScriptCache().put(
+      STAFF_SCANNER_TARGETS_CACHE_KEY_,
+      JSON.stringify(targets),
+      STAFF_SCANNER_TARGETS_CACHE_TTL_SECONDS_
+    );
+  } catch (_ignored) {
+    // Cache quota and size limits must never block staff check-in.
+  }
 }
 
 /** Executes one scan using a short-lived pass created by an authenticated staff account. */

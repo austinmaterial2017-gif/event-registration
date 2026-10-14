@@ -159,7 +159,10 @@ function createBundleRegistration(payload) {
       var registrationId = Utilities.getUuid(); var participantId = Utilities.getUuid();
       var ticketNumber = 'BND-' + Utilities.getUuid().replace(/-/g, '').slice(0, 10).toUpperCase();
       var token = Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, ''); var timestamp = now.toISOString();
-      var questions = bundleRegistrationFields_(registry, planId);
+      var allQuestions = bundleRegistrationFields_(registry, planId);
+      var questionSubmissionError = bundleQuestionSubmissionError_(allQuestions, requested, payload.answers, payload.uploads);
+      if (questionSubmissionError) registrationError_(questionSubmissionError);
+      var questions = applicableBundleRegistrationFields_(allQuestions, requested);
       var normalizedUploads = validateRegistrationUploads_(questions, payload.uploads);
       var submittedAnswers = {};
       Object.keys(payload.answers || {}).forEach(function(questionId) { submittedAnswers[questionId] = payload.answers[questionId]; });
@@ -539,7 +542,8 @@ function publicQuestionProjection_(question, policy) {
     options: parsed.choices,
     constraints: parsed.constraints,
     sortOrder: publicNonNegativeNumber_(question.sortOrder, 0),
-    semanticRole: semanticRole
+    semanticRole: semanticRole,
+    itemIds: Array.isArray(question.itemIds) ? question.itemIds.slice() : []
   };
   if (parsed.promptImage) projection.promptImage = parsed.promptImage;
   if (projection.type === 'photo') projection.upload = parsed.upload;

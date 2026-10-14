@@ -424,6 +424,40 @@ function bundleText_(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+/** Normalizes question ownership to existing native items in one plan. */
+function normalizeBundleQuestionItemIds_(value, allowedItemIds) {
+  var seen = {};
+  return (Array.isArray(value) ? value : []).map(bundleText_).filter(function(itemId) {
+    if (!itemId || !allowedItemIds || allowedItemIds[itemId] !== true || seen[itemId]) return false;
+    seen[itemId] = true;
+    return true;
+  });
+}
+
+/** Shared questions apply everywhere; item questions apply only when selected. */
+function applicableBundleRegistrationFields_(questions, selectedItemIds) {
+  return (questions || []).filter(function(question) {
+    var itemIds = Array.isArray(question.itemIds) ? question.itemIds : [];
+    return !itemIds.length || itemIds.some(function(itemId) {
+      return selectedItemIds && selectedItemIds[itemId] === true;
+    });
+  });
+}
+
+/** Returns a safe public error code when a request contains hidden item data. */
+function bundleQuestionSubmissionError_(questions, selectedItemIds, answers, uploads) {
+  var allowed = {};
+  applicableBundleRegistrationFields_(questions, selectedItemIds).forEach(function(question) {
+    var questionId = bundleText_(question && question.questionId);
+    if (questionId) allowed[questionId] = true;
+  });
+  var submitted = {};
+  Object.keys(answers || {}).forEach(function(questionId) { submitted[questionId] = true; });
+  Object.keys(uploads || {}).forEach(function(questionId) { submitted[questionId] = true; });
+  return Object.keys(submitted).some(function(questionId) { return allowed[questionId] !== true; })
+    ? 'INVALID_REQUEST' : '';
+}
+
 function bundleIsoTime_(value) {
   var text = bundleText_(value);
   if (!text || isNaN(Date.parse(text))) bundlePayloadError_();
@@ -4267,9 +4301,21 @@ function attendancePublicProjection_(match) {
 ===== apps-script/StaffScannerService.gs =====
 var STAFF_SCANNER_PASS_PREFIX_ = 'STAFF_SCANNER_PASS_';
 var STAFF_SCANNER_PASS_TTL_MS_ = 7200000;
+var STAFF_SCANNER_TARGETS_CACHE_KEY_ = 'STAFF_SCANNER_TARGETS_V1';
+// The activity picker is read-only.  Keeping it briefly prevents a second
+// full sweep of every activity workbook when staff select a session.
+var STAFF_SCANNER_TARGETS_CACHE_TTL_SECONDS_ = 120;
 
 /** Returns only the activity/session metadata needed to start a staff scanner. */
 function internalStaffCheckInTargets_() {
+  var cached = readStaffScannerTargetsCache_();
+  if (cached) return cached;
+  var targets = buildInternalStaffCheckInTargets_();
+  writeStaffScannerTargetsCache_(targets);
+  return targets;
+}
+
+function buildInternalStaffCheckInTargets_() {
   var registry = getRegistrySpreadsheet_();
   var settings = getAdminSettings(registry);
   var policies = settings && settings.registration && settings.registration.events || {};
@@ -4316,6 +4362,30 @@ function internalStaffCheckInTargets_() {
       sessions: [{ sessionId: 'bundle', title: String(item.title || ''), startsAt: String(item.startsAt || ''), checkInMode: String(item.checkInMode || 'none') === 'multiple' ? 'manual' : 'single', checkpoints: checkpoints }] };
   });
   return ordinaryTargets.concat(bundleTargets);
+}
+
+function readStaffScannerTargetsCache_() {
+  if (typeof CacheService === 'undefined' || !CacheService.getScriptCache) return null;
+  try {
+    var serialized = CacheService.getScriptCache().get(STAFF_SCANNER_TARGETS_CACHE_KEY_);
+    var targets = JSON.parse(serialized || '');
+    return Array.isArray(targets) ? targets : null;
+  } catch (_ignored) {
+    return null;
+  }
+}
+
+function writeStaffScannerTargetsCache_(targets) {
+  if (typeof CacheService === 'undefined' || !CacheService.getScriptCache || !Array.isArray(targets)) return;
+  try {
+    CacheService.getScriptCache().put(
+      STAFF_SCANNER_TARGETS_CACHE_KEY_,
+      JSON.stringify(targets),
+      STAFF_SCANNER_TARGETS_CACHE_TTL_SECONDS_
+    );
+  } catch (_ignored) {
+    // Cache quota and size limits must never block staff check-in.
+  }
 }
 
 /** Executes one scan using a short-lived pass created by an authenticated staff account. */
@@ -4655,7 +4725,7 @@ function refreshBundlePlanOverviewFromRegistry_(registry, planId) {
   var itemsById = bundlePlanOverviewItems_(registry, planId, entitlements);
   var usedHeaders = {};
   var questionHeaders = questions.map(function(question) {
-    var base = String(question.label || question.questionId || '资料');
+    var base = bundlePlanOverviewQuestionHeader_(question, itemsById);
     var label = base; var suffix = 2;
     while (usedHeaders[label]) { label = base + ' (' + suffix + ')'; suffix += 1; }
     usedHeaders[label] = true;
@@ -4715,6 +4785,17 @@ function bundlePlanOverviewItems_(registry, planId, entitlements) {
   return items;
 }
 
+function bundlePlanOverviewQuestionHeader_(question, itemsById) {
+  var label = String(question && (question.label || question.questionId) || '资料');
+  var itemIds = question && Array.isArray(question.itemIds) ? question.itemIds : [];
+  if (!itemIds.length) return label;
+  var titles = itemIds.map(function(itemId) {
+    var item = (itemsById || {})[String(itemId)] || {};
+    return String(item.title || itemId || '项目');
+  }).filter(Boolean);
+  return (titles.length ? titles.join('／') : '项目') + '：' + label;
+}
+
 /** Builds the wide, participant-first check-in overview for one combination plan. */
 function buildBundlePlanAttendanceOverview_(registrations, entitlements, attendance, itemsById, questions) {
   // Object insertion order follows the plan's project-sheet order, so a later
@@ -4728,7 +4809,9 @@ function buildBundlePlanAttendanceOverview_(registrations, entitlements, attenda
     });
   });
   var fields = (questions || []).slice().sort(function(left, right) { return Number(left.sortOrder || 100) - Number(right.sortOrder || 100); });
-  var headers = ['电子票'].concat(fields.map(function(field) { return String(field.label || field.questionId || '资料'); })).concat(checkInColumns.map(function(column) { return column.label; }));
+  var headers = ['电子票'].concat(fields.map(function(field) {
+    return bundlePlanOverviewQuestionHeader_(field, itemsById);
+  })).concat(checkInColumns.map(function(column) { return column.label; }));
   var entitlementByRegistrationAndItem = {};
   (entitlements || []).forEach(function(entitlement) {
     if (String(entitlement.status || '').toLowerCase() !== 'active') return;
@@ -5206,6 +5289,14 @@ function saveBundleQuestion_(payload, _actor) {
   if (types.indexOf(type) === -1) adminError_('INVALID_REQUEST');
   var choices = Array.isArray(payload.options) ? payload.options.map(bundleText_).filter(Boolean) : [];
   if (['radio', 'checkbox', 'select'].indexOf(type) !== -1 && !choices.length) adminError_('INVALID_REQUEST');
+  var itemIds = normalizeBundleQuestionItemIds_(payload.itemIds, bundleSheetRows_(
+    registry.getSheetByName('组合项目'), BUNDLE_SHEET_HEADERS_['组合项目']
+  ).filter(function(item) {
+    return item.planId === planId;
+  }).reduce(function(allowed, item) {
+    allowed[String(item.bundleItemId)] = true;
+    return allowed;
+  }, {}));
   var sheet = registry.getSheetByName('组合问题');
   var rows = bundleSheetRows_(sheet, BUNDLE_SHEET_HEADERS_['组合问题']);
   var questionId = bundleText_(payload.questionId) || 'BNQ-' + Utilities.getUuid();
@@ -5216,7 +5307,7 @@ function saveBundleQuestion_(payload, _actor) {
     : { choices: choices };
   var sortOrder = Number(payload.sortOrder || 100);
   if (!isFinite(sortOrder) || sortOrder < 1) adminError_('INVALID_REQUEST');
-  var snapshot = { questionId: questionId, label: bundleText_(payload.label), type: type, required: payload.required === true, options: JSON.stringify(configuration), status: payload.status === 'hidden' ? 'hidden' : 'active', sortOrder: sortOrder };
+  var snapshot = { questionId: questionId, label: bundleText_(payload.label), type: type, required: payload.required === true, options: JSON.stringify(configuration), status: payload.status === 'hidden' ? 'hidden' : 'active', sortOrder: sortOrder, itemIds: itemIds };
   var target = existing.length ? existing[0].rowNumber : sheet.getLastRow() + 1;
   sheet.getRange(target, 1, 1, 3).setValues([[planId, questionId, JSON.stringify(snapshot)]]);
   refreshBundlePlanOverviewFromRegistry_(registry, planId);
@@ -7975,7 +8066,10 @@ function createBundleRegistration(payload) {
       var registrationId = Utilities.getUuid(); var participantId = Utilities.getUuid();
       var ticketNumber = 'BND-' + Utilities.getUuid().replace(/-/g, '').slice(0, 10).toUpperCase();
       var token = Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, ''); var timestamp = now.toISOString();
-      var questions = bundleRegistrationFields_(registry, planId);
+      var allQuestions = bundleRegistrationFields_(registry, planId);
+      var questionSubmissionError = bundleQuestionSubmissionError_(allQuestions, requested, payload.answers, payload.uploads);
+      if (questionSubmissionError) registrationError_(questionSubmissionError);
+      var questions = applicableBundleRegistrationFields_(allQuestions, requested);
       var normalizedUploads = validateRegistrationUploads_(questions, payload.uploads);
       var submittedAnswers = {};
       Object.keys(payload.answers || {}).forEach(function(questionId) { submittedAnswers[questionId] = payload.answers[questionId]; });
@@ -8355,7 +8449,8 @@ function publicQuestionProjection_(question, policy) {
     options: parsed.choices,
     constraints: parsed.constraints,
     sortOrder: publicNonNegativeNumber_(question.sortOrder, 0),
-    semanticRole: semanticRole
+    semanticRole: semanticRole,
+    itemIds: Array.isArray(question.itemIds) ? question.itemIds.slice() : []
   };
   if (parsed.promptImage) projection.promptImage = parsed.promptImage;
   if (projection.type === 'photo') projection.upload = parsed.upload;

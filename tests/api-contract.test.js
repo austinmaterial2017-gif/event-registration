@@ -88,7 +88,7 @@ test("participant entry modules cache-bust the production API client", async () 
   const modules = [
     ["index-page.js", "20260910-bundle-api-client"],
     ["register-page.js", "20260824-photo"],
-    ["ticket-page.js", "20260806-recovery"],
+    ["ticket-page.js", "20260910-recovery-choices"],
     ["verify-page.js", "20260728-stable"]
   ];
   for (const [name, version] of modules) {
@@ -102,7 +102,7 @@ test("participant HTML cache-busts each updated entry module", async () => {
   const pages = [
     ["index.html", "index-page.js", "20260910-parallel-loading"],
     ["register.html", "register-page.js", "20260824-photo"],
-    ["ticket.html", "ticket-page.js", "20260910-bundle-recovery"],
+    ["ticket.html", "ticket-page.js", "20260910-recovery-choices"],
     ["verify.html", "verify-page.js", "20260728-final"],
     ["v.html", "verify-page.js", "20260728-final"]
   ];
@@ -219,6 +219,28 @@ test("combination plan listing uses the configured public API client", async () 
   assert.match(source, /listBundlePlans:\s*\(\)\s*=>\s*request\("listBundlePlans",\s*\{\}\)/);
   assert.match(source, /itemIds:\s*requestData\?\.itemIds/);
   assert.doesNotMatch(source, /publicRequest\(/);
+});
+
+test("ticket recovery waits for both ordinary and combination choices before enabling selection", async () => {
+  const source = await readFile(new URL("../public/js/ticket-page.js", import.meta.url), "utf8");
+  assert.match(source, /Promise\.all\(\[listEvents\(\),\s*listBundleRecoveryPlans\(\)\]\)/);
+});
+
+test("combination registration offers a return-to-activities link", async () => {
+  const html = await readFile(new URL("../public/bundle-register.html", import.meta.url), "utf8");
+  assert.match(html, /href="index\.html"[^>]*>← 返回活动</);
+});
+
+test("combination registration separates shared and item-specific questions", async () => {
+  const source = await readFile(new URL("../public/js/bundle-register-page.js", import.meta.url), "utf8");
+  assert.match(source, /function visibleBundleFields_\(/);
+  assert.match(source, /itemIds\.some/);
+  assert.match(source, /bundle-field-section/);
+});
+
+test("combination form discards unselected item photo files", async () => {
+  const source = await readFile(new URL("../public/js/bundle-register-page.js", import.meta.url), "utf8");
+  assert.match(source, /pruneHiddenBundlePhotoFiles_\(/);
 });
 
 test("the public browser client exposes no attendance mutation", () => {

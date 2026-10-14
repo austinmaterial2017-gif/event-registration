@@ -15,6 +15,7 @@ let plan = null;
 let rules = [];
 let fields = [];
 const photoFiles = new Map();
+const fieldValues = new Map();
 
 function node(tag, className, content) {
   const element = document.createElement(tag);
@@ -31,6 +32,35 @@ function showError(message = "") {
 
 function selected() {
   return [...events.querySelectorAll("input:checked")].map((input) => input.value);
+}
+
+function visibleBundleFields_(allFields = fields, selectedIds = selected()) {
+  const selectedSet = new Set(selectedIds);
+  return allFields.filter((field) => {
+    const itemIds = Array.isArray(field.itemIds) ? field.itemIds : [];
+    return !itemIds.length || itemIds.some((itemId) => selectedSet.has(itemId));
+  });
+}
+
+function pruneHiddenBundlePhotoFiles_(visibleFields) {
+  const visibleIds = new Set(visibleFields.map((field) => field.id));
+  for (const fieldId of photoFiles.keys()) {
+    if (!visibleIds.has(fieldId)) photoFiles.delete(fieldId);
+  }
+}
+
+function captureBundleFieldValues_() {
+  for (const field of fields) {
+    const controls = [...form.elements].filter((control) => control.name === field.id);
+    if (controls.length) fieldValues.set(field.id, answerForField(field));
+  }
+}
+
+function pruneHiddenBundleFieldValues_(visibleFields) {
+  const visibleIds = new Set(visibleFields.map((field) => field.id));
+  for (const fieldId of fieldValues.keys()) {
+    if (!visibleIds.has(fieldId)) fieldValues.delete(fieldId);
+  }
 }
 
 function renderTotal() {
@@ -83,9 +113,12 @@ function appendLabel(wrapper, field, controlId) {
   wrapper.append(label);
 }
 
-function renderFields() {
-  fieldsHolder.replaceChildren(); fieldsSection.hidden = !fields.length;
-  for (const field of fields) {
+function itemTitle_(itemId) {
+  const item = rules.find((rule) => String(rule.itemId || rule.eventId) === String(itemId));
+  return item?.title || String(itemId);
+}
+
+function addBundleField_(field, container) {
     const type = String(field.type || "text").toLowerCase();
     const wrapper = type === "radio" || type === "checkbox" ? document.createElement("fieldset") : node("div", "question");
     wrapper.classList.add("question");
@@ -98,6 +131,8 @@ function renderFields() {
       for (const choice of field.options || []) {
         const label = node("label"); const input = document.createElement("input");
         input.type = type; input.name = field.id; input.value = choice;
+        const stored = fieldValues.get(field.id);
+        input.checked = type === "checkbox" ? Array.isArray(stored) && stored.includes(choice) : stored === choice;
         label.append(input, document.createTextNode(choice)); options.append(label);
       }
       wrapper.append(options);
@@ -122,15 +157,37 @@ function renderFields() {
         control.type = ["number", "tel", "email", "date"].includes(type) ? type : "text";
         control.placeholder = "请填写";
       }
+      if (type !== "photo" && fieldValues.has(field.id)) control.value = fieldValues.get(field.id);
       if (type !== "photo") control.required = field.required === true;
       wrapper.append(control);
     }
-    fieldsHolder.append(wrapper);
+    container.append(wrapper);
+}
+
+function renderFields() {
+  captureBundleFieldValues_();
+  const visibleFields = visibleBundleFields_();
+  pruneHiddenBundlePhotoFiles_(visibleFields);
+  pruneHiddenBundleFieldValues_(visibleFields);
+  fieldsHolder.replaceChildren(); fieldsSection.hidden = !visibleFields.length;
+  const groups = new Map();
+  for (const field of visibleFields) {
+    const itemIds = Array.isArray(field.itemIds) ? field.itemIds : [];
+    const key = itemIds.length ? itemIds.slice().sort().join("|") : "shared";
+    if (!groups.has(key)) groups.set(key, { itemIds, fields: [] });
+    groups.get(key).fields.push(field);
+  }
+  for (const group of groups.values()) {
+    const section = node("section", "bundle-field-section");
+    const title = group.itemIds.length ? `${group.itemIds.map(itemTitle_).join("／")}资料` : "共用资料";
+    section.append(node("h3", "bundle-field-section-title", title));
+    for (const field of group.fields) addBundleField_(field, section);
+    fieldsHolder.append(section);
   }
 }
 
-function validateFields() {
-  for (const field of fields) {
+function validateFields(visibleFields = visibleBundleFields_()) {
+  for (const field of visibleFields) {
     const value = answerForField(field);
     const missing = Array.isArray(value) ? value.length === 0 : !String(value || "").trim();
     if (field.required && missing) return `请填写：${field.label}`;
@@ -159,7 +216,7 @@ async function load() {
     const status = ruleStatusText(rule);
     input.type = "checkbox"; input.value = rule.itemId || rule.eventId; input.disabled = rule.available === false;
     input.setAttribute("aria-label", `${title}，${status}`);
-    input.addEventListener("change", renderTotal);
+    input.addEventListener("change", () => { renderTotal(); renderFields(); });
     label.className = "bundle-item";
     const copy = node("span", "bundle-item-copy");
     copy.append(node("strong", "bundle-item-title", title));
@@ -174,14 +231,15 @@ async function load() {
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   const selection = renderTotal(); if (!selection.ok) return;
-  const fieldError = validateFields(); if (fieldError) { showError(fieldError); return; }
+  const visibleFields = visibleBundleFields_();
+  const fieldError = validateFields(visibleFields); if (fieldError) { showError(fieldError); return; }
   button.disabled = true;
   button.textContent = [...photoFiles.values()].some((files) => files.length) ? "正在上传照片并生成电子凭证…" : "正在生成电子凭证…";
   let result;
   try {
     result = await createBundleRegistration({
       planId, itemIds: selection.selectedEventIds,
-      answers: Object.fromEntries(fields.map((field) => [field.id, answerForField(field)])),
+      answers: Object.fromEntries(visibleFields.map((field) => [field.id, answerForField(field)])),
       uploads: await serializePhotoFiles(Object.fromEntries(photoFiles))
     });
   } catch (_error) {

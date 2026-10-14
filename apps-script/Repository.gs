@@ -407,6 +407,40 @@ function bundleText_(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+/** Normalizes question ownership to existing native items in one plan. */
+function normalizeBundleQuestionItemIds_(value, allowedItemIds) {
+  var seen = {};
+  return (Array.isArray(value) ? value : []).map(bundleText_).filter(function(itemId) {
+    if (!itemId || !allowedItemIds || allowedItemIds[itemId] !== true || seen[itemId]) return false;
+    seen[itemId] = true;
+    return true;
+  });
+}
+
+/** Shared questions apply everywhere; item questions apply only when selected. */
+function applicableBundleRegistrationFields_(questions, selectedItemIds) {
+  return (questions || []).filter(function(question) {
+    var itemIds = Array.isArray(question.itemIds) ? question.itemIds : [];
+    return !itemIds.length || itemIds.some(function(itemId) {
+      return selectedItemIds && selectedItemIds[itemId] === true;
+    });
+  });
+}
+
+/** Returns a safe public error code when a request contains hidden item data. */
+function bundleQuestionSubmissionError_(questions, selectedItemIds, answers, uploads) {
+  var allowed = {};
+  applicableBundleRegistrationFields_(questions, selectedItemIds).forEach(function(question) {
+    var questionId = bundleText_(question && question.questionId);
+    if (questionId) allowed[questionId] = true;
+  });
+  var submitted = {};
+  Object.keys(answers || {}).forEach(function(questionId) { submitted[questionId] = true; });
+  Object.keys(uploads || {}).forEach(function(questionId) { submitted[questionId] = true; });
+  return Object.keys(submitted).some(function(questionId) { return allowed[questionId] !== true; })
+    ? 'INVALID_REQUEST' : '';
+}
+
 function bundleIsoTime_(value) {
   var text = bundleText_(value);
   if (!text || isNaN(Date.parse(text))) bundlePayloadError_();

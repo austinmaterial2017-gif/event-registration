@@ -435,6 +435,14 @@ function saveBundleQuestion_(payload, _actor) {
   if (types.indexOf(type) === -1) adminError_('INVALID_REQUEST');
   var choices = Array.isArray(payload.options) ? payload.options.map(bundleText_).filter(Boolean) : [];
   if (['radio', 'checkbox', 'select'].indexOf(type) !== -1 && !choices.length) adminError_('INVALID_REQUEST');
+  var itemIds = normalizeBundleQuestionItemIds_(payload.itemIds, bundleSheetRows_(
+    registry.getSheetByName('组合项目'), BUNDLE_SHEET_HEADERS_['组合项目']
+  ).filter(function(item) {
+    return item.planId === planId;
+  }).reduce(function(allowed, item) {
+    allowed[String(item.bundleItemId)] = true;
+    return allowed;
+  }, {}));
   var sheet = registry.getSheetByName('组合问题');
   var rows = bundleSheetRows_(sheet, BUNDLE_SHEET_HEADERS_['组合问题']);
   var questionId = bundleText_(payload.questionId) || 'BNQ-' + Utilities.getUuid();
@@ -445,7 +453,7 @@ function saveBundleQuestion_(payload, _actor) {
     : { choices: choices };
   var sortOrder = Number(payload.sortOrder || 100);
   if (!isFinite(sortOrder) || sortOrder < 1) adminError_('INVALID_REQUEST');
-  var snapshot = { questionId: questionId, label: bundleText_(payload.label), type: type, required: payload.required === true, options: JSON.stringify(configuration), status: payload.status === 'hidden' ? 'hidden' : 'active', sortOrder: sortOrder };
+  var snapshot = { questionId: questionId, label: bundleText_(payload.label), type: type, required: payload.required === true, options: JSON.stringify(configuration), status: payload.status === 'hidden' ? 'hidden' : 'active', sortOrder: sortOrder, itemIds: itemIds };
   var target = existing.length ? existing[0].rowNumber : sheet.getLastRow() + 1;
   sheet.getRange(target, 1, 1, 3).setValues([[planId, questionId, JSON.stringify(snapshot)]]);
   refreshBundlePlanOverviewFromRegistry_(registry, planId);

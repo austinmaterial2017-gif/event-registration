@@ -338,7 +338,7 @@ test("combination registration serializes selected photo files before submitting
   const source = await readFile(new URL("../public/js/bundle-register-page.js", import.meta.url), "utf8");
   assert.match(source, /serializePhotoFiles/);
   assert.match(source, /uploads:\s*await serializePhotoFiles/);
-  assert.match(source, /Object\.fromEntries\(fields\.map/);
+  assert.match(source, /Object\.fromEntries\(visibleFields\.map/);
   assert.doesNotMatch(source, /form\.elements\.name|form\.elements\.phone|form\.elements\.photo/);
   assert.match(source, /服务器正在唤醒，请稍候/);
 });
@@ -474,4 +474,113 @@ test("staff scanner source exposes active native bundle projects without ordinar
   assert.match(source, /组合项目/);
   assert.match(source, /targetKind:\s*'bundle'/);
   assert.match(source, /bundleItemId/);
+});
+
+test("staff scanner reuses a short-lived cache for its read-only target list", async () => {
+  const source = await readFile(new URL("../apps-script/StaffScannerService.gs", import.meta.url), "utf8");
+  assert.match(source, /STAFF_SCANNER_TARGETS_CACHE_TTL_SECONDS_/);
+  assert.match(source, /readStaffScannerTargetsCache_\(\)/);
+  assert.match(source, /writeStaffScannerTargetsCache_\(targets\)/);
+  assert.match(source, /CacheService\.getScriptCache\(\)/);
+});
+
+test("bundle question normalizes only item IDs in its own plan", async () => {
+  const context = await loadBundleValidation();
+  const normalized = context.normalizeBundleQuestionItemIds_(
+    ["item-badminton", "item-badminton", "unknown"],
+    { "item-badminton": true }
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(normalized)), ["item-badminton"]);
+});
+
+test("saving an item-scoped question keeps only projects from the same combination plan", async () => {
+  const repositorySource = await readFile(new URL("../apps-script/Repository.gs", import.meta.url), "utf8");
+  const mutationSource = await readFile(new URL("../apps-script/InternalMutationService.gs", import.meta.url), "utf8");
+  const savedRows = [];
+  const plansSheet = { kind: "plans" };
+  const itemsSheet = { kind: "items" };
+  const questionsSheet = {
+    kind: "questions",
+    getLastRow: () => savedRows.length + 1,
+    getRange: () => ({ setValues: (values) => {
+      values.forEach((value) => savedRows.push({ planId: value[0], questionId: value[1], snapshot: value[2] }));
+    } })
+  };
+  const registry = { getSheetByName: (name) => ({ "组合计划": plansSheet, "组合项目": itemsSheet, "组合问题": questionsSheet }[name]) };
+  const context = vm.createContext({
+    Object, Array, String, Number, JSON, Date, Error, isFinite,
+    PUBLIC_BACKEND_URL: "", SWITCH_PROBE_SHARED_SECRET: "", SWITCH_PROBE: "", SWITCH_PROBE_ACK: "", SWITCH_MAINTENANCE: "",
+    SHEET_DEFINITIONS: {}, SpreadsheetApp: {}, Utilities: { getUuid: () => "new-question" }
+  });
+  vm.runInContext(repositorySource, context);
+  vm.runInContext(mutationSource, context);
+  context.getRegistrySpreadsheet_ = () => registry;
+  context.bundleRegistrySheet_ = (value) => value;
+  context.refreshBundlePlanOverviewFromRegistry_ = () => {};
+  context.adminError_ = (code) => { throw new Error(code); };
+  context.bundleSheetRows_ = (sheet) => {
+    if (sheet === plansSheet) return [{ planId: "plan-a" }];
+    if (sheet === itemsSheet) return [
+      { planId: "plan-a", bundleItemId: "badminton" },
+      { planId: "plan-b", bundleItemId: "other-plan-item" }
+    ];
+    return savedRows.map((row, index) => ({ ...row, rowNumber: index + 2 }));
+  };
+  const saved = context.saveBundleQuestion_({
+    planId: "plan-a", label: "队友姓名", type: "text", required: true, sortOrder: 10,
+    itemIds: ["badminton", "other-plan-item", "badminton"]
+  }, {});
+  assert.deepEqual(JSON.parse(JSON.stringify(saved.itemIds)), ["badminton"]);
+  assert.deepEqual(JSON.parse(savedRows[0].snapshot).itemIds, ["badminton"]);
+});
+
+test("applicable bundle fields include shared fields and selected-item fields only", async () => {
+  const context = await loadBundleValidation();
+  const fields = context.applicableBundleRegistrationFields_([
+    { questionId: "shared", itemIds: [] },
+    { questionId: "partner", itemIds: ["badminton"] },
+    { questionId: "eater", itemIds: ["eating"] }
+  ], { badminton: true });
+  assert.deepEqual(JSON.parse(JSON.stringify(fields.map((field) => field.questionId))), ["shared", "partner"]);
+});
+
+test("bundle submission rejects answers belonging to an unselected item", async () => {
+  const context = await loadBundleValidation();
+  const error = context.bundleQuestionSubmissionError_([
+    { questionId: "shared", itemIds: [] },
+    { questionId: "partner", itemIds: ["badminton"] }
+  ], { eating: true }, { partner: "不该保存" }, {});
+  assert.equal(error, "INVALID_REQUEST");
+});
+
+test("public combination question projection keeps its item ownership", async () => {
+  const source = await readFile(new URL("../apps-script/Code.gs", import.meta.url), "utf8");
+  assert.match(source, /itemIds: Array\.isArray\(question\.itemIds\) \? question\.itemIds\.slice\(\) : \[\]/);
+  assert.match(source, /bundleQuestionSubmissionError_\(allQuestions, requested, payload\.answers, payload\.uploads\)/);
+});
+
+test("combination overview labels item-specific answers with their project title", async () => {
+  const source = await readFile(new URL("../apps-script/BundlePlanOverview.gs", import.meta.url), "utf8");
+  assert.match(source, /function bundlePlanOverviewQuestionHeader_\(/);
+  assert.match(source, /bundlePlanOverviewQuestionHeader_\(question, itemsById\)/);
+  assert.match(source, /项目/);
+});
+
+test("combination question editor can scope a question to selected projects", async () => {
+  const adminHtml = await readFile(new URL("../staff-apps-script/Admin.html", import.meta.url), "utf8");
+  const adminScript = await readFile(new URL("../staff-apps-script/AdminScript.html", import.meta.url), "utf8");
+  assert.match(adminHtml, /id="bundle-question-item-ids"/);
+  assert.match(adminScript, /renderBundleQuestionItemChoices_/);
+  assert.match(adminScript, /itemIds: Array\.from\(form\.querySelectorAll\('input\[name="bundleQuestionItemId"\]:checked'\)\)/);
+});
+
+test("administrator home keeps existing workspaces reachable", async () => {
+  const html = await readFile(new URL("../staff-apps-script/Admin.html", import.meta.url), "utf8");
+  const script = await readFile(new URL("../staff-apps-script/AdminScript.html", import.meta.url), "utf8");
+  assert.match(html, /id="admin-home"/);
+  assert.match(html, /data-workspace="bundle"/);
+  assert.match(html, /data-workspace="records"/);
+  assert.match(script, /function showAdminWorkspace_\(/);
+  assert.match(script, /loadDashboard\(\);/);
+  assert.match(script, /loadBundleDashboard_\(\);/);
 });

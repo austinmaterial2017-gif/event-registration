@@ -161,8 +161,27 @@
       if (!dialog || !plan) return;
       document.querySelector("#bundle-preview-title").textContent = `${plan.title || "组合报名"} · 报名预览`;
       document.querySelector("#bundle-preview-description").textContent = plan.description || "参加者选择项目后填写以下资料。";
-      const fields = (plan.questions || []).filter((question) => String(question.status || "active") === "active");
-      document.querySelector("#bundle-preview-fields").replaceChildren(...fields.sort((left, right) => Number(left.sortOrder || 0) - Number(right.sortOrder || 0)).map(bundlePreviewControl_));
+      const holder = document.querySelector("#bundle-preview-fields");
+      const fields = (plan.questions || []).filter((question) => String(question.status || "active") === "active")
+        .sort((left, right) => Number(left.sortOrder || 0) - Number(right.sortOrder || 0));
+      const groups = new Map();
+      fields.forEach((question) => {
+        const itemIds = Array.isArray(question.itemIds) ? question.itemIds : [];
+        const key = itemIds.length ? itemIds.slice().sort().join("|") : "shared";
+        if (!groups.has(key)) groups.set(key, { itemIds, questions: [] });
+        groups.get(key).questions.push(question);
+      });
+      holder.replaceChildren(...Array.from(groups.values()).map((group) => {
+        const section = document.createElement("section");
+        section.className = "bundle-preview-field-section";
+        const names = group.itemIds.map((itemId) => {
+          const item = (plan.items || []).find((candidate) => candidate.bundleItemId === itemId);
+          return item ? item.title : itemId;
+        });
+        section.append(element("h4", names.length ? `${names.join("／")}资料` : "共用资料"));
+        section.append(...group.questions.map(bundlePreviewControl_));
+        return section;
+      }));
       if (typeof dialog.showModal === "function") dialog.showModal();
       else dialog.open = true;
     }
@@ -533,15 +552,52 @@
         const input = document.createElement("input");
         input.type = "checkbox"; input.name = "ticketQuestionId"; input.value = question.questionId;
         input.checked = selected.has(question.questionId);
-        label.append(input, document.createTextNode(` 显示资料：${question.label}`));
+        const itemIds = Array.isArray(question.itemIds) ? question.itemIds : [];
+        const prefix = itemIds.length ? `${itemIds.map((itemId) => {
+          const item = (plan.items || []).find((candidate) => candidate.bundleItemId === itemId);
+          return item ? item.title : itemId;
+        }).join("／")}：` : "";
+        label.append(input, document.createTextNode(` 显示资料：${prefix}${question.label}`));
         holder.append(label);
       });
+    }
+
+    function renderBundleQuestionItemChoices_(plan, selectedItemIds = []) {
+      const holder = document.querySelector("#bundle-question-item-choices");
+      if (!holder) return;
+      const selected = new Set(Array.isArray(selectedItemIds) ? selectedItemIds : []);
+      holder.replaceChildren();
+      const items = Array.isArray(plan && plan.items) ? plan.items : [];
+      if (!items.length) {
+        holder.append(element("span", "请先新增并保存组合项目，才可以把资料限定在某一个项目。", "hint"));
+        return;
+      }
+      items.forEach((item) => {
+        const label = document.createElement("label");
+        label.className = "check";
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.name = "bundleQuestionItemId";
+        input.value = item.bundleItemId;
+        input.checked = selected.has(item.bundleItemId);
+        label.append(input, document.createTextNode(` 只在选择「${item.title}」时显示`));
+        holder.append(label);
+      });
+    }
+
+    function bundlePlanForQuestionForm_(planId) {
+      return (state.bundlePlans || []).find((plan) => plan.planId === planId) || null;
     }
 
     function renderBundleDashboard_(data) {
       if (!document.querySelector("#bundle-plan-list")) return;
       const plans = Array.isArray(data && data.plans) ? data.plans : [];
       state.bundlePlans = plans;
+      const questionForm = document.querySelector("#bundle-question-form");
+      if (questionForm && questionForm.elements.planId.value) {
+        renderBundleQuestionItemChoices_(bundlePlanForQuestionForm_(questionForm.elements.planId.value),
+          Array.from(questionForm.querySelectorAll('input[name="bundleQuestionItemId"]:checked')).map((input) => input.value));
+      }
       replaceList("#bundle-plan-list", plans, (plan) => {
         const planFold = document.createElement("details");
         planFold.className = "bundle-plan-fold";
@@ -570,6 +626,7 @@
           renderBundleTicketDisplayChoices_(plan);
           document.querySelector("#bundle-item-form").elements.planId.value = plan.planId;
           document.querySelector("#bundle-question-form").elements.planId.value = plan.planId;
+          renderBundleQuestionItemChoices_(plan);
           setStatus(`正在编辑组合计划：${plan.title}`);
         });
         use.dataset.useBundlePlan = plan.planId;
@@ -617,7 +674,12 @@
         row.append(refreshSheet);
         row.append(editButton("预览报名表", () => openBundlePreview_(plan)));
         (plan.questions || []).forEach((question) => {
-          const questionRow = dataRow(`资料：${question.label}`, question.status || "active", [question.type, question.required ? "必填" : "选填"]);
+          const scopedIds = Array.isArray(question.itemIds) ? question.itemIds : [];
+          const scopedTitles = scopedIds.map((itemId) => {
+            const item = (plan.items || []).find((candidate) => candidate.bundleItemId === itemId);
+            return item ? item.title : itemId;
+          });
+          const questionRow = dataRow(`资料：${question.label}`, question.status || "active", [question.type, question.required ? "必填" : "选填", scopedTitles.length ? `项目：${scopedTitles.join("／")}` : "所有报名者"]);
           const editQuestion = editButton("编辑问题", () => {
             const form = document.querySelector("#bundle-question-form");
             form.elements.planId.value = plan.planId;
@@ -629,6 +691,7 @@
             let config = {};
             try { config = typeof question.options === "string" ? JSON.parse(question.options) : (question.options || {}); } catch (_ignored) { config = {}; }
             form.elements.options.value = Array.isArray(config.choices) ? config.choices.join("\n") : "";
+            renderBundleQuestionItemChoices_(plan, scopedIds);
             setStatus(`正在编辑资料问题：${question.label}`);
           });
           const deleteQuestion = editButton("删除问题", () => { if (!window.confirm("确认删除？如已有答案，系统会自动隐藏并保留旧资料。")) return; runButtonAction_(deleteQuestion, "正在处理问题…", "组合问题已处理。", (runner) => runner.deleteBundleQuestion({ planId: plan.planId, questionId: question.questionId, confirm: true }), loadBundleDashboard_); });
@@ -1823,13 +1886,15 @@
       runButtonAction_(form.querySelector("button[type=submit]"), "正在保存组合问题…", "组合问题已保存。", (runner) => runner.saveBundleQuestion({
         planId: String(values.planId || "").trim(), questionId: String(values.questionId || "").trim(),
         label: String(values.label || "").trim(), type: values.type, options,
-        sortOrder: Number(values.sortOrder), required: checked(form, "required")
+        sortOrder: Number(values.sortOrder), required: checked(form, "required"),
+        itemIds: Array.from(form.querySelectorAll('input[name="bundleQuestionItemId"]:checked')).map((input) => input.value)
       }), (saved) => {
         const planId = form.elements.planId.value;
         form.reset();
         form.elements.planId.value = planId;
         form.elements.questionId.value = "";
         form.elements.sortOrder.value = String(Math.max(1, Number(saved && saved.sortOrder) || 0) + 1);
+        renderBundleQuestionItemChoices_(bundlePlanForQuestionForm_(planId));
         setStatus("组合问题已保存。现在可以直接新增下一题。", "success");
         loadBundleDashboard_();
       });
@@ -1841,6 +1906,7 @@
       form.reset();
       form.elements.planId.value = planId;
       form.elements.sortOrder.value = "10";
+      renderBundleQuestionItemChoices_(bundlePlanForQuestionForm_(planId));
       setStatus("可以新增另一题。", "success");
     });
 
@@ -1891,9 +1957,38 @@
       });
     });
 
+    function showAdminWorkspace_(workspaceId) {
+      const requested = ["activity", "bundle", "attendance", "records", "system"].includes(workspaceId)
+        ? workspaceId : "home";
+      document.querySelectorAll("[data-admin-workspace]").forEach((section) => {
+        section.classList.toggle("workspace-hidden", requested === "home" ||
+          section.dataset.adminWorkspace !== requested);
+      });
+      const home = document.querySelector("#admin-home");
+      const returnHome = document.querySelector("#admin-return-home");
+      if (home) home.hidden = requested !== "home";
+      if (returnHome) returnHome.hidden = requested === "home";
+      document.querySelectorAll("[data-workspace]").forEach((button) => {
+        const active = button.dataset.workspace === requested;
+        if (button.matches("button")) button.setAttribute("aria-pressed", active ? "true" : "false");
+      });
+      if (window.location && window.history && typeof window.history.replaceState === "function" &&
+          (!window.location.hash || window.location.hash !== `#admin-${requested}`)) {
+        const baseUrl = window.location.href.split("#")[0];
+        window.history.replaceState(null, "", requested === "home" ? baseUrl : `${baseUrl}#admin-${requested}`);
+      }
+      if (typeof window.scrollTo === "function") window.scrollTo({ top: 0, behavior: "auto" });
+    }
+
+    function workspaceFromHash_() {
+      return String((window.location && window.location.hash) || "").replace(/^#admin-/, "") || "home";
+    }
+
     function scrollToAdminSection_(targetId) {
       const target = document.querySelector(targetId);
       if (!target) return;
+      const workspace = target.dataset.adminWorkspace;
+      if (workspace) showAdminWorkspace_(workspace);
       if (target.hidden) {
         setStatus("请先选择一个活动，再管理该部分。", "error");
         document.querySelector("#activity-selector").focus();
@@ -1916,6 +2011,14 @@
         scrollToAdminSection_(link.getAttribute("href"));
       });
     });
+
+    document.querySelectorAll("[data-workspace]").forEach((button) => {
+      button.addEventListener("click", () => showAdminWorkspace_(button.dataset.workspace));
+    });
+    if (typeof window.addEventListener === "function") {
+      window.addEventListener("hashchange", () => showAdminWorkspace_(workspaceFromHash_()));
+    }
+    showAdminWorkspace_(workspaceFromHash_());
 
     loadDashboard();
     loadBundleDashboard_();

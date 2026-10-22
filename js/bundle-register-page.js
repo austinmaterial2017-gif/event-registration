@@ -113,6 +113,17 @@ function appendLabel(wrapper, field, controlId) {
   wrapper.append(label);
 }
 
+function appendPromptImage(container, field) {
+  const image = field && field.promptImage;
+  if (!image || !image.url) return;
+  const prompt = document.createElement("img");
+  prompt.className = "question-prompt-image";
+  prompt.src = image.url;
+  prompt.alt = image.alt || "题目说明图片";
+  prompt.loading = "lazy";
+  container.append(prompt);
+}
+
 function itemTitle_(itemId) {
   const item = rules.find((rule) => String(rule.itemId || rule.eventId) === String(itemId));
   return item?.title || String(itemId);
@@ -127,6 +138,7 @@ function addBundleField_(field, container) {
       const legend = node("legend", "", field.label);
       legend.append(node("span", field.required ? "required-mark" : "optional-mark", field.required ? " *" : "（选填）"));
       wrapper.append(legend);
+      appendPromptImage(wrapper, field);
       const options = node("div", "inline-options");
       for (const choice of field.options || []) {
         const label = node("label"); const input = document.createElement("input");
@@ -138,7 +150,7 @@ function addBundleField_(field, container) {
       wrapper.append(options);
     } else {
       const control = document.createElement(type === "textarea" ? "textarea" : type === "select" ? "select" : "input");
-      control.id = controlId; control.name = field.id; appendLabel(wrapper, field, controlId);
+      control.id = controlId; control.name = field.id; appendLabel(wrapper, field, controlId); appendPromptImage(wrapper, field);
       if (type === "select") {
         control.append(new Option("请选择", ""));
         for (const choice of field.options || []) control.append(new Option(choice, choice));

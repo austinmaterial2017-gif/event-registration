@@ -74,12 +74,19 @@ function appendLabel(wrapper, field, controlId) {
   wrapper.append(label);
 }
 
+function promptImageUrl_(url) {
+  const value = String(url || "");
+  const match = value.match(/[?&]id=([^&]+)/);
+  if (!match) return value;
+  return `https://lh3.googleusercontent.com/d/${decodeURIComponent(match[1])}=w1600`;
+}
+
 function appendPromptImage(container, field) {
   const image = field && field.promptImage;
   if (!image || !image.url) return;
   const prompt = document.createElement("img");
   prompt.className = "question-prompt-image";
-  prompt.src = image.url;
+  prompt.src = promptImageUrl_(image.url);
   prompt.alt = image.alt || "题目说明图片";
   prompt.loading = "lazy";
   container.append(prompt);

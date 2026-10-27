@@ -286,6 +286,10 @@ async function startCamera() {
     // iPhone Safari opened the camera with the newer tuned hints but did not
     // deliver decoded QR results, so keep the direct, known-good path here.
     reader = new window.ZXingBrowser.BrowserQRCodeReader();
+    // Some ZXing versions resolve only after the first decoded ticket.  Do
+    // not set this idle message afterwards, or it would overwrite the first
+    // ticket's "正在核对" / result feedback.
+    setStatus("相机已开启，请连续扫描参与者电子票 QR 码。");
     controls = await reader.decodeFromConstraints(
       { video: { facingMode: { ideal: "environment" } }, audio: false },
       video,
@@ -294,7 +298,6 @@ async function startCamera() {
         if (text) void recordScan(text);
       }
     );
-    setStatus("相机已开启，请连续扫描参与者电子票 QR 码。");
   } catch {
     startButton.disabled = false;
     setStatus("无法打开相机。请在 Safari／Chrome 的网站权限允许相机，再按一次开始连续扫码。", true);

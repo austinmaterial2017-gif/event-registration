@@ -1,4 +1,4 @@
-import { getBundlePlan, createBundleRegistration } from "./api.js?v=20261027-submit-feedback";
+import { getBundlePlan, createBundleRegistration } from "./api.js?v=20261027-submit-feedback-v2";
 import { validateBundleSelection } from "./bundle-flow.js";
 import { answerMetadataForFiles, serializePhotoFiles, validatePhotoFiles } from "./photo-answers.js";
 

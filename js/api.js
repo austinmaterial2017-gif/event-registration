@@ -10,7 +10,7 @@ const PUBLIC_ERROR_MESSAGES = {
   SEAT_HOLD_OWNERSHIP: "This seat is held by another browser session.",
   SEAT_UNAVAILABLE: "The selected seat is no longer available.",
   EVENT_NOT_FOUND: "未找到该活动。",
-  INVALID_REQUEST: "提交信息无效，请检查后重试。",
+  INVALID_REQUEST: "提交未完成：请确认所有必填资料已填写，付款截图已选择（最多 2 张、每张不超过 8MB），再提交。",
   BUNDLE_SELECTION_INVALID: "所选项目已更新，请重新选择后再提交。",
   BUNDLE_FIELDS_INVALID: "请检查并完成所有必填资料。",
   PHOTO_UPLOAD_INVALID: "付款截图不符合要求：请确认已选择照片、最多 2 张、每张不超过 8MB。",

@@ -466,7 +466,8 @@ function renderQuestions(event) {
       if (field.type === "select") { const placeholder = node("option", "", "请选择"); placeholder.value = ""; control.append(placeholder); for (const value of field.options || []) { const option = node("option", "", value); option.value = value; control.append(option); } }
       if (field.type === "photo") {
         const maxFiles = Math.max(1, Number(field.upload?.maxFiles) || 1);
-        control.accept = (field.upload?.accept || ["image/jpeg", "image/png", "image/heic", "image/heif"]).join(",");
+        control.accept = (field.upload?.accept || ["image/jpeg", "image/png", "image/heic", "image/heif", "image/webp"]).join(",");
+        control.setAttribute("aria-label", `${field.label}：选择要上传的照片`);
         control.multiple = maxFiles > 1;
         control.required = false;
         control.addEventListener("change", () => {

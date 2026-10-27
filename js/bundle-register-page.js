@@ -53,7 +53,11 @@ function renderPhotoSelection(wrapper, field, input) {
   if (!list) { list = node("div", "photo-selection"); wrapper.append(list); }
   list.replaceChildren();
   const files = photoFiles.get(field.id) || [];
-  if (!files.length) { list.append(node("p", "helper", "尚未选择照片。")); return; }
+  if (!files.length) {
+    const maxMegabytes = Math.max(1, Math.ceil(Number(field.upload?.maxBytes) / 1024 / 1024) || 5);
+    list.append(node("p", "helper", `请上传付款截图／照片（JPG、PNG、HEIC 或 WEBP，每张最多 ${maxMegabytes}MB）。`));
+    return;
+  }
   for (const [index, file] of files.entries()) {
     const row = node("div", "photo-selection-row");
     const remove = node("button", "secondary-button remove-photo", "删除");
@@ -119,7 +123,8 @@ function renderFields() {
       } else if (type === "photo") {
         const upload = field.upload || {};
         control.type = "file";
-        control.accept = (upload.accept || ["image/jpeg", "image/png", "image/heic", "image/heif"]).join(",");
+        control.accept = (upload.accept || ["image/jpeg", "image/png", "image/heic", "image/heif", "image/webp"]).join(",");
+        control.setAttribute("aria-label", `${field.label}：选择要上传的照片`);
         control.multiple = Math.max(1, Number(upload.maxFiles) || 1) > 1;
         control.addEventListener("change", () => {
           const files = Array.from(control.files || []); const errors = validatePhotoFiles(field, files);

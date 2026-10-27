@@ -5,7 +5,7 @@ function uploadRules(field) {
     maxBytes: Math.max(1, Number(upload.maxBytes) || 5 * 1024 * 1024),
     accept: Array.isArray(upload.accept) && upload.accept.length
       ? upload.accept.map(String)
-      : ["image/jpeg", "image/png", "image/heic", "image/heif"]
+      : ["image/jpeg", "image/png", "image/heic", "image/heif", "image/webp"]
   };
 }
 

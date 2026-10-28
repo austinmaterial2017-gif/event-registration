@@ -22,10 +22,11 @@ test("scanner reports staged progress while the server is still working", () => 
   assert.match(source, /startProgressFeedback/);
 });
 
-test("a decoded ticket gets a clear timeout response within five seconds", () => {
+test("a slow check-in keeps waiting instead of asking staff to scan the same ticket again", () => {
   assert.match(source, /function request\(params, timeoutMs = 60_000\)/);
-  assert.match(source, /await request\(\{[\s\S]*action: "checkin"[\s\S]*\}, 5_000\)/);
-  assert.match(source, /签到系统超过 5 秒没有回应/);
+  assert.match(source, /await request\(\{[\s\S]*action: "checkin"[\s\S]*\}, 15_000\)/);
+  assert.match(source, /服务仍在处理，请勿重复扫码/);
+  assert.doesNotMatch(source, /超过 5 秒没有回应，请再扫一次/);
 });
 
 test("the phone blocks an early or finished session before it sends a check-in request", () => {

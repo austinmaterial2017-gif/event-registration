@@ -189,6 +189,11 @@ function startProgressFeedback() {
     if (!busy) return;
     resultText.textContent = "资料已找到，正在写入签到记录…";
     setStatus("资料已找到，正在写入签到记录…");
+    progressTimer = window.setTimeout(() => {
+      if (!busy) return;
+      resultText.textContent = "服务仍在处理，请勿重复扫码。";
+      setStatus("服务仍在处理，请勿重复扫码。");
+    }, 2500);
   }, 2300);
 }
 
@@ -249,7 +254,7 @@ async function recordScan(rawValue) {
       action: "checkin", session: staffSession, ticket,
       eventId: eventSelect.value, sessionId: sessionSelect.value,
       checkpointId: checkpointSelect.value === "auto" ? "" : checkpointSelect.value
-    }, 5_000);
+    }, 15_000);
     const message = response?.ok
       ? `${response.data.name || "参与者"}：${response.data.checkpointLabel || "签到成功"}（签到成功）`
       : (response?.message || "本票无法签到。");
@@ -263,7 +268,7 @@ async function recordScan(rawValue) {
   } catch (error) {
     const timedOut = error?.name === "AbortError";
     const message = timedOut
-      ? "签到系统超过 5 秒没有回应，请再扫一次。"
+      ? "签到服务等待超过 15 秒，结果未确认，请先查看签到记录，不要重复扫码。"
       : "网络未完成，请再试一次。";
     showResult(message, false);
     setStatus(message, true);
